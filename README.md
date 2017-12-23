@@ -1,6 +1,6 @@
-# WorkerMan WSS+Task+GlobalData+Channel+Timer+GatewayWorker+React Service
+# DataCentered
 
-Building up an awesome client/server setup that will basically serve to replace our current webhositng and vps cron tasks.
+A Server to handle and basically manage other servers and providing several interfaces and many advanced featuers and functionality including asynchronous support, websocket server and secure websocket server, events, timers, tasks, global data mapping between threadsa and processes and services, subscriptionn and publishing based service, child process handling, timers, and much more.
 
 ## OverAll Features
 
