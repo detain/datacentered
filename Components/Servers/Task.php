@@ -8,7 +8,7 @@ function update_vps_list($args) {
 }
 
 $task_worker = new Worker('Text://127.0.0.1:12345'); // task worker, using the Text protocol
-$task_worker->count = 10; // number of task processes can be opened more than needed
+$task_worker->count = 100; // number of task processes can be opened more than needed
 $task_worker->name = 'TaskWorker';
 $task_worker->onMessage = function($connection, $task_data) {
 	 $task_data = json_decode($task_data, true); // Suppose you send json data
