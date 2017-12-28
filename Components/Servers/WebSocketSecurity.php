@@ -54,12 +54,50 @@ $worker->onMessage = function($conn, $message) {
 		 $conn->send('task complete'); // notify the corresponding websocket client task is completed
 	};
 	$task_connection->connect(); // execute async link
+
+
+	// data sent by the client as event data
+	$words = explode(' ', $message);
+	if ($words[0] == 'login') {
+		$event_name = array_shift($words);
+		$event_data = $words;
+	} else {
+		$event_name = 'broadcast';
+		$event_data = $message;
+	}
+	// Publish broadcast events to all worker processes
+	\Channel\Client::publish($event_name, $event_data);
 };
 $worker->onWorkerStart = function($worker) {
 	echo "Worker starting...\n";
+
+
 	if($worker->id === 0) { // The timer is set only on the process whose id number is 0, and the processes of other 1, 2, and 3 processes do not set the timer
 		Timer::add(60, 'update_vps_list_timer');
 	}
+
+
+	// Channel client connected to the Channel server
+	Channel\Client::connect('127.0.0.1', 2206);
+	// Subscribe to the broadcast event and register the event callback
+	Channel\Client::on('broadcast', function($event_data) use ($worker) {
+		// Broadcast messages to all clients of the current worker process
+		foreach($worker->connections as $connection) {
+			$connection->send($event_data);
+		}
+	});
+	Channel\Client::on('login', function($event_data) use ($worker) {
+		list($login, $password) = $event_data;
+		if ($login == 'test' && $password == 'test') {
+		} else {
+		}
+		// Broadcast messages to all clients of the current worker process
+		foreach($worker->connections as $connection) {
+			$connection->send($event_data);
+		}
+	});
+	// Channel\Client::unsubscribe($event_name);
+
 };
 $worker->onWorkerStop = function($worker) {
 	echo "Worker stopping...\n";
