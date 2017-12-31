@@ -14,3 +14,4 @@ use Workerman\Worker;
 require_once __DIR__.'/../../../../vendor/workerman/globaldata/src/Server.php';
 
 $globaldata_server = new GlobalData\Server('127.0.0.1', 2207);
+return $globaldata_server;
