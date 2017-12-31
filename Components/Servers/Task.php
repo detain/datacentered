@@ -11,14 +11,14 @@ $task_worker->onWorkerStart = function($worker) {
 };
 $task_worker->onMessage = function($connection, $task_data) {
 	$task_data = json_decode($task_data, true);			// Suppose you send json data
-	echo "Starting Task {$task_data['function']}\n";
+	//echo "Starting Task {$task_data['function']}\n";
 	if (isset($task_data['function'])) {				// According to task_data to deal with the corresponding task logic
 		if (in_array($task_data['function'], ['sync_hyperv_queue', 'async_hyperv_get_list'])) {
 			require_once __DIR__.'/../../Tasks/'.$task_data['function'].'.php';
 			$return = isset($task_data['args']) ? call_user_func($task_data['function'], $task_data['args']) : call_user_func($task_data['function']);
 		}
 	}
-	echo "Ending Task {$task_data['function']}\n";
+	//echo "Ending Task {$task_data['function']}\n";
 	$connection->send(json_encode($return));			// send the result
 };
 return $task_worker;
