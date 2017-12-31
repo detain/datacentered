@@ -21,16 +21,15 @@ function async_hyperv_get_list_server(&$factory, $service_master) {
 				if (isset($result->Success) && $result->Success == 'true' && isset($result->VMList) && isset($result->VMList->VirtualMachineSummary)) {
 					if (isset($result->VMList->VirtualMachineSummary->VmId))
 						$result->VMList->VirtualMachineSummary = [0 => $result->VMList->VirtualMachineSummary];
-					echo $service_master['vps_name'].' Successfull Get VM List'.PHP_EOL;
+					//echo $service_master['vps_name'].' Successfull Get VM List'.PHP_EOL;
 					function_requirements('vps_queue_handler');
 					vps_queue_handler($service_master, 'serverlist', $result);
 				} else {
-					echo $service_master['vps_name'].' Output: '.json_encode($result).PHP_EOL;
-					echo $service_master['vps_name'].' ERROR: Command Completed but missing expected fields!'.PHP_EOL;
-					if (isset($result->Status) && $result->Status == 'false' && $global->$var < 5) {
+					echo $service_master['vps_name'].' ERROR: Command Completed but missing expected fields! Output: '.json_encode($result).PHP_EOL;
+					/*if (isset($result->Status) && $result->Status == 'false' && $global->$var < 5) {
 						$global->$var = $global->$var + 1;
 						async_hyperv_get_list_server($factory, $service_master);
-					}
+					}*/
 				}
 				$global->$var = 0;
 			},
@@ -73,7 +72,7 @@ function async_hyperv_get_list($args) {
 		if (!isset($global->$var))
 			$global->$var = 0;
 		if ($global->cas($var, 0, 1)) {
-			async_hyperv_get_list($factory, $service_master);
+			async_hyperv_get_list_server($factory, $service_master);
 		}
 	}
 	$loop->run();

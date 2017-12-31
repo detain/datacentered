@@ -87,7 +87,7 @@ $securewebsocket_worker->onWorkerStart = function($worker) {
 	$global = new \GlobalData\Client('127.0.0.1:2207');	 // initialize the GlobalData client
 
 	if($worker->id === 0) { // The timer is set only on the process whose id number is 0, and the processes of other 1, 2, and 3 processes do not set the timer
-		Timer::add(120, 'update_vps_list_timer');
+		Timer::add(600, 'update_vps_list_timer');
 		Timer::add(60, 'vps_queue_timer');
 	}
 
