@@ -11,7 +11,21 @@ function update_vps_list_timer() {
 	];
 	$task_connection->send(json_encode($task_data)); // send data
 	$task_connection->onMessage = function($task_connection, $task_result) use ($conn) { // get the result asynchronously
-		 var_dump($task_result);
+		 //var_dump($task_result);
+		 $task_connection->close(); // remember to turn off the asynchronous link after getting the result
+	};
+	$task_connection->connect(); // execute async link
+}
+
+function vps_queue_timer() {
+	$task_connection = new AsyncTcpConnection('Text://127.0.0.1:12345'); // Asynchronous link with the remote task service, ip remote task service ip, if the machine is 127.0.0.1, if the cluster is lvs ip
+	$task_data = [ // task and parameter data
+		'function' => 'vps_queue',
+		'args'       => [],
+	];
+	$task_connection->send(json_encode($task_data)); // send data
+	$task_connection->onMessage = function($task_connection, $task_result) use ($conn) { // get the result asynchronously
+		 //var_dump($task_result);
 		 $task_connection->close(); // remember to turn off the asynchronous link after getting the result
 	};
 	$task_connection->connect(); // execute async link
@@ -71,9 +85,12 @@ $worker->onMessage = function($conn, $message) {
 $worker->onWorkerStart = function($worker) {
 	echo "Worker starting...\n";
 
+	global $global;
+	$global = new \GlobalData\Client('127.0.0.1:2207');	 // initialize the GlobalData client
 
 	if($worker->id === 0) { // The timer is set only on the process whose id number is 0, and the processes of other 1, 2, and 3 processes do not set the timer
-		Timer::add(60, 'update_vps_list_timer');
+		Timer::add(600, 'update_vps_list_timer');
+		Timer::add(60, 'vps_queue_timer');
 	}
 
 

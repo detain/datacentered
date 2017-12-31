@@ -14,17 +14,3 @@ use Workerman\Worker;
 require_once __DIR__.'/../../../../vendor/workerman/globaldata/src/Server.php';
 
 $worker = new GlobalData\Server('127.0.0.1', 2207);
-
-/*
-require_once __DIR__ . '/../src/Client.php';
-// Connect to the Global Data server
-$global = new GlobalData\Client('127.0.0.1', 2207);
-// Trigger $ global -> __ isset ('somedata') Query whether the server stores the value of key as somedata
-isset($global->somedata);
-// trigger $ global -> __set ('somedata', array (1,2,3)), inform the server to store the value of somedata as array (1,2,3)
-$global->somedata = array(1,2,3);
-// Trigger $ global -> __get ('somedata'), query the value corresponding to somedata from server
-var_export($global->somedata);
-// trigger $ global -> __ unset ('somedata'), notify the server to delete somedata and the corresponding value
-unset($global->somedata);
-*/
