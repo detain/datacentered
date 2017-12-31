@@ -15,7 +15,6 @@
  */
 use Workerman\Worker;
 require_once __DIR__ . '/../../../../vendor/workerman/channel/src/Server.php';
-require_once __DIR__ . '/../../../../vendor/workerman/channel/src/Client.php';
 
 // Initialize a Channel server
 $channel_server = new Channel\Server('127.0.0.1', 2206);

@@ -2,18 +2,16 @@
 use Workerman\Worker;
 
 function vps_queue($args) {
-	$return = [];
 	include __DIR__.'/../../Tasks/vps_queue.php';
-	return $return;
+	return [];
 }
 
 function update_vps_list($args) {
-	$return = [];
 	include __DIR__.'/../../Tasks/update_vps_list.php';
-	return $return;
+	return [];
 }
 
-$task_worker = new Worker('Text://127.0.0.1:12345');	// task worker, using the Text protocol
+$task_worker = new Worker('Text://127.0.0.1:2208');	// task worker, using the Text protocol
 $task_worker->count = 30; 								// number of task processes can be opened more than needed
 $task_worker->name = 'TaskWorker';
 $task_worker->onWorkerStart = function($worker) {

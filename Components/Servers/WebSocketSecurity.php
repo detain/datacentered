@@ -3,8 +3,10 @@ use Workerman\Worker;
 use Workerman\Connection\AsyncTcpConnection;
 use Workerman\Lib\Timer;
 
+require_once __DIR__ . '/../../../../vendor/workerman/channel/src/Client.php';
+
 function update_vps_list_timer() {
-	$task_connection = new AsyncTcpConnection('Text://127.0.0.1:12345'); // Asynchronous link with the remote task service, ip remote task service ip, if the machine is 127.0.0.1, if the cluster is lvs ip
+	$task_connection = new AsyncTcpConnection('Text://127.0.0.1:2208'); // Asynchronous link with the remote task service, ip remote task service ip, if the machine is 127.0.0.1, if the cluster is lvs ip
 	$task_data = [ // task and parameter data
 		'function' => 'update_vps_list',
 		'args'       => [],
@@ -18,7 +20,7 @@ function update_vps_list_timer() {
 }
 
 function vps_queue_timer() {
-	$task_connection = new AsyncTcpConnection('Text://127.0.0.1:12345'); // Asynchronous link with the remote task service, ip remote task service ip, if the machine is 127.0.0.1, if the cluster is lvs ip
+	$task_connection = new AsyncTcpConnection('Text://127.0.0.1:2208'); // Asynchronous link with the remote task service, ip remote task service ip, if the machine is 127.0.0.1, if the cluster is lvs ip
 	$task_data = [ // task and parameter data
 		'function' => 'vps_queue',
 		'args'       => [],
@@ -53,7 +55,8 @@ $worker->onConnect = function($conn) { // Clients come up, that is completed aft
 };
 $worker->onMessage = function($conn, $message) {
 	$conn->send("got '{$message}' from {$conn->realIP}"); // When using the client real ip, directly use the connection-> realIP can
-	$task_connection = new AsyncTcpConnection('Text://127.0.0.1:12345'); // Asynchronous link with the remote task service, ip remote task service ip, if the machine is 127.0.0.1, if the cluster is lvs ip
+/*
+	$task_connection = new AsyncTcpConnection('Text://127.0.0.1:2208'); // Asynchronous link with the remote task service, ip remote task service ip, if the machine is 127.0.0.1, if the cluster is lvs ip
 	$task_data = [ // task and parameter data
 		'function' => 'send_mail',
 		'args'       => [
@@ -68,8 +71,9 @@ $worker->onMessage = function($conn, $message) {
 		 $conn->send('task complete'); // notify the corresponding websocket client task is completed
 	};
 	$task_connection->connect(); // execute async link
+*/
 
-
+/*
 	// data sent by the client as event data
 	$words = explode(' ', $message);
 	if ($words[0] == 'login') {
@@ -81,6 +85,7 @@ $worker->onMessage = function($conn, $message) {
 	}
 	// Publish broadcast events to all worker processes
 	\Channel\Client::publish($event_name, $event_data);
+*/
 };
 $worker->onWorkerStart = function($worker) {
 	echo "Worker starting...\n";
@@ -93,7 +98,7 @@ $worker->onWorkerStart = function($worker) {
 		Timer::add(60, 'vps_queue_timer');
 	}
 
-
+/*
 	// Channel client connected to the Channel server
 	Channel\Client::connect('127.0.0.1', 2206);
 	// Subscribe to the broadcast event and register the event callback
@@ -114,7 +119,7 @@ $worker->onWorkerStart = function($worker) {
 		}
 	});
 	// Channel\Client::unsubscribe($event_name);
-
+*/
 };
 $worker->onWorkerStop = function($worker) {
 	echo "Worker stopping...\n";

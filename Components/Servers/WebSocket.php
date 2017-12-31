@@ -13,7 +13,7 @@ $worker->onConnect = function($conn) {
 $worker->onMessage = function($conn, $message)
 {
 	// Asynchronous link with the remote task service, ip remote task service ip, if the machine is 127.0.0.1, if the cluster is lvs ip
-	$task_connection = new AsyncTcpConnection('Text://127.0.0.1:12345');
+	$task_connection = new AsyncTcpConnection('Text://127.0.0.1:2208');
 	// task and parameter data
 	$task_data = array(
 		'function' => 'send_mail',
