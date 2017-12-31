@@ -13,7 +13,7 @@ function async_hyperv_get_list_server(&$factory, $service_master) {
 	//echo "Creating Client for {$service_master['vps_name']} @ {$url}\n";
 	$factory->createClient($url)->then(function (Client $client) use (&$factorty, $service_master) {
 		$api = new Proxy($client);
-		echo "Running GetVMList for {$service_master['vps_name']}\n";
+		//echo "Running GetVMList for {$service_master['vps_name']}\n";
 		$api->GetVMList(['hyperVAdmin' => 'Administrator', 'adminPassword' => $service_master['vps_root']])->then(
 			function ($result) use (&$factory, &$client, $service_master) {
 				global $global;

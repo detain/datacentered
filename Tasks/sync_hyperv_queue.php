@@ -30,8 +30,14 @@ function sync_hyperv_queue($args) {
 		if (sizeof($service_master['newvps']) > 0 || sizeof($service_master['queue']) > 0) {
 			if ($global->cas($var, 0, 1)) {
 				function_requirements('vps_queue_handler');
-				vps_queue_handler($service_master, 'getnewvps', $service_master['newvps']);
-				vps_queue_handler($service_master, 'getqueue', $service_master['queue']);
+				if (sizeof($service_master['newvps']) > 0) {
+					echo "Processing New VPS for {$service_master['vps_name']}\n";
+					vps_queue_handler($service_master, 'getnewvps', $service_master['newvps']);
+				}
+				if (sizeof($service_master['queue']) > 0) {
+					echo "Processing VPS Queue for {$service_master['vps_name']}\n";
+					vps_queue_handler($service_master, 'getqueue', $service_master['queue']);
+				}
 				vps_queue_handler($service_master, 'serverlist');
 				$global->$var = 0;
 			}
