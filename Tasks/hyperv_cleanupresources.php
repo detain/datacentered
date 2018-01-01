@@ -10,23 +10,8 @@ function hyperv_cleanupresources($args) {
 		'hyperVAdmin' => 'Administrator',
 		'adminPassword' => $service_master['vps_root']
 	];
-	$params = [
-		'encoding' => 'UTF-8',
-		'verifypeer' => FALSE,
-		'verifyhost' => FALSE,
-		'soap_version' => SOAP_1_2,
-		'trace' => 1,
-		'exceptions' => 1,
-		'connection_timeout' => 180,
-		'stream_context' => stream_context_create([
-			'ssl' => [
-				'ciphers' => 'RC4-SHA',
-				'verify_peer' => FALSE,
-				'verify_peer_name' => FALSE
-		]])
-	];
 	try {
-		$soap = new SoapClient("https://{$service_master['vps_ip']}/HyperVService/HyperVService.asmx?WSDL", $params);
+		$soap = new SoapClient("https://{$service_master['vps_ip']}/HyperVService/HyperVService.asmx?WSDL", \Detain\MyAdminHyperv\Plugin::getSoapClientParams());
 		$response = $soap->CleanUpResources($parameters);
 	} catch (Exception $e) {
 		echo 'Caught exception: '.$e->getMessage().PHP_EOL;
