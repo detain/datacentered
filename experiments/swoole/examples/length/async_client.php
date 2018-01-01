@@ -31,7 +31,7 @@ $client->on("connect", function(swoole_client $cli) {
 
 $client->on("receive", function (swoole_client $cli, $data) {
     $resp = unserialize(substr($data, 4));
-    echo "recv length=" . strlen($data) . ", SerId={$resp['int1']}\n".str_repeat('-', 60)."\n";
+    echo "recv length=" . strlen($data) . ", SerId={$resp['int1']}\n".str_repeat('-', 60).PHP_EOL;
     $cli->close();
 //    sleep(1);
     //usleep(200000);

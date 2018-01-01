@@ -2,4 +2,4 @@
 $an = new Swoole\Atomic(100);
 
 $an->add(12);
-echo $an->get()."\n";
+echo $an->get().PHP_EOL;

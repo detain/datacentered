@@ -5,7 +5,7 @@ $key_dir = dirname(dirname(__DIR__)).'/tests/ssl';
 
 $port2 = $serv->addlistener('0.0.0.0', 9502, SWOOLE_SOCK_TCP);
 $port2->on('receive', function($serv, $fd, $from_id, $data){
-    echo "port2: ".$data."\n";
+    echo "port2: ".$data.PHP_EOL;
 });
 
 $serv->set(array(

@@ -11,7 +11,7 @@ for ($l=0; $l < 1; $l++)
     for($i=0; $i< 10; $i++) 
     {
         $len = rand(10000, 20000);
-        echo "package length=".($len + 4)."\n";
+        echo "package length=".($len + 4).PHP_EOL;
         send_test3($client, $len);
     }
     //echo 'total send size:', strlen($data),"\n";
@@ -30,7 +30,7 @@ function send_test3($client, $len)
 	{
 		$client->send($ch);
 	}
-	echo "package: ".substr($data, -4, 4)."\n";
+	echo "package: ".substr($data, -4, 4).PHP_EOL;
 }
 
 function send_test2($client, $len)

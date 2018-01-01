@@ -8,12 +8,12 @@ for($i = 0; $i < $worker_num; $i++)
     $process->useQueue();
     $pid = $process->start();
     $workers[$pid] = $process;
-    //echo "Master: new worker, PID=".$pid."\n";
+    //echo "Master: new worker, PID=".$pid.PHP_EOL;
 }
 
 function callback_function(swoole_process $worker)
 {
-    //echo "Worker: start. PID=".$worker->pid."\n";
+    //echo "Worker: start. PID=".$worker->pid.PHP_EOL;
     //recv data from master
     while(true)
     {

@@ -107,10 +107,10 @@ function no_chunk(swoole_http_request $request, swoole_http_response $response)
 //    {
 //        var_dump($request->post);
 //    }
-//    echo "GET:" . var_export($_GET, true)."\n";
-//    echo "POST:" . var_export($_POST, true)."\n";
-//    echo "get:" . var_export($request->get, true)."\n";
-//    echo "post:" . var_export($request->post, true)."\n";
+//    echo "GET:" . var_export($_GET, true).PHP_EOL;
+//    echo "POST:" . var_export($_POST, true).PHP_EOL;
+//    echo "get:" . var_export($request->get, true).PHP_EOL;
+//    echo "post:" . var_export($request->post, true).PHP_EOL;
     //var_dump($request->server);
     $output = '';
     $output .= "<h2>HEADER:</h2>".dump($request->header);
@@ -168,7 +168,7 @@ function no_chunk(swoole_http_request $request, swoole_http_response $response)
             $response->header('Content-Type', 'image/jpeg');
         }
         $content = file_get_contents($file);
-        echo "response size = " . strlen($content) . "\n";
+        echo "response size = " . strlen($content).PHP_EOL;
 
 //        $response->write($content);
 //        $response->end();

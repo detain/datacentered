@@ -13,7 +13,7 @@ Swoole\Async::dnsLookup("www.htmleaf.com", function ($domainName, $ip) {
         "User-Agent" => 'Chrome/49.0.2587.3',
     ]);
     $cli->get('/', function ($cli) {
-        echo "Length: " . strlen($cli->body) . "\n";
+        echo "Length: " . strlen($cli->body).PHP_EOL;
 $cli->close();     
  // echo $cli->body;
     });

@@ -15,7 +15,7 @@ $serv->on('receive', function ($serv, $fd, $from_id, $data) {
     $n_bytes = 0;
     for ($i = 0; $i < 10; $i++)
     {
-        $_str = str_repeat($array[$i % 7], 4030) . "\n";
+        $_str = str_repeat($array[$i % 7], 4030).PHP_EOL;
         //$serv->send($fd, $_str);
         $n_bytes += strlen($_str);
         $data .= $_str;

@@ -5,7 +5,7 @@ $client->connect('127.0.0.1', 9502);
 for ($i = 0; $i < 100; $i++)
 {
     $client->send("admin");
-    echo $client->recv()."\n";
+    echo $client->recv().PHP_EOL;
     sleep(1);
 }
 

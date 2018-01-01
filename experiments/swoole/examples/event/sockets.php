@@ -11,7 +11,7 @@ function socket_onRead($socket)
 {
 	static $i = 0;
 	
-	echo socket_read($socket, 8192)."\n";
+	echo socket_read($socket, 8192).PHP_EOL;
 	$i ++;
 	if ($i > 10) 
 	{

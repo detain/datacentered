@@ -25,7 +25,7 @@ $worker->onWorkerStop = function($worker) {
 
 $worker->onConnect = function($connection) {			// Emitted when new connection come
 	$connection->maxSendBufferSize = 5*1024*1024;
-	echo 'new connection from ip ' . $connection->getRemoteIp() . "\n";
+	echo 'new connection from ip ' . $connection->getRemoteIp().PHP_EOL;
 	// message handling only for the current connection
 	/*
 	$connection->onMessage = function($connection, $data) {

@@ -130,7 +130,7 @@ function forkChildInWorker() {
 // 		});
 // 		$serv->start ();
 // 		swoole_event_add ($worker->pipe, function ($pipe) use ($worker) {
-// 			echo $worker->read()."\n";
+// 			echo $worker->read().PHP_EOL;
 // 		});
 	});
 
@@ -161,16 +161,16 @@ function processRename(swoole_server $serv, $worker_id) {
 function setTimerInWorker(swoole_server $serv, $worker_id) {
 	
 	if ($worker_id == 0) {
-		echo "Start: ".microtime(true)."\n";
+		echo "Start: ".microtime(true).PHP_EOL;
 		//$serv->addtimer(3000);
 //		$serv->addtimer(7000);
 		//var_dump($serv->gettimer());
 	}
 //	$serv->after(2000, function(){
-//		echo "Timeout: ".microtime(true)."\n";
+//		echo "Timeout: ".microtime(true).PHP_EOL;
 //	});
 //	$serv->after(5000, function(){
-//		echo "Timeout: ".microtime(true)."\n";
+//		echo "Timeout: ".microtime(true).PHP_EOL;
 //		global $serv;
 //		$serv->deltimer(3000);
 //	});
@@ -306,7 +306,7 @@ function my_onReceive(swoole_server $serv, $fd, $from_id, $data)
         if ($result) {
         	$serv->send($fd, "taskwaitok");
         }
-        echo "SyncTask: result=".var_export($result, true)."\n";
+        echo "SyncTask: result=".var_export($result, true).PHP_EOL;
     }
     elseif($cmd == "taskWaitMulti")
     {
@@ -320,7 +320,7 @@ function my_onReceive(swoole_server $serv, $fd, $from_id, $data)
             $resp = "taskWaitMulti ok\n";
             foreach($result as $k => $v)
             {
-                $resp .= "result[$k] length=".strlen($v)."\n";
+                $resp .= "result[$k] length=".strlen($v).PHP_EOL;
             }
             $serv->send($fd, $resp);
         }
@@ -492,7 +492,7 @@ function my_onTask(swoole_server $serv, $task_id, $from_id, $data)
         }
         else
         {
-            echo "bigtask: length=".strlen($data)."\n";
+            echo "bigtask: length=".strlen($data).PHP_EOL;
             return $data;
         }
 //        $serv->sendto('127.0.0.1', 9999, "hello world");

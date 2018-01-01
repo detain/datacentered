@@ -43,6 +43,6 @@ $ret5 = $table->get('hello@qq.com');
 
 echo "get -5 use: ".((microtime(true) - $s) * 1000)."ms\n";
 var_dump($ret1, $ret2, $ret3, $ret4, $ret5);
-echo "id:".$ret1['id']."\n";
-echo "name:".$ret1['name']."\n";
-echo "num:".$ret1['num']."\n";
+echo "id:".$ret1['id'].PHP_EOL;
+echo "name:".$ret1['name'].PHP_EOL;
+echo "num:".$ret1['num'].PHP_EOL;

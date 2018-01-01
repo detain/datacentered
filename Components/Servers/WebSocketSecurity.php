@@ -40,7 +40,7 @@ $securewebsocket_worker->name = 'SecureWebsocketWorker';
 $securewebsocket_worker->count = 5;																					// 5 processes
 $securewebsocket_worker->transport = 'ssl';																			// Set transport open ssl, websocket + ssl wss
 $securewebsocket_worker->onConnect = function($conn) {																// Clients come up, that is completed after the TCP three-way handshake callback
-	echo "new connection from ip " . $conn->getRemoteIp() . "\n";
+	echo "new connection from ip " . $conn->getRemoteIp().PHP_EOL;
 	$conn->onWebSocketConnect = function($conn) { 													// Client websocket handshake when the callback onWebSocketConnect Get the value of X_REAL_IP from nginx through the http header on onWebSocketConnect callback
 		//$conn->realIP = $_SERVER['HTTP_X_REAL_IP'];												// Connection object There is no realIP attribute, here to dynamically add a connection object realIP attributes Remember that php objects can dynamically add properties, you can also use your favorite property name
 		$conn->realIP = $conn->getRemoteIp();

@@ -10,7 +10,7 @@ for($i = 0; $i < $worker_num; $i++)
     $process->id = $i;
     $pid = $process->start();
     $workers[$pid] = $process;
-    //echo "Master: new worker, PID=".$pid."\n";
+    //echo "Master: new worker, PID=".$pid.PHP_EOL;
 }
 
 master_async($workers);
@@ -66,7 +66,7 @@ function master_sync($workers)
 
 function child_sync(swoole_process $worker)
 {
-    //echo "Worker: start. PID=".$worker->pid."\n";
+    //echo "Worker: start. PID=".$worker->pid.PHP_EOL;
     //recv data from master
     $recv = $worker->read();
 
@@ -81,7 +81,7 @@ function child_sync(swoole_process $worker)
 
 function child_async(swoole_process $worker)
 {
-    //echo "Worker: start. PID=".$worker->pid."\n";
+    //echo "Worker: start. PID=".$worker->pid.PHP_EOL;
     //recv data from master
     $GLOBALS['worker'] = $worker;
     global $argv;

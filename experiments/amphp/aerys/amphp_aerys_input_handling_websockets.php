@@ -34,7 +34,7 @@ class MyWs implements Aerys\Websocket {
 	 * @param \Aerys\Websocket\Message $msg
 	 */
 	public function onData(int $clientId, Aerys\Websocket\Message $msg) {
-		print "User with client id $clientId sent: " . yield $msg . "\n";
+		print "User with client id $clientId sent: ".$msg.PHP_EOL;
 	}
 
 	/**
@@ -56,6 +56,7 @@ $router = Aerys\router()
 $root = Aerys\root(__DIR__ . '/public');
 
 (new Aerys\Host)->use($router)->use($root);
+/*
 <!doctype html>
 <script type= 'text/javascript' >
 var ws = new WebSocket('ws://localhost/ws');
@@ -74,3 +75,4 @@ ws.onerror = ws.onmessage = ws.onclose = function(e) {
 	document.writeln(e);
 };
 </script>
+*/

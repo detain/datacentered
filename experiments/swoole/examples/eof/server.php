@@ -13,7 +13,7 @@ $serv->set(array(
 //});
 $serv->on('receive', function (swoole_server $serv, $fd, $from_id, $data)
 {
-    echo '#' . $serv->worker_id . " recv: " . strlen($data) . "\n";
+    echo '#' . $serv->worker_id . " recv: " . strlen($data).PHP_EOL;
     for ($i = 0; $i < 1000; $i++)
     {
         $resp = str_repeat('A', rand(10000, 50000)) . "\r\n\r\n";

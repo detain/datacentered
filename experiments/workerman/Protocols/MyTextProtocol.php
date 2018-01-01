@@ -38,6 +38,6 @@ class MyTextProtocol
 	 */
 	public static function encode($data)
     {
-        return $data."\n";
+        return $data.PHP_EOL;
     }
 }

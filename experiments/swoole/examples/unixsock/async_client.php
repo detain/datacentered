@@ -14,7 +14,7 @@ $client->on("receive", function (swoole_client $cli, $data)
 
 $client->on("error", function (swoole_client $cli)
 {
-    echo "error: [" . $cli->errCode . "] " . socket_strerror($cli->errCode) . "\n";
+    echo "error: [" . $cli->errCode . "] " . socket_strerror($cli->errCode).PHP_EOL;
 });
 
 $client->on("close", function (swoole_client $cli)

@@ -47,7 +47,7 @@ $_serialize_data = serialize($data);
 
 $_send = $_serialize_data."__doit__";
 
-echo "serialize_data length=".strlen($_serialize_data)."send length=".strlen($_send)."\n";
+echo "serialize_data length=".strlen($_serialize_data)."send length=".strlen($_send).PHP_EOL;
 //send_chunk($client, $_send);
 
 //

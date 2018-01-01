@@ -53,7 +53,7 @@ class DBServer
         echo __METHOD__ . ": client_sock=$fd|db_sock=$db_sock\n";
 
         if ($result = $mysqli->reap_async_query()) {
-            $ret = var_export($result->fetch_all(MYSQLI_ASSOC), true) . "\n";
+            $ret = var_export($result->fetch_all(MYSQLI_ASSOC), true).PHP_EOL;
             $this->serv->send($fd, $ret);
             if (is_object($result)) {
                 mysqli_free_result($result);

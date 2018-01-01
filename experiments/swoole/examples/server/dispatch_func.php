@@ -11,7 +11,7 @@ $serv->set(array(
 $serv->on('receive', function (swoole_server $serv, $fd, $threadId, $data)
 {
     var_dump($data);
-    echo "#{$serv->worker_id}>> received length=" . strlen($data) . "\n";
+    echo "#{$serv->worker_id}>> received length=" . strlen($data).PHP_EOL;
 });
 
 $serv->start();

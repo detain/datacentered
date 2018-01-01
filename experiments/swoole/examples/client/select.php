@@ -25,7 +25,7 @@ while (!empty($clients))
     {
         foreach ($read as $index => $c)
         {
-            echo "Recv #{$c->sock}: " . $c->recv() . "\n";
+            echo "Recv #{$c->sock}: " . $c->recv().PHP_EOL;
             unset($clients[$c->sock]);
         }
     }

@@ -8,7 +8,7 @@ $websocket_worker->name = 'WebsocketWorker';
 // 5 processes
 $websocket_worker->count = 5;
 $websocket_worker->onConnect = function($conn) {
-	echo "new connection from ip " . $conn->getRemoteIp() . "\n";
+	echo "new connection from ip " . $conn->getRemoteIp().PHP_EOL;
 };
 $websocket_worker->onMessage = function($conn, $message) {
 	// Asynchronous link with the remote task service, ip remote task service ip, if the machine is 127.0.0.1, if the cluster is lvs ip

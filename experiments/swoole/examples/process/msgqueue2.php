@@ -1,7 +1,7 @@
 <?php
 function callback_function(swoole_process $worker)
 {
-    //echo "Worker: start. PID=".$worker->pid."\n";
+    //echo "Worker: start. PID=".$worker->pid.PHP_EOL;
     //recv data from master
     while(true)
     {

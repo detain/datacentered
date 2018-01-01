@@ -14,7 +14,7 @@ class MyWs implements Aerys\Websocket {
 	}
 
 	public function onData(int $clientId, Aerys\Websocket\Message $msg) {
-		print "User with client id $clientId sent: " . yield $msg . "\n";
+		print "User with client id $clientId sent: " . yield $msg.PHP_EOL;
 	}
 
 	public function onClose(int $clientId, int $code, string $reason) {
