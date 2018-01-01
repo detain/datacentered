@@ -27,7 +27,7 @@ function async_hyperv_get_list_server(&$factory, $service_master) {
 					function_requirements('vps_queue_handler');
 					vps_queue_handler($service_master, 'serverlist', $result);
 				} else {
-					echo $service_master['vps_name'].' ERROR: Command Completed but missing expected fields! Output: '.json_encode($result).PHP_EOL;
+					//echo $service_master['vps_name'].' ERROR: Command Completed but missing expected fields! Output: '.json_encode($result).PHP_EOL;
 					if (isset($result->Success) && $result->Success == 'false' && $global->$var < 3) {
 						$task_connection = new AsyncTcpConnection('Text://127.0.0.1:2208');												// Asynchronous link with the remote task service
 						$task_connection->send(json_encode(['function' => 'hyperv_cleanupresources', 'args' => ['service_master' => $service_master, 'queue' => ['serverlist']]]));	// send data
