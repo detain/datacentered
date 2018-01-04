@@ -5,8 +5,8 @@ use Clue\React\Soap\Proxy;
 use Clue\React\Soap\Client;
 use Workerman\Connection\AsyncTcpConnection;
 
-if (ini_get('default_socket_timeout') < 600 && ini_get('default_socket_timeout') > 1)
-	ini_set('default_socket_timeout', 600);
+if (ini_get('default_socket_timeout') < 1200 && ini_get('default_socket_timeout') > 1)
+	ini_set('default_socket_timeout', 1200);
 
 function async_hyperv_get_list_server(&$factory, $service_master) {
 	$url = "https://{$service_master['vps_ip']}/HyperVService/HyperVService.asmx?WSDL";

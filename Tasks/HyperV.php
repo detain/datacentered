@@ -5,8 +5,8 @@ use Clue\React\Soap\Proxy;
 use Clue\React\Soap\Client;
 require_once __DIR__.'/include/functions.inc.php';
 
-if (ini_get('default_socket_timeout') < 600 && ini_get('default_socket_timeout') > 1)
-	ini_set('default_socket_timeout', 600);
+if (ini_get('default_socket_timeout') < 1200 && ini_get('default_socket_timeout') > 1)
+	ini_set('default_socket_timeout', 1200);
 
 $loop = React\EventLoop\Factory::create();
 $connector = new \React\Socket\Connector($loop, [
