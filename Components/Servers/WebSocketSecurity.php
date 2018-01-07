@@ -8,7 +8,7 @@ require_once __DIR__.'/../../../../vendor/workerman/globaldata/src/Client.php';
 
 function update_vps_list_timer() {
 	$task_connection = new AsyncTcpConnection('Text://127.0.0.1:2208');								// Asynchronous link with the remote task service
-	$task_connection->send(json_encode(['function' => 'async_hyperv_get_list', 'args' => []]));			// send data
+	$task_connection->send(json_encode(['function' => 'async_hyperv_get_list', 'args' => []]));		// send data
 	$task_connection->onMessage = function($task_connection, $task_result) use ($task_connection) {	// get the result asynchronously
 		 //var_dump($task_result);
 		 $task_connection->close();																	// remember to turn off the asynchronous link after getting the result
@@ -18,7 +18,7 @@ function update_vps_list_timer() {
 
 function vps_queue_timer() {
 	$task_connection = new AsyncTcpConnection('Text://127.0.0.1:2208');								// Asynchronous link with the remote task service
-	$task_connection->send(json_encode(['function' => 'sync_hyperv_queue', 'args' => []]));					// send data
+	$task_connection->send(json_encode(['function' => 'sync_hyperv_queue', 'args' => []]));			// send data
 	$task_connection->onMessage = function($task_connection, $task_result) use ($task_connection) {	// get the result asynchronously
 		 //var_dump($task_result);
 		 $task_connection->close();																	// remember to turn off the asynchronous link after getting the result
@@ -35,11 +35,11 @@ $context = [																						// Certificate is best to apply for a certific
 		'verify_peer_name' => false,
 	]
 ];
-$securewebsocket_worker = new Worker('websocket://0.0.0.0:4431', $context);											// websocket server
+$securewebsocket_worker = new Worker('websocket://0.0.0.0:4431', $context);							// websocket server
 $securewebsocket_worker->name = 'SecureWebsocketWorker';
-$securewebsocket_worker->count = 5;																					// 5 processes
-$securewebsocket_worker->transport = 'ssl';																			// Set transport open ssl, websocket + ssl wss
-$securewebsocket_worker->onConnect = function($conn) {																// Clients come up, that is completed after the TCP three-way handshake callback
+$securewebsocket_worker->count = 5;																	// 5 processes
+$securewebsocket_worker->transport = 'ssl';															// Set transport open ssl, websocket + ssl wss
+$securewebsocket_worker->onConnect = function($conn) {												// Clients come up, that is completed after the TCP three-way handshake callback
 	echo "new connection from ip " . $conn->getRemoteIp().PHP_EOL;
 	$conn->onWebSocketConnect = function($conn) { 													// Client websocket handshake when the callback onWebSocketConnect Get the value of X_REAL_IP from nginx through the http header on onWebSocketConnect callback
 		//$conn->realIP = $_SERVER['HTTP_X_REAL_IP'];												// Connection object There is no realIP attribute, here to dynamically add a connection object realIP attributes Remember that php objects can dynamically add properties, you can also use your favorite property name
@@ -47,7 +47,7 @@ $securewebsocket_worker->onConnect = function($conn) {																// Clients
 	};
 };
 $securewebsocket_worker->onMessage = function($conn, $message) {
-	$conn->send("connection got '{$message}' from {$conn->realIP}");											// When using the client real ip, directly use the connection-> realIP can
+	$conn->send("connection got '{$message}' from {$conn->realIP}");								// When using the client real ip, directly use the connection-> realIP can
 /*
 	$task_connection = new AsyncTcpConnection('Text://127.0.0.1:2208');								// Asynchronous link with the remote task service, ip remote task service ip, if the machine is 127.0.0.1, if the cluster is lvs ip
 	$task_data = [ // task and parameter data

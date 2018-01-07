@@ -3,7 +3,7 @@ use Workerman\Worker;
 require_once __DIR__.'/../../../../vendor/workerman/globaldata/src/Client.php';
 
 $task_worker = new Worker('Text://127.0.0.1:2208');		// task worker, using the Text protocol
-$task_worker->count = 30; 								// number of task processes can be opened more than needed
+$task_worker->count = 5; 								// number of task processes can be opened more than needed
 $task_worker->name = 'TaskWorker';
 $task_worker->onWorkerStart = function($worker) {
 	global $global;
