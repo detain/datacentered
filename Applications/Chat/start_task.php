@@ -1,5 +1,6 @@
 <?php
-use Workerman\Worker;
+use \Workerman\Worker;
+use \GatewayWorker\Lib\Gateway;
 require_once __DIR__.'/../../../../vendor/workerman/globaldata/src/Client.php';
 
 $task_worker = new Worker('Text://127.0.0.1:2208');		// task worker, using the Text protocol

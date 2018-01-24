@@ -15,6 +15,7 @@ use \Workerman\Connection\AsyncTcpConnection;
 use \Workerman\Connection\TcpConnection;
 use \Workerman\Lib\Timer;
 use \GlobalData\Client as GlobalDataClient;
+require_once __DIR__.'/Process.php';
 
 class Events {
 
@@ -30,6 +31,13 @@ class Events {
 			return ;
 		switch ($message_data['type']) { // Depending on the type of business
 			case 'pong': // The client responds to the server's heartbeat
+				return;
+			case 'phptty_run':
+				Process::run($client_id, 'htop');
+				return;
+			case 'phptty':
+				//if(ALLOW_CLIENT_INPUT)
+				fwrite($connection->pipes[0], $data);
 				return;
 			case 'login': // Client login message format: {type: login, name: xx, room_id: 1}, added to the client, broadcast to all clients xx into the chat room
 				if (!isset($message_data['room_id'])) // Determine whether there is a room number
