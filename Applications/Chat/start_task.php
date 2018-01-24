@@ -24,5 +24,3 @@ $task_worker->onMessage = function($connection, $task_data) {
 
 if(!defined('GLOBAL_START')) // If it is not started in the root directory, run the runAll method
 	Worker::runAll();
-
-return $task_worker;

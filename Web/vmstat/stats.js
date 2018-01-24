@@ -33,7 +33,7 @@ var descriptions = {
 
 function streamStats() {
 
-	var ws = new ReconnectingWebSocket("ws://"+document.domain+":55554");
+	var ws = new ReconnectingWebSocket("wss://"+document.domain+":7272");
 	var lineCount;
 	var colHeadings;
 
@@ -47,24 +47,24 @@ function streamStats() {
 	};
 
 	ws.onmessage = function(e) {
-		if (e.data.substr(0, 7) == "vmstat:") {
-			e.data = e.data.substr(7);
-			switch (lineCount++) {
-				case 0: // ignore first line
-					break;
-
-				case 1: // column headings
-					colHeadings = e.data.trim().split(/ +/);
-					break;
-
-				default: // subsequent lines
-					var colValues = e.data.trim().split(/ +/);
-					var stats = {};
-					for (var i = 0; i < colHeadings.length; i++) {
-						stats[colHeadings[i]] = parseInt(colValues[i]);
-					}
-					receiveStats(stats);
-			}
+		var data = JSON.parse(e.data);
+		switch(data['type']){
+			case 'vmstat':
+				switch (lineCount++) {
+					case 0: // ignore first line
+						break;
+					case 1: // column headings
+						colHeadings = data['content'].trim().split(/ +/);
+						break;
+					default: // subsequent lines
+						var colValues = data['content'].trim().split(/ +/);
+						var stats = {};
+						for (var i = 0; i < colHeadings.length; i++) {
+							stats[colHeadings[i]] = parseInt(colValues[i]);
+						}
+						receiveStats(stats);
+				}
+				break;
 		}
 	};
 }
@@ -72,9 +72,7 @@ function streamStats() {
 function initCharts() {
 	Object.each(descriptions, function(sectionName, values) {
 		var section = $('.chart.template').clone().removeClass('template').appendTo('#charts');
-
 		section.find('.title').text(sectionName);
-
 		var smoothie = new SmoothieChart({
 			grid: {
 				sharpLines: true,
@@ -88,12 +86,10 @@ function initCharts() {
 			}
 		});
 		smoothie.streamTo(section.find('canvas').get(0), 1000);
-
 		var colors = chroma.brewer['Pastel2'];
 		var index = 0;
 		Object.each(values, function(name, valueDescription) {
 			var color = colors[index++];
-
 			var timeSeries = new TimeSeries();
 			smoothie.addTimeSeries(timeSeries, {
 				strokeStyle: color,
@@ -101,7 +97,6 @@ function initCharts() {
 				lineWidth: 3
 			});
 			allTimeSeries[name] = timeSeries;
-
 			var statLine = section.find('.stat.template').clone().removeClass('template').appendTo(section.find('.stats'));
 			statLine.attr('title', valueDescription).css('color', color);
 			statLine.find('.stat-name').text(name);

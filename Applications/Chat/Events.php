@@ -12,36 +12,15 @@
  */
 use \GatewayWorker\Lib\Gateway;
 use \Workerman\Connection\AsyncTcpConnection;
+use \Workerman\Connection\TcpConnection;
 use \Workerman\Lib\Timer;
+use \GlobalData\Client as GlobalDataClient;
 
 class Events {
 
-	public static function update_vps_list_timer() {
-		$task_connection = new AsyncTcpConnection('Text://127.0.0.1:2208');								// Asynchronous link with the remote task service
-		$task_connection->send(json_encode(['function' => 'async_hyperv_get_list', 'args' => []]));		// send data
-		$task_connection->onMessage = function($task_connection, $task_result) use ($task_connection) {	// get the result asynchronously
-			 //var_dump($task_result);
-			 $task_connection->close();																	// remember to turn off the asynchronous link after getting the result
-		};
-		$task_connection->connect();																	// execute async link
-	}
-
-	public static function vps_queue_timer() {
-		$task_connection = new AsyncTcpConnection('Text://127.0.0.1:2208');								// Asynchronous link with the remote task service
-		$task_connection->send(json_encode(['function' => 'sync_hyperv_queue', 'args' => []]));			// send data
-		$task_connection->onMessage = function($task_connection, $task_result) use ($task_connection) {	// get the result asynchronously
-			 //var_dump($task_result);
-			 $task_connection->close();																	// remember to turn off the asynchronous link after getting the result
-		};
-		$task_connection->connect();																	// execute async link
-	}
-
-	public static function onWorkerStart()
-	{
-		if($worker->id === 0) { // The timer is set only on the process whose id number is 0, and the processes of other 1, 2, and 3 processes do not set the timer
-			Timer::add(600, [__CLASS__, 'update_vps_list_timer']);
-			Timer::add(60, [__CLASS__, 'vps_queue_timer']);
-		}
+	public static function onWorkerStart($businessWorker) {
+		global $global;
+		$global = new GlobalDataClient('127.0.0.1:2207');	 // initialize the GlobalData client
 	}
 
 	/**
@@ -61,6 +40,9 @@ class Events {
 				if (!isset($message_data['room_id'])) // Determine whether there is a room number
 					throw new \Exception("\$message_data['room_id'] not set. client_ip:{$_SERVER['REMOTE_ADDR']} \$message:{$message}");
 				$room_id = $message_data['room_id']; // The room number nickname into the session
+				if ($room_id == 'vmstat') {
+					self::vmstat_start();
+				}
 				$client_name = htmlspecialchars($message_data['client_name']);
 				$_SESSION['room_id'] = $room_id;
 				$_SESSION['client_name'] = $client_name;
@@ -124,6 +106,64 @@ class Events {
 				'time' => date('Y-m-d H:i:s')
 			];
 			Gateway::sendToGroup($room_id, json_encode($new_message));
+		}
+	}
+
+	public static function setup_timers($worker) {
+		if($worker->id === 0) { // The timer is set only on the process whose id number is 0, and the processes of other 1, 2, and 3 processes do not set the timer
+			Timer::add(600, ['Events', 'update_vps_list_timer']);
+			Timer::add(60, ['Events', 'vps_queue_timer']);
+		}
+	}
+
+	public static function update_vps_list_timer() {
+		$task_connection = new AsyncTcpConnection('Text://127.0.0.1:2208');								// Asynchronous link with the remote task service
+		$task_connection->send(json_encode(['function' => 'async_hyperv_get_list', 'args' => []]));		// send data
+		$task_connection->onMessage = function($task_connection, $task_result) use ($task_connection) {	// get the result asynchronously
+			 //var_dump($task_result);
+			 $task_connection->close();																	// remember to turn off the asynchronous link after getting the result
+		};
+		$task_connection->connect();																	// execute async link
+	}
+
+	public static function vps_queue_timer() {
+		$task_connection = new AsyncTcpConnection('Text://127.0.0.1:2208');								// Asynchronous link with the remote task service
+		$task_connection->send(json_encode(['function' => 'sync_hyperv_queue', 'args' => []]));			// send data
+		$task_connection->onMessage = function($task_connection, $task_result) use ($task_connection) {	// get the result asynchronously
+			 //var_dump($task_result);
+			 $task_connection->close();																	// remember to turn off the asynchronous link after getting the result
+		};
+		$task_connection->connect();																	// execute async link
+	}
+
+	public static function vmstat_start() {
+		if (!$_SESSION['process_handle']) {
+			// Save the process handle, close the handle when the process is closed
+			$_SESSION['process_handle'] = popen('vmstat 1', 'r');
+			if ($_SESSION['process_handle']) {
+				$process_connection = new TcpConnection($_SESSION['process_handle']);
+				$process_connection->onMessage = function($process_connection, $data) {
+					$new_message = [
+						'type' => 'vmstat',
+						'content' => $data['content'],
+					];
+					Gateway::sendToGroup('vmstat',json_encode($new_message));
+				};
+				Timer::add(10, function() {
+					if (Gateway::getClientCountByGroup('vmstat') == 0)
+						Events::vmstat_stop();
+				});
+			} else {
+			   echo "vmstat 1 fail\n";
+			}
+		}
+	}
+
+	public static function vmstat_stop() {
+		if ($_SESSION['process_handle']) {
+			shell_exec('killall vmstat');
+			pclose($_SESSION['process_handle']);
+			$_SESSION['process_handle'] = FALSE;
 		}
 	}
 }

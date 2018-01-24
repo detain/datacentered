@@ -24,8 +24,7 @@
 			// Connect to the server
 			function connect() {
 				// create websocket
-				ws = new WebSocket("ws://"+document.domain+":7272");
-				//ws = new WebSocket("wss://"+document.domain+":4431");
+				ws = new WebSocket("wss://"+document.domain+":7272");
 				// When the socket connection is open, enter the user name
 				ws.onopen = onopen;
 				// When there is a message according to the type of message shows different information
@@ -75,6 +74,9 @@
 					case 'say':
 						//{"type":"say","from_client_id":xxx,"to_client_id":"all/client_id","content":"xxx","time":"xxx"}
 						say(data['from_client_id'], data['from_client_name'], data['content'], data['time']);
+						break;
+					case 'vmstat':
+
 						break;
 					// User exits to update user list
 					case 'logout':
@@ -159,7 +161,7 @@
 					<ul class="friend-list" id="userlist"></ul>
 					<div>
 						&nbsp;&nbsp;&nbsp;&nbsp;<b>Room List:</b>(Currently in &nbsp; room<?php echo isset($_GET['room_id'])&&intval($_GET['room_id'])>0 ? intval($_GET['room_id']):1; ?>）<br>
-						&nbsp;&nbsp;&nbsp;&nbsp;<a href="/chat/?room_id=1">Room 1</a>&nbsp;&nbsp;&nbsp;&nbsp;<a href="/chat/?room_id=2">Room 2</a>&nbsp;&nbsp;&nbsp;&nbsp;<a href="/chat/?room_id=3">Room 3</a>&nbsp;&nbsp;&nbsp;&nbsp;<a href="/chat/?room_id=4">Room 4</a><br>
+						&nbsp;&nbsp;&nbsp;&nbsp;<a href="/chat/?room_id=1">Room 1</a>&nbsp;&nbsp;&nbsp;&nbsp;<a href="/chat/?room_id=2">Room 2</a>&nbsp;&nbsp;&nbsp;&nbsp;<a href="/chat/?room_id=3">Room 3</a>&nbsp;&nbsp;&nbsp;&nbsp;<a href="/chat/?room_id=vmstat">VMStat</a><br>
 						<br>
 					</div>
 				</div>

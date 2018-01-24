@@ -18,4 +18,3 @@ $globaldata_server = new GlobalData\Server('127.0.0.1', 2207);
 if(!defined('GLOBAL_START')) // If it is not started in the root directory, run the runAll method
 	Worker::runAll();
 
-return $globaldata_server;
