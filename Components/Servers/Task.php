@@ -21,4 +21,8 @@ $task_worker->onMessage = function($connection, $task_data) {
 	//echo "Ending Task {$task_data['function']}\n";
 	$connection->send(json_encode($return));			// send the result
 };
+
+if(!defined('GLOBAL_START')) // If it is not started in the root directory, run the runAll method
+	Worker::runAll();
+
 return $task_worker;

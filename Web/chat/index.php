@@ -5,12 +5,13 @@
 		<title>PHP multi-process + Websocket (HTML5 / Flash) + PHP Socket real-time push technology</title>
 		<meta name="viewport" content="width=device-width, initial-scale=1">
 		<link href="/chat/css/bootstrap.min.css" rel="stylesheet">
-		<link href="//maxcdn.bootstrapcdn.com/font-awesome/4.3.0/css/font-awesome.min.css" rel="stylesheet">
+		<link href="https://maxcdn.bootstrapcdn.com/font-awesome/4.3.0/css/font-awesome.min.css" rel="stylesheet">
 		<link href="/chat/css/jquery-sinaEmotion-2.1.0.min.css" rel="stylesheet">
 		<link href="/chat/css/style.css" rel="stylesheet">
 		<script type="text/javascript" src="/chat/js/swfobject.js"></script>
 		<script type="text/javascript" src="/chat/js/web_socket.js"></script>
 		<script type="text/javascript" src="/chat/js/jquery.min.js"></script>
+		<script type="text/javascript" src="https://netdna.bootstrapcdn.com/bootstrap/3.3.4/js/bootstrap.min.js"></script>
 		<script type="text/javascript" src="/chat/js/jquery-sinaEmotion-2.1.0.min.js"></script>
 		<script type="text/javascript">
 			if (typeof console == "undefined") {    this.console = { log: function (msg) {  } };}
@@ -153,23 +154,19 @@
 		<div class="container">
 			<div class="row">
 				<div class="col-md-4 bg-white ">
-					<div class=" row border-bottom padding-sm" style="height: 40px;">
-						Member
-					</div>
+					<div class=" row border-bottom padding-sm" style="height: 40px;">Member</div>
 					<!-- member list -->
-					<ul class="friend-list" id="userlist">
-					</ul>
+					<ul class="friend-list" id="userlist"></ul>
 					<div>
 						&nbsp;&nbsp;&nbsp;&nbsp;<b>Room List:</b>(Currently in &nbsp; room<?php echo isset($_GET['room_id'])&&intval($_GET['room_id'])>0 ? intval($_GET['room_id']):1; ?>）<br>
-						&nbsp;&nbsp;&nbsp;&nbsp;<a href="/chat/?room_id=1">Room 1</a>&nbsp;&nbsp;&nbsp;&nbsp;<a href="/chat/?room_id=2">Room 2</a>&nbsp;&nbsp;&nbsp;&nbsp;<a href="/chat/?room_id=3">Room 3</a>&nbsp;&nbsp;&nbsp;&nbsp;<a href="/chat/?room_id=4">Room 4</a>
-						<br><br>
+						&nbsp;&nbsp;&nbsp;&nbsp;<a href="/chat/?room_id=1">Room 1</a>&nbsp;&nbsp;&nbsp;&nbsp;<a href="/chat/?room_id=2">Room 2</a>&nbsp;&nbsp;&nbsp;&nbsp;<a href="/chat/?room_id=3">Room 3</a>&nbsp;&nbsp;&nbsp;&nbsp;<a href="/chat/?room_id=4">Room 4</a><br>
+						<br>
 					</div>
 				</div>
 				<!-- selected chat -->
 				<div class="col-md-8 bg-white ">
 					<div class="chat-message">
-						<ul class="chat" id="dialog">
-						</ul>
+						<ul class="chat" id="dialog"></ul>
 					</div>
 					<form onsubmit="onSubmit(); return false;">
 					<div class="chat-box bg-white">
@@ -188,6 +185,5 @@
 				</div>
 			</div>
 		</div>
-		<script src="https://netdna.bootstrapcdn.com/bootstrap/3.3.4/js/bootstrap.min.js"></script>
 	</body>
 </html>

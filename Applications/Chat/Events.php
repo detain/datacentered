@@ -11,8 +11,38 @@
  * Chat the main logic - Mainly onMessage onClose
  */
 use \GatewayWorker\Lib\Gateway;
+use \Workerman\Connection\AsyncTcpConnection;
+use \Workerman\Lib\Timer;
 
 class Events {
+
+	public static function update_vps_list_timer() {
+		$task_connection = new AsyncTcpConnection('Text://127.0.0.1:2208');								// Asynchronous link with the remote task service
+		$task_connection->send(json_encode(['function' => 'async_hyperv_get_list', 'args' => []]));		// send data
+		$task_connection->onMessage = function($task_connection, $task_result) use ($task_connection) {	// get the result asynchronously
+			 //var_dump($task_result);
+			 $task_connection->close();																	// remember to turn off the asynchronous link after getting the result
+		};
+		$task_connection->connect();																	// execute async link
+	}
+
+	public static function vps_queue_timer() {
+		$task_connection = new AsyncTcpConnection('Text://127.0.0.1:2208');								// Asynchronous link with the remote task service
+		$task_connection->send(json_encode(['function' => 'sync_hyperv_queue', 'args' => []]));			// send data
+		$task_connection->onMessage = function($task_connection, $task_result) use ($task_connection) {	// get the result asynchronously
+			 //var_dump($task_result);
+			 $task_connection->close();																	// remember to turn off the asynchronous link after getting the result
+		};
+		$task_connection->connect();																	// execute async link
+	}
+
+	public static function onWorkerStart()
+	{
+		if($worker->id === 0) { // The timer is set only on the process whose id number is 0, and the processes of other 1, 2, and 3 processes do not set the timer
+			Timer::add(600, [__CLASS__, 'update_vps_list_timer']);
+			Timer::add(60, [__CLASS__, 'vps_queue_timer']);
+		}
+	}
 
 	/**
 	 * When there is news
