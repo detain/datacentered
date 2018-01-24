@@ -1,14 +1,13 @@
 <!DOCTYPE html>
 <title>Stats</title>
 <meta charset="utf8">
-
-<link rel="stylesheet" href="vmstat.css">
-<script src="/js/sugar-1.4.1.min.js"></script>
-<script src="/js/jquery-2.0.3.min.js"></script>
-<script src="/js/reconnecting-websocket.js"></script>
-<script src="/js/smoothie.js"></script>
-<script src="/js/chroma.min.js"></script>
-<script src="vmstat.js"></script>
+<link rel="stylesheet" href="css/vmstat.css">
+<script type="text/javascript" src="js/sugar-1.4.1.min.js"></script>
+<script type="text/javascript" src="//my.interserver.net/bower_components/jquery-2.1.x/dist/jquery.min.js"></script>
+<script type="text/javascript" src="js/reconnecting-websocket.js"></script>
+<script type="text/javascript" src="js/smoothie.js"></script>
+<script type="text/javascript" src="js/chroma.min.js"></script>
+<script type="text/javascript" src="js/vmstat.js"></script>
 
 <main id="charts">
   <section class="chart template">

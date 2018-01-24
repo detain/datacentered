@@ -4,19 +4,20 @@
 		<meta charset="utf-8">
 		<title>PHP multi-process + Websocket (HTML5 / Flash) + PHP Socket real-time push technology</title>
 		<meta name="viewport" content="width=device-width, initial-scale=1">
-		<link href="/chat/css/bootstrap.min.css" rel="stylesheet">
-		<link href="https://maxcdn.bootstrapcdn.com/font-awesome/4.3.0/css/font-awesome.min.css" rel="stylesheet">
-		<link href="/chat/css/jquery-sinaEmotion-2.1.0.min.css" rel="stylesheet">
-		<link href="/chat/css/style.css" rel="stylesheet">
-		<script type="text/javascript" src="/chat/js/swfobject.js"></script>
-		<script type="text/javascript" src="/chat/js/web_socket.js"></script>
-		<script type="text/javascript" src="/chat/js/jquery.min.js"></script>
-		<script type="text/javascript" src="https://netdna.bootstrapcdn.com/bootstrap/3.3.4/js/bootstrap.min.js"></script>
-		<script type="text/javascript" src="/chat/js/jquery-sinaEmotion-2.1.0.min.js"></script>
+		<link href="//my.interserver.net/bower_components/bootstrap/dist/css/bootstrap.min.css" rel="stylesheet">
+		<link href="//my.interserver.net/bower_components/bootstrap/dist/css/bootstrap-theme.min.css" rel="stylesheet">
+		<link href="//my.interserver.net/bower_components/font-awesome/css/font-awesome.min.css " rel="stylesheet">
+		<link href="css/jquery-sinaEmotion-2.1.0.min.css" rel="stylesheet">
+		<link href="css/chat.css" rel="stylesheet">
+		<script type="text/javascript" src="//my.interserver.net/bower_components/jquery-1.11.x/dist/jquery.min.js"></script>
+		<script type="text/javascript" src="//my.interserver.net/bower_components/bootstrap/dist/js/bootstrap.min.js"></script>
+		<script type="text/javascript" src="js/swfobject.js"></script>
+		<script type="text/javascript" src="js/web_socket.js"></script>
+		<script type="text/javascript" src="js/jquery-sinaEmotion-2.1.0.min.js"></script>
 		<script type="text/javascript">
 			if (typeof console == "undefined") {    this.console = { log: function (msg) {  } };}
 			// If the browser does not support websocket, will use this flash automatically simulate websocket protocol, this process is transparent to developers
-			WEB_SOCKET_SWF_LOCATION = "/chat/swf/WebSocketMain.swf";
+			WEB_SOCKET_SWF_LOCATION = "/swf/WebSocketMain.swf";
 			// Open flash websocket debug
 			WEB_SOCKET_DEBUG = true;
 			var ws, name, client_list={};
@@ -161,7 +162,7 @@
 					<ul class="friend-list" id="userlist"></ul>
 					<div>
 						&nbsp;&nbsp;&nbsp;&nbsp;<b>Room List:</b>(Currently in &nbsp; room<?php echo isset($_GET['room_id'])&&intval($_GET['room_id'])>0 ? intval($_GET['room_id']):1; ?>）<br>
-						&nbsp;&nbsp;&nbsp;&nbsp;<a href="/chat/?room_id=1">Room 1</a>&nbsp;&nbsp;&nbsp;&nbsp;<a href="/chat/?room_id=2">Room 2</a>&nbsp;&nbsp;&nbsp;&nbsp;<a href="/chat/?room_id=3">Room 3</a>&nbsp;&nbsp;&nbsp;&nbsp;<a href="/chat/?room_id=vmstat">VMStat</a><br>
+						&nbsp;&nbsp;&nbsp;&nbsp;<a href="/?room_id=1">Room 1</a>&nbsp;&nbsp;&nbsp;&nbsp;<a href="/?room_id=2">Room 2</a>&nbsp;&nbsp;&nbsp;&nbsp;<a href="/?room_id=3">Room 3</a>&nbsp;&nbsp;&nbsp;&nbsp;<a href="/?room_id=vmstat">VMStat</a><br>
 						<br>
 					</div>
 				</div>
