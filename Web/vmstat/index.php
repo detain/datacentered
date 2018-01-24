@@ -2,13 +2,13 @@
 <title>Stats</title>
 <meta charset="utf8">
 
-<link rel="stylesheet" href="stats.css">
+<link rel="stylesheet" href="vmstat.css">
 <script src="/js/sugar-1.4.1.min.js"></script>
 <script src="/js/jquery-2.0.3.min.js"></script>
 <script src="/js/reconnecting-websocket.js"></script>
 <script src="/js/smoothie.js"></script>
 <script src="/js/chroma.min.js"></script>
-<script src="/vmstat/stats.js"></script>
+<script src="vmstat.js"></script>
 
 <main id="charts">
   <section class="chart template">
