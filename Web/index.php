@@ -251,7 +251,7 @@ function receiveStats(stats) {
 	<body onload="connect();">
 		<div class="container">
 			<div class="row">
-				<div class="col-sm-4 bg-white ">
+				<div class="col-sm-3 bg-white ">
 					<div class=" row border-bottom padding-sm" style="height: 40px;">Member</div>
 					<!-- member list -->
 					<ul class="friend-list" id="userlist"></ul>
@@ -262,7 +262,25 @@ function receiveStats(stats) {
 					</div>
 				</div>
 				<!-- selected chat -->
-				<div class="col-sm-8 bg-white ">
+				<div class="col-sm-9 bg-white ">
+<?php if ($_GET['room_id'] == 'vmstat') {
+	echo <<<EOF
+					<main id="charts">
+						<section class="chart template">
+							<h4 class="title"></h4>
+							<canvas style="width: 100%; height: 40px;"></canvas>
+							<ul class="stats">
+								<li class="stat template">
+									<span class="stat-name"></span>
+									<span class="stat-value"></span>
+								</li>
+							</ul>
+						</section>
+					</main>
+EOF
+;
+}
+?>
 					<div class="chat-message">
 						<ul class="chat" id="dialog">
 						</ul>
@@ -281,22 +299,6 @@ function receiveStats(stats) {
 						</div><!-- /input-group -->
 					</div>
 					</form>
-				</div>
-			</div>
-			<div class="row">
-				<div class="col-sm-12">
-					<main id="charts">
-						<section class="chart template">
-							<h2 class="title"></h2>
-							<canvas style="width: 100%; height: 80px;"></canvas>
-							<ul class="stats">
-								<li class="stat template">
-									<span class="stat-name"></span>
-									<span class="stat-value"></span>
-								</li>
-							</ul>
-						</section>
-					</main>
 				</div>
 			</div>
 		</div>
