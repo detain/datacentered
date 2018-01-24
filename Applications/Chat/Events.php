@@ -20,7 +20,7 @@ class Events {
 	 * @param mixed $message
 	 */
 	public static function onMessage($client_id, $message) {
-		echo "client:{$_SERVER['REMOTE_ADDR']}:{$_SERVER['REMOTE_PORT']} gateway:{$_SERVER['GATEWAY_ADDR']}:{$_SERVER['GATEWAY_PORT']}  client_id:$client_id session:".json_encode($_SESSION)." onMessage:".$message."\n"; // debug
+		echo "client:{$_SERVER['REMOTE_ADDR']}:{$_SERVER['REMOTE_PORT']} gateway:{$_SERVER['GATEWAY_ADDR']}:{$_SERVER['GATEWAY_PORT']} client_id:{$client_id} session:".json_encode($_SESSION)." onMessage:{$message}\n"; // debug
 		$message_data = json_decode($message, true); // Client is passed json data
 		if (!$message_data)
 			return ;
@@ -84,7 +84,7 @@ class Events {
 	 * @param integer $client_id client id
 	 */
 	public static function onClose($client_id) {
-		echo "client:{$_SERVER['REMOTE_ADDR']}:{$_SERVER['REMOTE_PORT']} gateway:{$_SERVER['GATEWAY_ADDR']}:{$_SERVER['GATEWAY_PORT']}  client_id:$client_id onClose:''\n"; // debug
+		echo "client:{$_SERVER['REMOTE_ADDR']}:{$_SERVER['REMOTE_PORT']} gateway:{$_SERVER['GATEWAY_ADDR']}:{$_SERVER['GATEWAY_PORT']} client_id:{$client_id} onClose:''\n"; // debug
 		if (isset($_SESSION['room_id'])) { // Remove from the client's list of rooms
 			$room_id = $_SESSION['room_id'];
 			$new_message = [
