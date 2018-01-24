@@ -8,14 +8,14 @@
 		<link href="//my.interserver.net/bower_components/bootstrap/dist/css/bootstrap-theme.min.css" rel="stylesheet">
 		<link href="//my.interserver.net/bower_components/font-awesome/css/font-awesome.min.css " rel="stylesheet">
 		<link href="css/jquery-sinaEmotion-2.1.0.min.css" rel="stylesheet">
-		<link href="css/chat.css" rel="stylesheet">
 		<link href="css/vmstat.css" rel="stylesheet">
+		<link href="css/chat.css" rel="stylesheet">
+		<script src="//my.interserver.net/bower_components/jquery-1.11.x/dist/jquery.min.js" type="text/javascript"></script>
+		<script src="//my.interserver.net/bower_components/bootstrap/dist/js/bootstrap.min.js" type="text/javascript"></script>
 		<script src="//my.interserver.net/bower_components/sugar/release/sugar.min.js" type="text/javascript"></script>
 		<script src="//my.interserver.net/bower_components/reconnectingWebsocket/reconnecting-websocket.min.js" type="text/javascript"></script>
 		<script src="//my.interserver.net/bower_components/smoothie/smoothie.js" type="text/javascript"></script>
 		<script src="//my.interserver.net/bower_components/chroma-js/chroma.min.js" type="text/javascript"></script>
-		<script src="//my.interserver.net/bower_components/jquery-1.11.x/dist/jquery.min.js" type="text/javascript"></script>
-		<script src="//my.interserver.net/bower_components/bootstrap/dist/js/bootstrap.min.js" type="text/javascript"></script>
 		<script src="js/swfobject.js" type="text/javascript"></script>
 		<script src="js/web_socket.js" type="text/javascript"></script>
 		<script src="js/jquery-sinaEmotion-2.1.0.min.js" type="text/javascript"></script>
@@ -251,7 +251,7 @@ function receiveStats(stats) {
 	<body onload="connect();">
 		<div class="container">
 			<div class="row">
-				<div class="col-md-4 bg-white ">
+				<div class="col-sm-4 bg-white ">
 					<div class=" row border-bottom padding-sm" style="height: 40px;">Member</div>
 					<!-- member list -->
 					<ul class="friend-list" id="userlist"></ul>
@@ -262,7 +262,7 @@ function receiveStats(stats) {
 					</div>
 				</div>
 				<!-- selected chat -->
-				<div class="col-md-8 bg-white ">
+				<div class="col-sm-8 bg-white ">
 					<div class="chat-message">
 						<ul class="chat" id="dialog">
 						</ul>
@@ -284,8 +284,8 @@ function receiveStats(stats) {
 				</div>
 			</div>
 			<div class="row">
-				<div class="col-md-12" style="min-height: 600px;">
-					<main id="charts" style="width: 100%; min-height: 600px;">
+				<div class="col-sm-12">
+					<main id="charts">
 						<section class="chart template">
 							<h2 class="title"></h2>
 							<canvas style="width: 100%; height: 80px;"></canvas>
