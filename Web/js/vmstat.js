@@ -27,7 +27,8 @@ var descriptions = {
 		'us': 'Time spent running non-kernel code (user time, including nice time)',
 		'sy': 'Time spent running kernel code (system time)',
 		'id': 'Time spent idle',
-		'wa': 'Time spent waiting for IO'
+		'wa': 'Time spent waiting for IO',
+		'st': 'Time stolen from a virtual machine.'
 	}
 }
 
@@ -39,6 +40,7 @@ function streamStats() {
 
 	ws.onopen = function() {
 		console.log('connect');
+		ws.send('{"type":"login","client_name":"vmstat_client","room_id":"vmstat"}');
 		lineCount = 0;
 	};
 
@@ -47,23 +49,11 @@ function streamStats() {
 	};
 
 	ws.onmessage = function(e) {
+		//console.log("got message "+e.data);
 		var data = JSON.parse(e.data);
 		switch(data['type']){
 			case 'vmstat':
-				switch (lineCount++) {
-					case 0: // ignore first line
-						break;
-					case 1: // column headings
-						colHeadings = data['content'].trim().split(/ +/);
-						break;
-					default: // subsequent lines
-						var colValues = data['content'].trim().split(/ +/);
-						var stats = {};
-						for (var i = 0; i < colHeadings.length; i++) {
-							stats[colHeadings[i]] = parseInt(colValues[i]);
-						}
-						receiveStats(stats);
-				}
+				receiveStats(data['content']);
 				break;
 		}
 	};

@@ -8,7 +8,12 @@
 		<link href="//my.interserver.net/bower_components/bootstrap/dist/css/bootstrap-theme.min.css" rel="stylesheet">
 		<link href="//my.interserver.net/bower_components/font-awesome/css/font-awesome.min.css " rel="stylesheet">
 		<link href="css/jquery-sinaEmotion-2.1.0.min.css" rel="stylesheet">
-		<link href="css/chat.css" rel="stylesheet">
+		<!-- <link href="css/chat.css" rel="stylesheet"> -->
+		<link href="css/vmstat.css" rel="stylesheet">
+		<script src="//my.interserver.net/bower_components/sugar/release/sugar.min.js" type="text/javascript"></script>
+		<script src="//my.interserver.net/bower_components/reconnectingWebsocket/reconnecting-websocket.min.js" type="text/javascript"></script>
+		<script src="//my.interserver.net/bower_components/smoothie/smoothie.js" type="text/javascript"></script>
+		<script src="//my.interserver.net/bower_components/chroma-js/chroma.min.js" type="text/javascript"></script>
 		<script src="//my.interserver.net/bower_components/jquery-1.11.x/dist/jquery.min.js" type="text/javascript"></script>
 		<script src="//my.interserver.net/bower_components/bootstrap/dist/js/bootstrap.min.js" type="text/javascript"></script>
 		<script src="js/swfobject.js" type="text/javascript"></script>
@@ -176,7 +181,8 @@
 				<!-- selected chat -->
 				<div class="col-md-8 bg-white ">
 					<div class="chat-message">
-						<ul class="chat" id="dialog"></ul>
+						<ul class="chat" id="dialog">
+						</ul>
 					</div>
 					<form onsubmit="onSubmit(); return false;">
 					<div class="chat-box bg-white">
@@ -192,6 +198,22 @@
 						</div><!-- /input-group -->
 					</div>
 					</form>
+				</div>
+			</div>
+			<div class="row">
+				<div class="col-md-12">
+					<main id="charts">
+						<section class="chart template">
+							<h2 class="title"></h2>
+							<canvas width="600" height="80"></canvas>
+							<ul class="stats">
+								<li class="stat template">
+									<span class="stat-name"></span>
+									<span class="stat-value"></span>
+								</li>
+							</ul>
+						</section>
+					</main>
 				</div>
 			</div>
 		</div>
