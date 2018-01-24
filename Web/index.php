@@ -8,7 +8,7 @@
 		<link href="//my.interserver.net/bower_components/bootstrap/dist/css/bootstrap-theme.min.css" rel="stylesheet">
 		<link href="//my.interserver.net/bower_components/font-awesome/css/font-awesome.min.css " rel="stylesheet">
 		<link href="css/jquery-sinaEmotion-2.1.0.min.css" rel="stylesheet">
-		<!-- <link href="css/chat.css" rel="stylesheet"> -->
+		<link href="css/chat.css" rel="stylesheet">
 		<link href="css/vmstat.css" rel="stylesheet">
 		<script src="//my.interserver.net/bower_components/sugar/release/sugar.min.js" type="text/javascript"></script>
 		<script src="//my.interserver.net/bower_components/reconnectingWebsocket/reconnecting-websocket.min.js" type="text/javascript"></script>
@@ -30,7 +30,8 @@
 			// Connect to the server
 			function connect() {
 				// create websocket
-				ws = new WebSocket("wss://"+document.domain+":7272");
+				ws = new ReconnectingWebSocket("wss://"+document.domain+":7272");
+				//ws = new WebSocket("wss://"+document.domain+":7272");
 				// When the socket connection is open, enter the user name
 				ws.onopen = onopen;
 				// When there is a message according to the type of message shows different information
@@ -89,7 +90,7 @@
 
 						break;
 					case 'vmstat':
-
+						receiveStats(data['content']);
 						break;
 					// User exits to update user list
 					case 'logout':
@@ -153,7 +154,89 @@
 				//$("#dialog").append('<div class="speech_item"><img src="http://lorempixel.com/38/38/?'+from_client_id+'" class="user_icon" /> '+from_client_name+' <br> '+time+'<div style="clear:both;"></div><p class="triangle-isosceles top">'+content+'</p> </div>').parseEmotion();
 			}
 
+var allTimeSeries = {};
+var allValueLabels = {};
+var descriptions = {
+	'Processes': {
+		'r': 'Number of processes waiting for run time',
+		'b': 'Number of processes in uninterruptible sleep'
+	},
+	'Memory': {
+		'swpd': 'Amount of virtual memory used',
+		'free': 'Amount of idle memory',
+		'buff': 'Amount of memory used as buffers',
+		'cache': 'Amount of memory used as cache'
+	},
+	'Swap': {
+		'si': 'Amount of memory swapped in from disk',
+		'so': 'Amount of memory swapped to disk'
+	},
+	'IO': {
+		'bi': 'Blocks received from a block device (blocks/s)',
+		'bo': 'Blocks sent to a block device (blocks/s)'
+	},
+	'System': {
+		'in': 'Number of interrupts per second, including the clock',
+		'cs': 'Number of context switches per second'
+	},
+	'CPU': {
+		'us': 'Time spent running non-kernel code (user time, including nice time)',
+		'sy': 'Time spent running kernel code (system time)',
+		'id': 'Time spent idle',
+		'wa': 'Time spent waiting for IO',
+		'st': 'Time stolen from a virtual machine.'
+	}
+}
+
+function initCharts() {
+	Object.each(descriptions, function(sectionName, values) {
+		var section = $('.chart.template').clone().removeClass('template').appendTo('#charts');
+		section.find('.title').text(sectionName);
+		var smoothie = new SmoothieChart({
+			grid: {
+				sharpLines: true,
+				verticalSections: 5,
+				strokeStyle: 'rgba(119,119,119,0.45)',
+				millisPerLine: 1000
+			},
+			responsive: true,
+			minValue: 0,
+			labels: {
+				disabled: true
+			}
+		});
+		smoothie.streamTo(section.find('canvas').get(0), 1000);
+		var colors = chroma.brewer['Pastel2'];
+		var index = 0;
+		Object.each(values, function(name, valueDescription) {
+			var color = colors[index++];
+			var timeSeries = new TimeSeries();
+			smoothie.addTimeSeries(timeSeries, {
+				strokeStyle: color,
+				fillStyle: chroma(color).darken().alpha(0.5).css(),
+				lineWidth: 3
+			});
+			allTimeSeries[name] = timeSeries;
+			var statLine = section.find('.stat.template').clone().removeClass('template').appendTo(section.find('.stats'));
+			statLine.attr('title', valueDescription).css('color', color);
+			statLine.find('.stat-name').text(name);
+			allValueLabels[name] = statLine.find('.stat-value');
+		});
+	});
+}
+
+function receiveStats(stats) {
+	Object.each(stats, function(name, value) {
+		var timeSeries = allTimeSeries[name];
+		if (timeSeries) {
+			timeSeries.append(Date.now(), value);
+			allValueLabels[name].text(value);
+		}
+	});
+}
+
 			$(function(){
+				initCharts();
 				select_client_id = 'all';
 				$("#client_list").change(function(){
 					select_client_id = $("#client_list option:selected").attr("value");
@@ -201,11 +284,11 @@
 				</div>
 			</div>
 			<div class="row">
-				<div class="col-md-12">
-					<main id="charts">
+				<div class="col-md-12" style="min-height: 600px;">
+					<main id="charts" style="width: 100%; min-height: 600px;">
 						<section class="chart template">
 							<h2 class="title"></h2>
-							<canvas width="600" height="80"></canvas>
+							<canvas style="width: 100%; height: 80px;"></canvas>
 							<ul class="stats">
 								<li class="stat template">
 									<span class="stat-name"></span>
