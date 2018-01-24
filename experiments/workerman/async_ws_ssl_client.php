@@ -7,9 +7,9 @@ $worker = new Worker();
 $worker->onWorkerStart = function() { // When the process is started
 	$context = [ // Certificate is best to apply for a certificate
 		'ssl' => [ // use the absolute/full paths
-			'local_cert' => '/home/my/files/apache_setup/interserver.net.crt', // can also be a crt file
-			'local_pk' => '/home/my/files/apache_setup/interserver.net.key',
-			'cafile' => '/home/my/files/apache_setup/AlphaSSL.root.crt',
+			'local_cert' => __DIR__.'/../../../../files/apache_setup/interserver.net.crt', // can also be a crt file
+			'local_pk' => __DIR__.'/../../../../files/apache_setup/interserver.net.key',
+			'cafile' => __DIR__.'/../../../../files/apache_setup/AlphaSSL.root.crt',
 			'verify_peer' => false,
 			'verify_peer_name' => false,
 		]

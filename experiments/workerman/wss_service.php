@@ -7,11 +7,11 @@ use Workerman\Worker;
 $context = [
 	'ssl' => [
 		// use the absolute/full path
-		'local_cert' => '/home/my/files/apache_setup/interserver.net.crt', // can also be a crt file
-	        'local_pk' => '/home/my/files/apache_setup/interserver.net.key',
-		'cafile' => '/home/my/files/apache_setup/AlphaSSL.root.crt',
-	        'verify_peer' => false,
-	        'verify_peer_name' => false,
+		'local_cert' => __DIR__.'/../../../../files/apache_setup/interserver.net.crt', // can also be a crt file
+			'local_pk' => __DIR__.'/../../../../files/apache_setup/interserver.net.key',
+		'cafile' => __DIR__.'/../../../../files/apache_setup/AlphaSSL.root.crt',
+			'verify_peer' => false,
+			'verify_peer_name' => false,
 	]
 ];
 // Set here is websocket agreement
@@ -41,15 +41,15 @@ $worker->onWorkerStop = function($worker) {
 	echo "Worker stopping...\n";
 };
 $worker->onClose = function($connection) {
-    echo "connection closed\n";
+	echo "connection closed\n";
 };
 $worker->onBufferFull = function($connection) {
-    echo "bufferFull and do not send again\n";
+	echo "bufferFull and do not send again\n";
 };
 $worker->onBufferDrain = function($connection) {
-    echo "buffer drain and continue send\n";
+	echo "buffer drain and continue send\n";
 };
 $worker->onError = function($connection, $code, $msg) {
-    echo "error {$code} : {$msg}\n";
+	echo "error {$code} : {$msg}\n";
 };
 Worker::runAll();
