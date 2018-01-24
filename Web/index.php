@@ -9,12 +9,12 @@
 		<link href="//my.interserver.net/bower_components/font-awesome/css/font-awesome.min.css " rel="stylesheet">
 		<link href="css/jquery-sinaEmotion-2.1.0.min.css" rel="stylesheet">
 		<link href="css/chat.css" rel="stylesheet">
-		<script type="text/javascript" src="//my.interserver.net/bower_components/jquery-1.11.x/dist/jquery.min.js"></script>
-		<script type="text/javascript" src="//my.interserver.net/bower_components/bootstrap/dist/js/bootstrap.min.js"></script>
-		<script type="text/javascript" src="js/swfobject.js"></script>
-		<script type="text/javascript" src="js/web_socket.js"></script>
-		<script type="text/javascript" src="js/jquery-sinaEmotion-2.1.0.min.js"></script>
-		<script type="text/javascript">
+		<script src="//my.interserver.net/bower_components/jquery-1.11.x/dist/jquery.min.js" type="text/javascript"></script>
+		<script src="//my.interserver.net/bower_components/bootstrap/dist/js/bootstrap.min.js" type="text/javascript"></script>
+		<script src="js/swfobject.js" type="text/javascript"></script>
+		<script src="js/web_socket.js" type="text/javascript"></script>
+		<script src="js/jquery-sinaEmotion-2.1.0.min.js" type="text/javascript"></script>
+		<script>
 			if (typeof console == "undefined") {    this.console = { log: function (msg) {  } };}
 			// If the browser does not support websocket, will use this flash automatically simulate websocket protocol, this process is transparent to developers
 			WEB_SOCKET_SWF_LOCATION = "/swf/WebSocketMain.swf";
