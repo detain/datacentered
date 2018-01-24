@@ -76,6 +76,9 @@
 						//{"type":"say","from_client_id":xxx,"to_client_id":"all/client_id","content":"xxx","time":"xxx"}
 						say(data['from_client_id'], data['from_client_name'], data['content'], data['time']);
 						break;
+					case 'phptty':
+
+						break;
 					case 'vmstat':
 
 						break;
