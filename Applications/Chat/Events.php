@@ -117,6 +117,12 @@ class Events {
 	}
 
 	public static function update_vps_list_timer() {
+		$new_message = [
+			'type' => 'log',
+			'content' => nl2br(htmlspecialchars('Running Update VPS List Timer')),
+			'time' => date('Y-m-d H:i:s'),
+		];
+		Gateway::sendToAll($new_message);
 		$task_connection = new AsyncTcpConnection('Text://127.0.0.1:2208');								// Asynchronous link with the remote task service
 		$task_connection->send(json_encode(['function' => 'async_hyperv_get_list', 'args' => []]));		// send data
 		$task_connection->onMessage = function($task_connection, $task_result) use ($task_connection) {	// get the result asynchronously
@@ -127,6 +133,12 @@ class Events {
 	}
 
 	public static function vps_queue_timer() {
+		$new_message = [
+			'type' => 'log',
+			'content' => nl2br(htmlspecialchars('Running VPS Queue Timer')),
+			'time' => date('Y-m-d H:i:s'),
+		];
+		Gateway::sendToAll($new_message);
 		$task_connection = new AsyncTcpConnection('Text://127.0.0.1:2208');								// Asynchronous link with the remote task service
 		$task_connection->send(json_encode(['function' => 'sync_hyperv_queue', 'args' => []]));			// send data
 		$task_connection->onMessage = function($task_connection, $task_result) use ($task_connection) {	// get the result asynchronously
