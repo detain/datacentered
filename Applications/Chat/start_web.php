@@ -22,3 +22,9 @@ $web->addRoot(isset($_SERVER['HOSTNAME']) ? $_SERVER['HOSTNAME'] : trim(`hostnam
 
 if(!defined('GLOBAL_START')) // If it is not started in the root directory, run the runAll method
 	Worker::runAll();
+
+	
+$web->onConnect = function($connection) { 
+	$connection->maxSendBufferSize = 50*1024*1024;
+	$connection->maxPackageSize = 100*1024*1024;
+};
