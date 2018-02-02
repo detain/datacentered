@@ -12,7 +12,7 @@ function connect() {
 			rows: 50,
 			cursorBlink: false
 		});
-		sock.send(JSON.stringify({"type":"phptty_run","content":"htop"}))
+		socket.send(JSON.stringify({"type":"phptty_run","content":"htop"}))
 		term.open(document.body);
 		term.on('data', function(data) {
 			var myObj = {"type":"phptty","content":data};

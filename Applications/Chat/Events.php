@@ -17,6 +17,8 @@ use \Workerman\Lib\Timer;
 use \GlobalData\Client as GlobalDataClient;
 require_once __DIR__.'/Process.php';
 
+$process_pipes = [];
+
 class Events {
 
 	/**
@@ -25,6 +27,7 @@ class Events {
 	 * @param mixed $message
 	 */
 	public static function onMessage($client_id, $message) {
+		global $process_pipes;
 		echo "client:{$_SERVER['REMOTE_ADDR']}:{$_SERVER['REMOTE_PORT']} gateway:{$_SERVER['GATEWAY_ADDR']}:{$_SERVER['GATEWAY_PORT']} client_id:{$client_id} session:".json_encode($_SESSION)." onMessage:{$message}\n"; // debug
 		$message_data = json_decode($message, true); // Client is passed json data
 		if (!$message_data)
@@ -33,11 +36,11 @@ class Events {
 			case 'pong': // The client responds to the server's heartbeat
 				return;
 			case 'phptty_run':
-				Process::run($client_id, 'htop');
+				$process_pipes = Process::run($client_id, 'htop');
 				return;
 			case 'phptty':
 				//if(ALLOW_CLIENT_INPUT)
-				fwrite($connection->pipes[0], $data);
+				fwrite($process_pipes->pipes[0], $message_data['content']);
 				return;
 			case 'login': // Client login message format: {type: login, name: xx, room_id: 1}, added to the client, broadcast to all clients xx into the chat room
 				if (!isset($message_data['room_id'])) // Determine whether there is a room number
