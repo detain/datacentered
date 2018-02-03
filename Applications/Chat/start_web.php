@@ -25,6 +25,5 @@ if(!defined('GLOBAL_START')) // If it is not started in the root directory, run 
 
 	
 $web->onConnect = function($connection) { 
-	$connection->maxSendBufferSize = 50*1024*1024;
-	$connection->maxPackageSize = 100*1024*1024;
+	$connection->maxSendBufferSize = 50663296;
 };
