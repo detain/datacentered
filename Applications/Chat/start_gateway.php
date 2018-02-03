@@ -23,9 +23,7 @@ $gateway->startPort = 2300; // Internal communication start port. If $ gateway->
 $gateway->pingInterval = 10; // Heartbeat interval
 $gateway->pingData = '{"type":"ping"}'; // heartbeat data
 $gateway->registerAddress = '127.0.0.1:1236'; // Service registration address
-$gateway->onWorkerStart = function($worker) {
-	Events::setup_timers($worker);
-};
+//$gateway->onWorkerStart = function($worker) {};
 $gateway->onConnect = function($connection) { // When the client is connected, set the connection onWebSocketConnect, that is, when the websocket handshake callback
 	$connection->onWebSocketConnect = function($connection , $http_header) {
 		if (!preg_match('/\.interserver\.net(:[0-9]+)*/m', $_SERVER['HTTP_ORIGIN'])) // Here you can determine whether the source of the connection is legal, illegal to turn off the connection.  $_SERVER['HTTP_ORIGIN'] Identifies which site's web-initiated websocket link

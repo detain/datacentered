@@ -21,6 +21,43 @@ $process_pipes = [];
 
 class Events {
 
+	public static $process_handle = null;
+	public static $db = null;
+	public static $db_type = 'workerman'; // workerman or react or blank for no sql
+
+	public static function onWorkerStart($worker) {
+		global $global;
+		$global = new GlobalDataClient('127.0.0.1:2207');	 // initialize the GlobalData client
+		if (self::$db_type == 'workerman') {
+			self::$db = new \Workerman\MySQL\Connection('host', 'port', 'user', 'password', 'db_name');
+		} else {
+			$loop = Worker::getEventLoop();
+			self::$db = new React\MySQL\Connection($loop, [
+				'host'   => '127.0.0.1',
+				'dbname' => '数据库名',
+				'user'   => '用户名',
+				'passwd' => '密码',
+			]);
+			self::$db->on('error', function($e){
+				echo $e;
+			});
+			self::$db->connect(function ($e) {
+				if($e) {
+					echo $e;
+				} else {
+					echo "connect success\n";
+				}
+			});
+		}
+	}
+
+	public static function onWorkerStop($worker) {
+		if ($worker->id == 0) {
+			@shell_exec('killall vmstat');
+			@pclose(self::process_handle);
+		}
+	}
+
 	/**
 	 * When there is news
 	 * @param int $client_id
@@ -34,6 +71,22 @@ class Events {
 			return ;
 		switch ($message_data['type']) { // Depending on the type of business
 			case 'pong': // The client responds to the server's heartbeat
+				return;
+			case 'workerman_tables':
+				$all_tables = self::$db->query('show tables');
+				Gateway::sendToCurrentClient(json_encode($all_tables));
+				$ret = self::$db->select('*')->from('users')->where('uid>3')->offset(5)->limit(2)->query();
+				return Gateway::sendToClient($client_id, json_encode($ret));
+			case 'react_tables':
+				self::$db->query('show tables' /*$data*/, function ($command, $mysql) use ($connection) {
+					if ($command->hasError()) {
+						$error = $command->getError();
+					} else {
+						$results = $command->resultRows;
+						$fields  = $command->resultFields;
+						Gateway::sendToCurrentClient(json_encode($results));
+					}
+				});
 				return;
 			case 'phptty_run':
 				$process_pipes = Process::run($client_id, 'htop');
@@ -113,9 +166,46 @@ class Events {
 	}
 
 	public static function setup_timers($worker) {
-		if($worker->id === 0) { // The timer is set only on the process whose id number is 0, and the processes of other 1, 2, and 3 processes do not set the timer
+		// The timer is set only on the process whose id number is 0, and the processes of other 1, 2, and 3 processes do not set the timer
+		if ($worker->id === 0) {
+
 			Timer::add(600, ['Events', 'update_vps_list_timer']);
 			Timer::add(60, ['Events', 'vps_queue_timer']);
+
+			// Save the process handle, close the handle when the process is closed
+			self::$process_handle = popen('vmstat -n 1', 'r');
+			if (self::$process_handle) {
+				$process_connection = new TcpConnection(self::$process_handle);
+				$process_connection->onMessage = function($process_connection, $data) use ($worker) {
+					$msg = [
+						'type' => 'vmstat',
+						'content' => [
+							'r' => 0,
+							'b' => 0,
+							'swpd' => 0,
+							'free' => 0,
+							'buff' => 0,
+							'cache' => 0,
+							'si' => 0,
+							'so' => 0,
+							'bi' => 0,
+							'bo' => 0,
+							'in' => 0,
+							'cs' => 0,
+							'us' => 0,
+							'sy' => 0,
+							'id' => 0,
+							'wa' => 0,
+							'st' => 0
+						]
+					];
+					list($msg['content']['r'], $msg['content']['b'], $msg['content']['swpd'], $msg['content']['free'], $msg['content']['buff'], $msg['content']['cache'], $msg['content']['si'], $msg['content']['so'], $msg['content']['bi'], $msg['content']['bo'], $msg['content']['in'], $msg['content']['cs'], $msg['content']['us'], $msg['content']['sy'], $msg['content']['id'], $msg['content']['wa'], $msg['content']['st']) = preg_split('/ +/', trim($data));
+					if (is_numeric($msg['content']['r']))
+						Gateway::sendToGroup('vmstat', json_encode($msg));
+				};
+			} else {
+			   echo "vmstat 1 fail\n";
+			}
 		}
 	}
 
@@ -149,5 +239,39 @@ class Events {
 			 $task_connection->close();																	// remember to turn off the asynchronous link after getting the result
 		};
 		$task_connection->connect();																	// execute async link
+	}
+
+	public function workerman_mysql() {
+		self::$db->select('ID,Sex')->from('Persons')->where('sex= :sex')->bindValues(array('sex'=>'M'))->query(); // Get all rows.
+		self::$db->select('ID,Sex')->from('Persons')->where("sex='F'")->query(); // Equivalent to.
+		self::$db->query("SELECT ID,Sex FROM `Persons` WHERE sex='M'"); // Equivalent to.
+
+		self::$db->select('ID,Sex')->from('Persons')->where('sex= :sex')->bindValues(array('sex'=>'M'))->row(); // Get one row.
+		self::$db->select('ID,Sex')->from('Persons')->where("sex= 'F' ")->row(); // Equivalent to.
+		self::$db->row("SELECT ID,Sex FROM `Persons` WHERE sex='M'"); // Equivalent to.
+
+		self::$db->select('ID')->from('Persons')->where('sex= :sex')->bindValues(array('sex'=>'M'))->column(); // Get a column.
+		self::$db->select('ID')->from('Persons')->where("sex= 'F' ")->column(); // Equivalent to.
+		self::$db->column("SELECT `ID` FROM `Persons` WHERE sex='M'"); // Equivalent to.
+
+		self::$db->select('ID,Sex')->from('Persons')->where('sex= :sex')->bindValues(array('sex'=>'M'))->single(); // Get single.
+		self::$db->select('ID,Sex')->from('Persons')->where("sex= 'F' ")->single(); // Equivalent to.
+		self::$db->single("SELECT ID,Sex FROM `Persons` WHERE sex='M'"); // Equivalent to.
+
+		self::$db->select('*')->from('table1')->innerJoin('table2','table1.uid = table2.uid')->where('age > :age')->groupBy(array('aid'))->having('foo="foo"')->orderByASC/*orderByDESC*/(array('did'))->limit(10)->offset(20)->bindValues(array('age' => 13)); // Complex query.
+		self::$db->query("SELECT * FROM table1 INNER JOIN table2 ON table1.uid = table2.uid WHERE age > 13 GROUP BY aid HAVING foo='foo' ORDER BY did LIMIT 10 OFFSET 20"); // Equivalent to.
+
+		$insert_id = self::$db->insert('Persons')->cols(['Firstname'=>'abc','Lastname'=>'efg','Sex'=>'M','Age'=>13])->query(); // Insert.
+		$insert_id = self::$db->query("INSERT INTO `Persons` ( `Firstname`,`Lastname`,`Sex`,`Age`) VALUES ( 'abc', 'efg', 'M', 13)"); // Equivalent to.
+
+		$row_count = self::$db->update('Persons')->cols(array('sex'))->where('ID=1')->bindValue('sex', 'F')->query(); // Updagte.
+		$row_count = self::$db->update('Persons')->cols(array('sex'=>'F'))->where('ID=1')->query(); // Equivalent to.
+		$row_count = self::$db->query("UPDATE `Persons` SET `sex` = 'F' WHERE ID=1"); // Equivalent to.
+
+		$row_count = self::$db->delete('Persons')->where('ID=9')->query(); // Delete.
+		$row_count = self::$db->query("DELETE FROM `Persons` WHERE ID=9"); // Equivalent to.
+
+		self::$db->beginTrans(); // Transaction.
+		self::$db->commitTrans(); // or self::$db->rollBackTrans();
 	}
 }
