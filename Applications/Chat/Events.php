@@ -28,15 +28,16 @@ class Events {
 	public static function onWorkerStart($worker) {
 		global $global;
 		$global = new GlobalDataClient('127.0.0.1:2207');	 // initialize the GlobalData client
+		$db_config = include __DIR__.'/../../../../include/config/config.db.php';
 		if (self::$db_type == 'workerman') {
-			self::$db = new \Workerman\MySQL\Connection('host', 'port', 'user', 'password', 'db_name');
+			self::$db = new \Workerman\MySQL\Connection($db_config['db_host'], $db_config['db_port'], $db_config['db_user'], $db_config['db_pass'], $db_config['db_name']);
 		} else {
 			$loop = Worker::getEventLoop();
 			self::$db = new React\MySQL\Connection($loop, [
-				'host'   => '127.0.0.1',
-				'dbname' => '数据库名',
-				'user'   => '用户名',
-				'passwd' => '密码',
+				'host'   => $db_config['db_host'],
+				'dbname' => $db_config['db_name'],
+				'user'   => $db_config['db_user'],
+				'passwd' => $db_config['db_pass'],
 			]);
 			self::$db->on('error', function($e){
 				echo $e;
