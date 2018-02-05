@@ -1,0 +1,244 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Server Stats</title>
+    <!--[if lt IE 9]><script language="javascript" type="text/javascript" src="https://my.interserver.net/bower_components/updated-jqplot/dist/excanvas.js"></script><![endif]-->
+    <script type="text/javascript" src="https://my.interserver.net/bower_components/jquery-1.11.x/dist/jquery.min.js"></script>
+    <script type="text/javascript" src="https://my.interserver.net/bower_components/updated-jqplot/dist/jquery.updated-jqplot.min.js"></script>
+    <script type="text/javascript" src="https://my.interserver.net/bower_components/updated-jqplot/dist/plugins/jqplot.pieRenderer.js"></script>
+    <link rel="stylesheet" type="text/css" href="https://my.interserver.net/bower_components/updated-jqplot/dist/jquery.jqplot.min.css" />
+    <style type="text/css">
+    body {
+        font-family: "Arial";
+        background-color: #123456;
+    }
+    .label {
+        color:#eaa228; font-size:15px; font-weight:bold;
+    }
+    .value {
+        color:#4bb2c5; font-size:15px; font-weight:bold;
+    }
+    .header {
+        color:#4bb2c5; font-size:22px; font-weight:bold;
+    }
+    .graph {
+        height:200px; width:200px; text-align:center; margin-right:10%;
+    }
+    </style>
+
+    <script type="text/javascript">
+    function clearGraphs() {
+        $("div .graph").each(function(){
+            $(this).html('');
+        });
+    }
+    
+    // Get all data as json every 5 minutes
+    function get_all_json_data() {
+        $.getJSON('systemstats_data.php?q=all', function(data) {
+            // Give each html element a value
+            $.each(data, function(key, value) {
+                value = value.toString();
+                while (value.indexOf("\n") > -1) {
+                    value = value.replace("\n", "<br />");
+                }
+                $('#'+key).html(value);
+            });
+            // Clears the graphs, so that they dont paint over each other.
+            clearGraphs();
+            // Paints the graphs
+            create_cpu_graph(data.cpu_load_perc_free, data.cpu_load_perc_used);
+            create_ram_graph(Number(data.ram_free.match(/\d+\.?\d*/)), Number(data.ram_used.match(/\d+\.?\d*/)));
+            create_root_graph(Number(data.fs_root_free.match(/\d+\.?\d*/)), Number(data.fs_root_used.match(/\d+\.?\d*/)));
+            create_swap_graph(Number(data.fs_swap_free.match(/\d+\.?\d*/)), Number(data.fs_swap_used.match(/\d+\.?\d*/)));
+            setTimeout(get_all_json_data, 60 * 5 * 1000);
+        });
+    }
+    
+    // Get cpu data as json every 10 sec
+    function get_cpu_json_data() {
+        $.getJSON('systemstats_data.php?q=cpu', function(data) {
+            $('#top_cpu').html(data.top_cpu);
+            $('#top_ram').html(data.top_ram);
+            create_cpu_graph(data.cpu_load_perc_free, data.cpu_load_perc_used);
+            setTimeout(get_cpu_json_data, 10 * 1000);
+        });
+    }
+    // Get network data (dl and ul speed) as json every 10 sec
+    function get_network_json_data() {
+        $.getJSON('systemstats_data.php?q=network', function(data) {
+            $('#dl_speed').html(data.dl_speed);
+            $('#ul_speed').html(data.ul_speed);
+            $('#total_downloaded').html(data.total_downloaded);
+            $('#total_uploaded').html(data.ul_total_uploaded);
+            setTimeout(get_network_json_data, 10 * 1000);
+        });
+    }
+    function create_cpu_graph(free, used) {
+        var cpu_data = [[['Free', free], ['Used', used]]];
+        var plot3 = $.jqplot('cpu', cpu_data, {
+            grid: {
+                drawBorder: false,
+                drawGridlines: false,
+                shadow:false
+            },
+            seriesDefaults:{
+                shadow: false,
+                renderer:$.jqplot.PieRenderer,
+                rendererOptions:{
+                    showDataLabels: false,
+                    sliceMargin: 4,
+                    startAngle: -90
+                }
+            },
+            legend:{ 
+                show: false, 
+                location: 's'
+            }
+        });
+    }
+    function create_root_graph(free, used) {
+        var root_data = [[['Free', free], ['Used', used]]];
+        var plot3 = $.jqplot('fs', root_data, {
+            grid: {
+                drawBorder: false,
+                drawGridlines: false,
+                shadow:false
+            },
+            seriesDefaults:{
+                shadow: false,
+                renderer:$.jqplot.PieRenderer,
+                rendererOptions:{
+                    showDataLabels: false,
+                    sliceMargin: 4,
+                    startAngle: -90
+                }
+            },
+            legend:{ 
+                show: false, 
+                location: 's'
+            }
+        });
+    }
+    
+    function create_swap_graph(free, used ) {
+        var swap_data = [[['Free', free],['Used', used]]];
+        var plot3 = $.jqplot('swap', swap_data, {
+            grid: {
+                drawBorder: false,
+                drawGridlines: false,
+                shadow:false
+            },
+            seriesDefaults:{
+                shadow: false,
+                renderer:$.jqplot.PieRenderer,
+                rendererOptions:{
+                    showDataLabels: false,
+                    sliceMargin: 4,
+                    startAngle: -90
+                }
+            },
+            legend:{ 
+                show: false, 
+                location: 's'
+            }
+        });
+    }
+    
+    function create_ram_graph(free, used) {
+        var ram_data = [[['Free', free],['Used', used]]];
+        var plot3 = $.jqplot('ram', ram_data, {
+            grid: {
+                drawBorder: false,
+                drawGridlines: false,
+                shadow:false
+            },
+            seriesDefaults:{
+                shadow: false,
+                renderer:$.jqplot.PieRenderer,
+                rendererOptions:{
+                    showDataLabels: false,
+                    sliceMargin: 4,
+                    startAngle: -90
+                }
+            },
+            legend:{ 
+                show: false, 
+                location: 's'
+            }
+        });
+    }
+        
+    $(document).ready(function() {
+        get_all_json_data();
+        get_network_json_data();
+        get_cpu_json_data();
+    });
+    </script>
+</head>
+<body>
+    <div id="cont">
+        <div id="without_graph" style="overflow:hidden;">
+            <div style="float:left;">
+                <span class="header">General</span>
+                <div><span class="label">Hostname:</span> <span id="hostname" class="value"></span></div>
+                <div><span class="label">Kernel:</span> <span id="kernel" class="value"></span></div>
+                <div><span class="label">Distro:</span> <span id="distro" class="value"></span></div>
+                <div><span class="label">Uptime:</span> <span id="uptime" class="value"></span></div>
+                <div><span class="label">Processes:</span> <span id="all_processes" class="value"></span></div>
+                <div><span class="label">Running:</span> <span id="running_processes" class="value"></span></div>
+            </div>
+            <div style="float:left; margin-left:5%;">
+                <span class="header">Network</span>
+                <div><span class="label">Device:</span> <span id="network_device" class="value"></span></div>
+                <div><span class="label">MAC address:</span> <span id="mac_addr" class="value"></span></div>
+                <div><span class="label">IPv4 address:</span> <span id="ipv4_addr" class="value"></span></div>
+                <div><span class="label">Download:</span> <span id="dl_speed" class="value"></span> <span class="value"> -</span><span class="label"> Tot: </span><span id="total_downloaded" class="value"></span></div>
+                <div><span class="label">Upload:</span> <span id="ul_speed" class="value"></span> <span class="value"> -</span><span class="label"> Tot: </span><span id="total_uploaded" class="value"></span></div>
+                <div><span class="label">Open ports - known:</span> <span id="open_ports_known" class="value"></span></div>
+                <div><span class="label">Open ports - unknown:</span> <span id="open_ports_unknown" class="value"></span></div>
+            </div>
+            <div style="float:left; margin-left:5%;">
+                <span class="header">Top processes</span>
+                <div><span class="label">By processor</span></div>
+                <div><span id="top_cpu" class="value"></span></div>
+                <div><span class="label">By memory</span></div>
+                <div><span id="top_ram" class="value"></span></div>
+            </div>
+        </div>
+        <div id="with_graph" style="margin-top:3%;">
+            <div style="float:left;">
+                <span class="header">Processor</span>
+                <div id="cpu" class="graph"></div>
+                <div><span class="label">Model:</span> <span id="cpu_model" class="value"></span></div>
+                <div><span class="label">Frequency:</span> <span id="cpu_freq" class="value"></span></div>
+                <div><span class="label">Cores:</span> <span id="cpu_cores" class="value"></span></div>
+                <div><span class="label">Temp:</span> <span id="cpu_temp" class="value"></span></div>
+            </div>
+            <div style="float:left;">
+                <span class="header">Memory</span>
+                <div id="ram" class="graph"></div>
+                <div><span class="label">Total:</span> <span id="ram_total" class="value"></span></div>
+                <div><span class="label">Used:</span> <span id="ram_used" class="value"></span></div>
+                <div><span class="label">Free:</span> <span id="ram_free" class="value"></span></div>
+            </div>
+            <div style="float:left;">
+                <span class="header">Swap</span>
+                <div id="swap" class="graph"></div>
+                <div><span class="label">Total:</span> <span id="fs_swap_total" class="value"></span></div>
+                <div><span class="label">Used:</span> <span id="fs_swap_used" class="value"></span></div>
+                <div><span class="label">Free:</span> <span id="fs_swap_free" class="value"></span></div>
+                <div><span class="label">Swappiness:</span> <span id="fs_swap_swappiness" class="value"></span></div>
+            </div>
+            <div style="float:left;">
+                <span class="header">Root</span>
+                <div id="fs" class="graph"></div>
+                <div><span class="label">Total:</span> <span id="fs_root_total" class="value"></span></div>
+                <div><span class="label">Used:</span> <span id="fs_root_used" class="value"></span></div>
+                <div><span class="label">Free:</span> <span id="fs_root_free" class="value"></span></div>
+                <div><span class="label">Type:</span> <span id="fs_root_type" class="value"></span></div>
+            </div>
+         </div>
+    </div>
+</body>
+</html>

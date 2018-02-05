@@ -101,6 +101,12 @@ class Events {
 		}
 	}
 
+	public static function onConnect($client_id) {
+		$_SESSION['auth_timer_id'] = Timer::add(30, function($client_id){
+			Gateway::closeClient($client_id);
+		}, array($client_id), false);
+	}
+
 	/**
 	 * When there is news
 	 * @param int $client_id
@@ -139,6 +145,9 @@ class Events {
 				fwrite(self::$process_pipes->pipes[0], $message_data['content']);
 				return;
 			case 'login': // Client login message format: {type: login, name: xx, room_id: 1}, added to the client, broadcast to all clients xx into the chat room
+
+				Timer::del($_SESSION['auth_timer_id']); // delete timer if successfull
+
 				if (!isset($message_data['room_id'])) // Determine whether there is a room number
 					throw new \Exception("\$message_data['room_id'] not set. client_ip:{$_SERVER['REMOTE_ADDR']} \$message:{$message}");
 				$room_id = $message_data['room_id']; // The room number nickname into the session
