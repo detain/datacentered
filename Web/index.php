@@ -4,18 +4,18 @@
 	<meta charset="utf-8">
 	<title>PHP multi-process + Websocket (HTML5 / Flash) + PHP Socket real-time push technology</title>
 	<meta name="viewport" content="width=device-width, initial-scale=1">
-	<link href="//my.interserver.net/bower_components/bootstrap/dist/css/bootstrap.min.css" rel="stylesheet">
-	<link href="//my.interserver.net/bower_components/bootstrap/dist/css/bootstrap-theme.min.css" rel="stylesheet">
-	<link href="//my.interserver.net/bower_components/font-awesome/css/font-awesome.min.css " rel="stylesheet">
+	<link href="//my.interserver.net/lib/bootstrap/dist/css/bootstrap.min.css" rel="stylesheet">
+	<link href="//my.interserver.net/lib/bootstrap/dist/css/bootstrap-theme.min.css" rel="stylesheet">
+	<link href="//my.interserver.net/lib/font-awesome/css/font-awesome.min.css " rel="stylesheet">
 	<link href="css/jquery-sinaEmotion-2.1.0.min.css" rel="stylesheet">
 	<link href="css/vmstat.css" rel="stylesheet">
 	<link href="css/chat.css" rel="stylesheet">
-	<script src="//my.interserver.net/bower_components/jquery-1.11.x/dist/jquery.min.js" type="text/javascript"></script>
-	<script src="//my.interserver.net/bower_components/bootstrap/dist/js/bootstrap.min.js" type="text/javascript"></script>
-	<script src="//my.interserver.net/bower_components/sugar/release/sugar.min.js" type="text/javascript"></script>
+	<script src="//my.interserver.net/lib/jquery-1.11.x/dist/jquery.min.js" type="text/javascript"></script>
+	<script src="//my.interserver.net/lib/bootstrap/dist/js/bootstrap.min.js" type="text/javascript"></script>
+	<script src="//my.interserver.net/lib/sugar/release/sugar.min.js" type="text/javascript"></script>
 	<script src="//my.interserver.net/lib/ReconnectingWebSocket/reconnecting-websocket.min.js" type="text/javascript"></script>
-	<script src="//my.interserver.net/bower_components/smoothie/smoothie.js" type="text/javascript"></script>
-	<script src="//my.interserver.net/bower_components/chroma-js/chroma.min.js" type="text/javascript"></script>
+	<script src="//my.interserver.net/lib/smoothie/smoothie.js" type="text/javascript"></script>
+	<script src="//my.interserver.net/lib/chroma-js/chroma.min.js" type="text/javascript"></script>
 	<script src="js/swfobject.js" type="text/javascript"></script>
 	<script src="js/web_socket.js" type="text/javascript"></script>
 	<script src="js/vmstat.js" type="text/javascript"></script>
