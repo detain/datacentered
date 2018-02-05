@@ -32,38 +32,12 @@ var descriptions = {
 	}
 }
 
-function streamStats() {
-
-	var ws = new ReconnectingWebSocket("wss://"+document.domain+":7272");
-	var lineCount;
-	var colHeadings;
-
-	ws.onopen = function() {
-		console.log('connect');
-		ws.send('{"type":"login","client_name":"vmstat_client","room_id":"vmstat"}');
-		lineCount = 0;
-	};
-
-	ws.onclose = function() {
-		console.log('disconnect');
-	};
-
-	ws.onmessage = function(e) {
-		//console.log("got message "+e.data);
-		var data = JSON.parse(e.data);
-		switch(data['type']){
-			case 'vmstat':
-				receiveStats(data['content']);
-				break;
-		}
-	};
-}
-
 function initCharts() {
 	Object.each(descriptions, function(sectionName, values) {
 		var section = $('.chart.template').clone().removeClass('template').appendTo('#charts');
 		section.find('.title').text(sectionName);
 		var smoothie = new SmoothieChart({
+			responsive: true,
 			grid: {
 				sharpLines: true,
 				verticalSections: 5,
@@ -88,7 +62,7 @@ function initCharts() {
 			});
 			allTimeSeries[name] = timeSeries;
 			var statLine = section.find('.stat.template').clone().removeClass('template').appendTo(section.find('.stats'));
-			statLine.attr('title', valueDescription).css('color', color);
+			statLine.attr('title', valueDescription).css('color', color)
 			statLine.find('.stat-name').text(name);
 			allValueLabels[name] = statLine.find('.stat-value');
 		});
@@ -104,8 +78,3 @@ function receiveStats(stats) {
 		}
 	});
 }
-
-$(function() {
-	initCharts();
-	streamStats();
-});

@@ -9,15 +9,14 @@ function connect() {
 	socket.onopen = function() {
 		var term = new Terminal({
 			cols: 130,
-			rows: 50,
+			rows: 40,
 			cursorBlink: false
 		});
-		socket.send(JSON.stringify({"type":"phptty_run","content":"htop"}))
+		socket.send('{"type":"phptty_run","content":"htop"}');
 		term.open(document.body);
 		term.on('data', function(data) {
 			var myObj = {"type":"phptty","content":data};
 			socket.send(JSON.stringify(myObj));
-			//socket.send(data);
 		});
 		socket.onmessage = function(data) {
 			var data = JSON.parse(data.data);
@@ -26,7 +25,6 @@ function connect() {
 					term.write(data['content']);
 					break;
 			}
-			//term.write(data.data);
 		};
 		socket.onclose = function() {
 			term.write("Connection closed.");

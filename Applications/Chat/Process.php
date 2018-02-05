@@ -30,7 +30,7 @@ class Process {
 	public function __construct($client_id, $cmd) {
 		$this->client_id = $client_id;
 		$this->cmd = $cmd;
-		$this->env = array_merge(['TERM' => 'xterm', 'COLUMNS' => 130, 'LINES' => 50], $_SERVER);
+		$this->env = array_merge(['TERM' => 'xterm', 'COLUMNS' => 130, 'LINES' => 40], $_SERVER);
 	}
 
 	public function start_process() {
@@ -41,7 +41,7 @@ class Process {
 			Gateway::sendToClient($this->client_id, json_encode(['type' => 'phptty', 'content' => $data]));
 		};
 		$this->process_stdout->onClose = function($process_connection) {
-			//$this->close(); // Close WebSocket connection on process exit.
+			Gateway::closeClient($this->client_id);  // Close WebSocket connection on process exit.
 		};
 		$this->process_stdin = new TcpConnection($this->pipes[2]);
 		$this->process_stdin->onMessage = function($process_connection, $data) {

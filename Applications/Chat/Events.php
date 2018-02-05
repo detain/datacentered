@@ -22,6 +22,7 @@ $process_pipes = [];
 class Events {
 
 	public static $process_handle = null;
+	public static $process_pipes = null;
 	public static $db = null;
 	public static $db_type = 'workerman'; // workerman or react or blank for no sql
 
@@ -131,11 +132,11 @@ class Events {
 				});
 				return;
 			case 'phptty_run':
-				$process_pipes = Process::run($client_id, 'htop');
+				self::$process_pipes = Process::run($client_id, 'htop');
 				return;
 			case 'phptty':
 				//if(ALLOW_CLIENT_INPUT)
-				fwrite($process_pipes->pipes[0], $message_data['content']);
+				fwrite(self::$process_pipes->pipes[0], $message_data['content']);
 				return;
 			case 'login': // Client login message format: {type: login, name: xx, room_id: 1}, added to the client, broadcast to all clients xx into the chat room
 				if (!isset($message_data['room_id'])) // Determine whether there is a room number
