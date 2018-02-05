@@ -196,6 +196,28 @@ class Events {
 					'time' => date('Y-m-d H:i:s'),
 				];
 				return Gateway::sendToGroup($room_id ,json_encode($new_message));
+			case 'bandwidth':
+				foreach ($message_data['content'] as $ip => $data) {
+					$rrdFile = __DIR__.'/../../rrd/'.$_SESSION['client_name'].'_'.$ip.'.rrd';
+					if (!file_exists($rrdFile)) {
+						$rrd = new RRDCreator($rrdFile, 'now', 60);
+						$rrd->addDataSource('in:ABSOLUTE:60:U:U');
+						$rrd->addDataSource('out:ABSOLUTE:60:U:U');
+						$rrd->addArchive('AVERAGE:0.5:1:10080');
+						$rrd->addArchive('MIN:0.5:1:10080');
+						$rrd->addArchive('MAX:0.5:1:10080');
+						$rrd->addArchive('AVERAGE:0.5:60:8760');
+						$rrd->addArchive('MIN:0.5:60:8760');
+						$rrd->addArchive('MAX:0.5:60:8760');
+						$rrd->addArchive('AVERAGE:0.5:1440:3650');
+						$rrd->addArchive('MIN:0.5:1440:3650');
+						$rrd->addArchive('MAX:0.5:1440:3650');
+						$rrd->save();
+					}
+					$updater = new RRDUpdater($rrdFile);
+					$updater->update(['in' => $data['in'],'out' => $data['out']]);
+				}
+				return;
 		}
 	}
 
