@@ -13,7 +13,7 @@
 	<script src="//my.interserver.net/bower_components/jquery-1.11.x/dist/jquery.min.js" type="text/javascript"></script>
 	<script src="//my.interserver.net/bower_components/bootstrap/dist/js/bootstrap.min.js" type="text/javascript"></script>
 	<script src="//my.interserver.net/bower_components/sugar/release/sugar.min.js" type="text/javascript"></script>
-	<script src="//my.interserver.net/bower_components/reconnectingWebsocket/reconnecting-websocket.min.js" type="text/javascript"></script>
+	<script src="//my.interserver.net/lib/ReconnectingWebSocket/reconnecting-websocket.min.js" type="text/javascript"></script>
 	<script src="//my.interserver.net/bower_components/smoothie/smoothie.js" type="text/javascript"></script>
 	<script src="//my.interserver.net/bower_components/chroma-js/chroma.min.js" type="text/javascript"></script>
 	<script src="js/swfobject.js" type="text/javascript"></script>
