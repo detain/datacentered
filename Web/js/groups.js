@@ -8,6 +8,7 @@ var WhatsApp = (function (app) { //contacts
 		this.newmsg = 0;
 		this.groups = new Array();
 		contactList.push(this);
+		name2Image[name] = img;
 	}
 	Contact.prototype.addMessage = function (msg) {
 		this.messages.push(msg);
@@ -39,12 +40,17 @@ var WhatsApp = (function (app) { //groups
 	return appGroups;
 })(WhatsApp || {});
 var WhatsApp = (function (app) { //messages
-	function Message (text,name,time,type,group) {
+	function Message (text,name,time,type,group,img) {
 		this.text = text;
-		this.name = name,
+		this.name = name;
 		this.time = time;
 		this.type = type;
 		this.group = group;
+		if (typeof img == "undefined") {
+			this.img = name2Image[name];
+		} else {
+			this.img = img;
+		}
 	}
 	appMessages =  Message;
 	return appMessages;
@@ -68,6 +74,7 @@ var WhatsApp = (function(app) { //subject
 })(WhatsApp || {});
 var currentChat;
 var contactList = new Array();
+var name2Image = new Array();
 var WhatsApp = (function ToDoModel (app) { //model
 	var subject = new app.Subject();
 	var Model = {
@@ -90,7 +97,7 @@ var WhatsApp = (function ToDoModel (app) { //model
 						var contact = new appContacts(e.name, e.img, e.online);
 						for (var j = 0; j < e.messages.length; j++) {
 							var m = e.messages[j];
-							var message = new appMessages(m.text, m.name, m.time, m.type, false);
+							var message = new appMessages(m.text, m.name, m.time, m.type, false, e.img);
 							contact.addMessage(message);
 						}
 					}
@@ -108,10 +115,10 @@ var WhatsApp = (function ToDoModel (app) { //model
 		},
 		getMessage : function (text,id,name) {
 			if (name == undefined) {
-				var msg = new appMessages(text, contactList[id].name, new Date().getHours() + ":" + new Date().getMinutes(), false, false);
+				var msg = new appMessages(text, contactList[id].name, new Date().getHours() + ":" + new Date().getMinutes(), false, false, contactList[id].img);
 			}
 			else {
-				var msg = new appMessages(text, name, new Date().getHours() + ":" + new Date().getMinutes(), false, true);
+				var msg = new appMessages(text, name, new Date().getHours() + ":" + new Date().getMinutes(), false, true, contactList[id].img);
 			}
 			contactList[id].addMessage(msg);
 			contactList[id].online = new Date().getHours() + ":" + new Date().getMinutes();
@@ -181,18 +188,24 @@ var WhatsApp = (function ToDoView(app) { //view
 		printMessage : function (gc) {
 			if (gc.group) {
 				if (gc.type) {
-					$(".chat").append("<div class='chat-bubble me'><div class='my-mouth'></div><div class='content'>" + gc.text + "</div><div class='time'>" + gc.time + "</div></div>");
-				}
-				else {
-					$(".chat").append("<div class='chat-bubble you'><div class='your-mouth'></div><h4>" + gc.name + "</h4><div class='content'>" + gc.text + "</div><div class='time'>" + gc.time + "</div></div>");
+					$(".chat").append('<div class="me rightchat clearfix"><span class="chat-img pull-right"><img src="'+gc.img+'" alt="User Avatar"></span><div class="chat-body clearfix"><div class="header"><strong class="primary-font">'+gc.name+'</strong><small class="pull-right text-muted"><i class="fa fa-clock-o"></i> '+gc.time+'</small></div><p>'+gc.text+'</p></div>');
+					//$(".chat").append('<div class="chat-bubble me"><div class="rightchat clearfix"><span class="chat-img pull-left"><img src="'+gc.img+'" alt="User Avatar"></span><div class="chat-body clearfix"><div class="header"><strong class="primary-font">'+gc.name+'</strong><small class="pull-right text-muted"><i class="fa fa-clock-o"></i> '+gc.time+'</small></div><p>'+gc.text+'</p></div></div>');
+					//$(".chat").append("<div class='chat-bubble me'><div class='my-mouth'></div><div class='content'>" + gc.text + "</div><div class='time'>" + gc.time + "</div></div>");
+				}else {
+					$(".chat").append('<div class="you leftchat clearfix"><span class="chat-img pull-left"><img src="'+gc.img+'" alt="User Avatar"></span><div class="chat-body clearfix"><div class="header"><strong class="primary-font">'+gc.name+'</strong><small class="pull-right text-muted"><i class="fa fa-clock-o"></i> '+gc.time+'</small></div><p>'+gc.text+'</p></div>');
+					//$(".chat").append('<div class="chat-bubble you"><div class="leftchat clearfix"><span class="chat-img pull-left"><img src="'+gc.img+'" alt="User Avatar"></span><div class="chat-body clearfix"><div class="header"><strong class="primary-font">'+gc.name+'</strong><small class="pull-right text-muted"><i class="fa fa-clock-o"></i> '+gc.time+'</small></div><p>'+gc.text+'</p></div></div>');
+					//$(".chat").append("<div class='chat-bubble you'><div class='your-mouth'></div><h4>" + gc.name + "</h4><div class='content'>" + gc.text + "</div><div class='time'>" + gc.time + "</div></div>");
 				}
 			}
 			else {
 				if (gc.type) {
-					$(".chat").append("<div class='chat-bubble me'><div class='my-mouth'></div><div class='content'>" + gc.text + "</div><div class='time'>" + gc.time + "</div></div>");
-				}
-				else {
-					$(".chat").append("<div class='chat-bubble you'><div class='your-mouth'></div><div class='content'>" + gc.text + "</div><div class='time'>" + gc.time + "</div></div>");
+					$(".chat").append('<div class="me rightchat clearfix"><span class="chat-img pull-left"><img src="'+gc.img+'" alt="User Avatar"></span><div class="chat-body clearfix"><div class="header"><strong class="primary-font">'+gc.name+'</strong><small class="pull-right text-muted"><i class="fa fa-clock-o"></i> '+gc.time+'</small></div><p>'+gc.text+'</p></div>');
+					//$(".chat").append('<div class="chat-bubble me"><div class="rightchat clearfix"><span class="chat-img pull-left"><img src="'+gc.img+'" alt="User Avatar"></span><div class="chat-body clearfix"><div class="header"><strong class="primary-font">'+gc.name+'</strong><small class="pull-right text-muted"><i class="fa fa-clock-o"></i> '+gc.time+'</small></div><p>'+gc.text+'</p></div></div>');
+					//$(".chat").append("<div class='chat-bubble me'><div class='my-mouth'></div><div class='content'>" + gc.text + "</div><div class='time'>" + gc.time + "</div></div>");
+				} else {
+					$(".chat").append('<div class="you leftchat clearfix"><span class="chat-img pull-left"><img src="'+gc.img+'" alt="User Avatar"></span><div class="chat-body clearfix"><div class="header"><strong class="primary-font">'+gc.name+'</strong><small class="pull-right text-muted"><i class="fa fa-clock-o"></i> '+gc.time+'</small></div><p>'+gc.text+'</p></div>');
+					//$(".chat").append('<div class="chat-bubble you"><div class="leftchat clearfix"><span class="chat-img pull-left"><img src="'+gc.img+'" alt="User Avatar"></span><div class="chat-body clearfix"><div class="header"><strong class="primary-font">'+gc.name+'</strong><small class="pull-right text-muted"><i class="fa fa-clock-o"></i> '+gc.time+'</small></div><p>'+gc.text+'</p></div></div>');
+					//$(".chat").append("<div class='chat-bubble you'><div class='your-mouth'></div><div class='content'>" + gc.text + "</div><div class='time'>" + gc.time + "</div></div>");
 				}
 			}
 		},
@@ -215,8 +228,7 @@ var WhatsApp = (function ToDoView(app) { //view
 						}
 					});
 				}
-			}
-			else {
+			} else {
 				$(".information").append("<img src='" + currentChat.img + "'><div><h1>Name:</h1><p>" + currentChat.name + "</p></div><div id='listGroups'><h1>Mitglieder:</h1></div>");
 				for (var i = 0; i < currentChat.members.length; i++) {
 					html = $("<div class='listGroups'><img src='" + currentChat.members[i].img + "'><p>" + currentChat.members[i].name + "</p></div>");

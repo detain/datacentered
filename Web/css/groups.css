@@ -334,13 +334,13 @@ i {
 }
 
 .you {
-	background: #ffffff;
-	margin: 0px auto 10px 0px;
+	/* background: #ffffff; */
+	/* margin: 0px auto 10px 0px; */
 }
 
 .me {
-	background: #dcf8c6;
-	margin: 0px 0px 10px auto;
+	/* background: #dcf8c6; */
+	/* margin: 0px 0px 10px auto; */
 }
 
 .your-mouth {
@@ -443,4 +443,90 @@ body::-webkit-scrollbar-thumb, .contact-list::-webkit-scrollbar-thumb, .chat::-w
 	.wrap {
 		height: calc(100vh - 0.4em);
 	}
+}
+
+
+.chat .chat-img img{
+	width: 45px;
+	height: 45px;
+	border-radius: 50em;
+	-moz-border-radius: 50em;
+	-webkit-border-radius: 50em;
+}
+
+.chat-body {
+	padding-bottom: 20px;
+}
+
+.chat .leftchat .chat-body {
+	margin-left: 70px;
+	background-color: #fff;
+}
+
+.chat .chat-body {
+	position: relative;
+	font-size: 11px;
+	padding: 10px;
+	border: 1px solid #f1f5fc;
+	box-shadow: 0 1px 1px rgba(0,0,0,.05);
+	-moz-box-shadow: 0 1px 1px rgba(0,0,0,.05);
+	-webkit-box-shadow: 0 1px 1px rgba(0,0,0,.05);
+}
+
+.chat .chat-body .header {
+	padding-bottom: 5px;
+	border-bottom: 1px solid #f1f5fc;
+}
+
+.chat .chat-body p {
+	margin: 0;
+}
+
+.chat .leftchat .chat-body:before {
+	position: absolute;
+	top: 10px;
+	left: -8px;
+	display: inline-block;
+	background: #fff;
+	width: 16px;
+	height: 16px;
+	border-top: 1px solid #f1f5fc;
+	border-left: 1px solid #f1f5fc;
+	content: '';
+	transform: rotate(-45deg);
+	-webkit-transform: rotate(-45deg);
+	-moz-transform: rotate(-45deg);
+	-ms-transform: rotate(-45deg);
+	-o-transform: rotate(-45deg);
+}
+
+.chat .rightchat .chat-body:before {
+	position: absolute;
+	top: 10px;
+	right: -8px;
+	display: inline-block;
+	background: #fff;
+	width: 16px;
+	height: 16px;
+	border-top: 1px solid #f1f5fc;
+	border-right: 1px solid #f1f5fc;
+	content: '';
+	transform: rotate(45deg);
+	-webkit-transform: rotate(45deg);
+	-moz-transform: rotate(45deg);
+	-ms-transform: rotate(45deg);
+	-o-transform: rotate(45deg);
+}
+
+.chat>div {
+	margin: 15px 0;
+}
+
+.chat .rightchat .chat-body {
+	margin-right: 70px;
+	background-color: #fff;
+}
+
+.primary-font {
+	color: #3c8dbc;
 }
