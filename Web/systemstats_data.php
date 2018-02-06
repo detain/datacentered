@@ -8,13 +8,13 @@ if (method_exists('Workerman\\Protocols\\Http', 'header'))
 	\Workerman\Protocols\Http::header('Content-type: application/json');
 else
 	header('Content-type: application/json');
-
 $stats = [];
-if (!isset($_GET['q']) || $_GET['q'] == 'all') {
+if ($_GET['q'] == 'all') {
 	foreach (['System','Network','Storage'] as $base) {
 		$class_methods = get_class_methods($base.'Stats');
 		foreach ($class_methods as $method_name)
-			$stats[$method_name] = call_user_func($base.'Stats::'.$method_name);
+			if ($method_name != 'curl')
+				$stats[$method_name] = call_user_func($base.'Stats::'.$method_name);
 	}
 } else if ($_GET['q'] == 'cpu') {
 	$stats['cpu_load_perc_free'] = SystemStats::cpu_load_perc_free();
@@ -25,6 +25,4 @@ if (!isset($_GET['q']) || $_GET['q'] == 'all') {
 	$stats['total_downloaded'] = NetworkStats::total_downloaded();
 	$stats['total_uploaded'] = NetworkStats::total_uploaded();
 }
-print_r($stats);
-echo PHP_EOL;
 print json_encode($stats);

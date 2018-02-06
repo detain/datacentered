@@ -1,0 +1,388 @@
+{
+  "elements" : [
+	{
+	  "name" : "Joe Huss",
+	  "img" : "https://secure.gravatar.com/avatar/065c28922ef7e01231170abe5457f5a0?s=100&d=mm&r=x",
+	  "online": "16:48",
+	  "messages" : [
+		{
+		  "text" : "Hello",
+		  "name" : "Joe Huss",
+		  "time" : "16:01",
+		  "type" : true
+		},
+		{
+		  "text" : "Hello",
+		  "name" : "Joe Huss",
+		  "time" : "16:20",
+		  "type" : false
+		},
+		{
+		  "text" : "Hello",
+		  "name" : "Joe Huss",
+		  "time" : "16:24",
+		  "type" : true
+		},
+		{
+		  "text" : "Hello",
+		  "name" : "Joe Huss",
+		  "time" : "16:27",
+		  "type" : false
+		},
+		{
+		  "text" : "Hello",
+		  "name" : "Joe Huss",
+		  "time" : "16:31",
+		  "type" : true
+		},
+		{
+		  "text" : "Hello",
+		  "name" : "Joe Huss",
+		  "time" : "16:40",
+		  "type" : false
+		},
+		{
+		  "text" : "Hello",
+		  "name" : "Joe Huss",
+		  "time" : "16:43",
+		  "type" : true
+		},
+		{
+		  "text" : "Hello",
+		  "name" : "Joe Huss",
+		  "time" : "16:44",
+		  "type" : false
+		},
+		{
+		  "text" : "Hello",
+		  "name" : "Joe Huss",
+		  "time" : "16:47",
+		  "type" : true
+		},
+		{
+		  "text" : "Hello",
+		  "name" : "Joe Huss",
+		  "time" : "16:48",
+		  "type" : false
+		},
+		{
+		  "text" : "Hello",
+		  "name" : "Joe Huss",
+		  "time" : "16:50",
+		  "type" : true
+		}
+	  ]
+	},
+	{
+	  "name" : "Britney Spears",
+	  "img" : "https://pbs.twimg.com/media/CPZTEv8UYAAgj-1.jpg",
+	  "online": "17:21",
+	  "messages" : [
+		{
+		  "text" : "Hello",
+		  "time" : "16:45",
+		  "type" : false
+		},
+		{
+		  "text" : "Hello",
+		  "time" : "16:48",
+		  "type" : true
+		},
+		{
+		  "text" : "Hello",
+		  "time" : "16:55",
+		  "type" : false
+		},
+		{
+		  "text" : "Hello",
+		  "time" : "17:01",
+		  "type" : true
+		},
+		{
+		  "text" : "Hello",
+		  "time" : "17:06",
+		  "type" : false
+		},
+		{
+		  "text" : "Hello",
+		  "time" : "17:15",
+		  "type" : true
+		},
+		{
+		  "text" : "Hello",
+		  "time" : "17:19",
+		  "type" : false
+		},
+		{
+		  "text" : "Hello",
+		  "time" : "17:20",
+		  "type" : true
+		},
+		{
+		  "text" : "Hello",
+		  "time" : "17:21",
+		  "type" : false
+		}
+	  ]
+	},
+	{
+	  "name" : "Heather Graham",
+	  "img" : "https://www.famousbirthdays.com/headshots/heather-graham-2.jpg",
+	  "online": "17:31",
+	  "messages" : [
+		{
+		  "text" : "Hello",
+		  "time" : "16:54",
+		  "type" : true
+		},
+		{
+		  "text" : "Hello",
+		  "time" : "16:16",
+		  "type" : false
+		},
+		{
+		  "text" : "Hello",
+		  "time" : "17:18",
+		  "type" : true
+		},
+		{
+		  "text" : "Hello",
+		  "time" : "17:18",
+		  "type" : true
+		},
+		{
+		  "text" : "Hello",
+		  "time" : "17:18",
+		  "type" : false
+		},
+		{
+		  "text" : "Hello",
+		  "time" : "17:19",
+		  "type" : true
+		},
+		{
+		  "text" : "Hello",
+		  "time" : "17:25",
+		  "type" : false
+		},
+		{
+		  "text" : "Hello",
+		  "time" : "17:28",
+		  "type" : true
+		},
+		{
+		  "text" : "Hello",
+		  "time" : "17:30",
+		  "type" : false
+		},
+		{
+		  "text" : "Hello",
+		  "time" : "17:30",
+		  "type" : true
+		},
+		{
+		  "text" : "Hello",
+		  "time" : "17:31",
+		  "type" : false
+		}
+	  ]
+	},
+	{
+	  "name" : "Alicia Silverstone",
+	  "img" : "http://img.cache.vevo.com/thumb/cms/c62e66a7b88703860ea27e67852482ac2015304142911433.png",
+	  "online": "17:40",
+	  "messages" : [
+		{
+		  "text" : "Hello",
+		  "time" : "17:24",
+		  "type" : false
+		},
+		{
+		  "text" : "Hello",
+		  "time" : "17:38",
+		  "type" : true
+		},
+		{
+		  "text" : "Hello",
+		  "time" : "17:40",
+		  "type" : false
+		},
+		{
+		  "text" : "Hello",
+		  "time" : "17:41",
+		  "type" : true
+		}
+	  ]
+	},
+	{
+	  "name" : "Liv Tyler",
+	  "img" : "https://upload.wikimedia.org/wikipedia/commons/thumb/4/4f/Live_Tyler.jpg/220px-Live_Tyler.jpg",
+	  "online": "currently online 10:01",
+	  "messages" : [
+		{
+		  "text" : "Hello",
+		  "time" : "17:24",
+		  "type" : false
+		},
+		{
+		  "text" : "Hello",
+		  "time" : "17:38",
+		  "type" : true
+		},
+		{
+		  "text" : "Hello",
+		  "time" : "17:40",
+		  "type" : false
+		},
+		{
+		  "text" : "Hello",
+		  "time" : "17:41",
+		  "type" : true
+		}
+	  ]
+	},
+	{
+	  "name" : "Sexy People",
+	  "img" : "https://cdn3.iconfinder.com/data/icons/events-birthday-party/64/Kids_Party_celebration_birthday_lights_cakes_event-512.png",
+	  "members" : [
+		{
+		  "contact" : "0"
+		},
+		{
+		  "contact" : "1"
+		},
+		{
+		  "contact" : "2"
+		}
+	  ],
+	  "messages" : [
+		{
+		  "text" : "Hello",
+		  "name" : "Mariah Carey",
+		  "time" : "17:30",
+		  "type" : true
+		},
+		{
+		  "text" : "Hello",
+		  "name" : "Britney Spears",
+		  "time" : "17:32",
+		  "type" : false
+		},
+		{
+		  "text" : "Hello",
+		  "name" : "Mariah Carey",
+		  "time" : "17:33",
+		  "type" : true
+		},
+		{
+		  "text" : "Hello",
+		  "name" : "Joe Huss",
+		  "time" : "17:32",
+		  "type" : false
+		},
+		{
+
+		  "text" : "Hello",
+		  "name" : "Britney Spears",
+		  "time" : "17:33",
+		  "type" : false
+		},
+		{
+		  "text" : "Hello",
+		  "name" : "Joe Huss",
+		  "time" : "17:35",
+		  "type" : false
+		},
+		{
+		  "text" : "Hello",
+		  "name" : "Heather Graham",
+		  "time" : "17:44",
+		  "type" : false
+		}
+	  ]
+	},
+	{
+	  "name" : "Cool Kids",
+	  "img" : "https://upload.wikimedia.org/wikipedia/commons/thumb/a/a6/Rubik%27s_cube.svg/220px-Rubik%27s_cube.svg.png",
+	  "members" : [
+		{
+		  "contact" : "3"
+		},
+		{
+		  "contact" : "4"
+		},
+		{
+		  "contact" : "0"
+		}
+	  ],
+	  "messages" : [
+		{
+		  "text" : "Hello",
+		  "name" : "Joe Huss",
+		  "time" : "17:40",
+		  "type" : false
+		},
+		{
+		  "text" : "Hello",
+		  "name" : "Alicia Silverstone",
+		  "time" : "17:41",
+		  "type" : false
+		},
+		{
+		  "text" : "Hello",
+		  "name" : "Liv Tyler",
+		  "time" : "17:43",
+		  "type" : false
+		},
+		{
+		  "text" : "Hello",
+		  "name" : "Joe Huss",
+		  "time" : "17:44",
+		  "type" : false
+		},
+		{
+		  "text" : "Hello",
+		  "name" : "Liv Tyler",
+		  "time" : "17:47",
+		  "type" : false
+		},
+		{
+		  "text" : "Hello",
+		  "name" : "Mariah Carey",
+		  "time" : "17:48",
+		  "type" : true
+		},
+		{
+		  "text" : "Hello",
+		  "name" : "Alicia Silverstone",
+		  "time" : "17:50",
+		  "type" : false
+		},
+		{
+		  "text" : "Hello",
+		  "name" : "Mariah Carey",
+		  "time" : "17:53",
+		  "type" : true
+		},
+		{
+		  "text" : "Hello",
+		  "name" : "Joe Huss",
+		  "time" : "17:53",
+		  "type" : false
+		},
+		{
+		  "text" : "Hello",
+		  "name" : "Alicia Silverstone",
+		  "time" : "17:54",
+		  "type" : false
+		},
+		{
+		  "text" : "Hello",
+		  "name" : "Liv Tyler",
+		  "time" : "17:54",
+		  "type" : false
+		}
+	  ]
+	}
+  ]
+}
