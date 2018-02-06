@@ -1,15 +1,16 @@
 <?php
-use \Workerman\Protocols\Http;
 
 include_once __DIR__.'/../../vps_hosts/workerman/SystemStats.php';
 include_once __DIR__.'/../../vps_hosts/workerman/NetworkStats.php';
 include_once __DIR__.'/../../vps_hosts/workerman/StorageStats.php';
 
-Http::header('Content-type: application/json');
-//header('Content-type: application/json');
+if (method_exists('Workerman\\Protocols\\Http', 'header'))
+	\Workerman\Protocols\Http::header('Content-type: application/json');
+else
+	header('Content-type: application/json');
 
 $stats = [];
-if ($_GET['q'] == 'all') {
+if (!isset($_GET['q']) || $_GET['q'] == 'all') {
 	foreach (['System','Network','Storage'] as $base) {
 		$class_methods = get_class_methods($base.'Stats');
 		foreach ($class_methods as $method_name)
@@ -24,4 +25,6 @@ if ($_GET['q'] == 'all') {
 	$stats['total_downloaded'] = NetworkStats::total_downloaded();
 	$stats['total_uploaded'] = NetworkStats::total_uploaded();
 }
+print_r($stats);
+echo PHP_EOL;
 print json_encode($stats);

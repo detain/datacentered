@@ -200,6 +200,7 @@ class Events {
 				foreach ($message_data['content'] as $ip => $data) {
 					$rrdFile = __DIR__.'/../../rrd/'.$_SESSION['client_name'].'_'.$ip.'.rrd';
 					if (!file_exists($rrdFile)) {
+						@mkdir($rrdFile = __DIR__.'/../../rrd/'.$_SESSION['client_name'], 777, TRUE);
 						$rrd = new RRDCreator($rrdFile, 'now', 60);
 						$rrd->addDataSource('in:ABSOLUTE:60:U:U');
 						$rrd->addDataSource('out:ABSOLUTE:60:U:U');
