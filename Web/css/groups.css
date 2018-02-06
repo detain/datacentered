@@ -10,6 +10,12 @@ body {
 	background: #dbdbdb;
 }
 
+.chat-head i {
+	width: 32px;
+	height: 32px;
+	margin-left: 14px;
+	margin-right: 14px;
+}
 i {
 	width: 60px;
 	margin: auto;

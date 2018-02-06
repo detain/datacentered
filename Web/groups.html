@@ -3,15 +3,21 @@
 	<head>
 		<meta charset="UTF-8">
 		<title>Title</title>
-		<link href="https://fonts.googleapis.com/css?family=Roboto" rel="stylesheet">
-		<!-- <script src="https://my.interserver.net/lib/font-awesome/css/font-awesome.min.css"></script> -->
-		<link href="https://my.interserver.net/lib/bootstrap/dist/css/bootstrap.min.css" rel="stylesheet">
+		<link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto">
+		<link rel="stylesheet" href="https://my.interserver.net/lib/bootstrap/dist/css/bootstrap.min.css"
+		<link rel="stylesheet" href="https://my.interserver.net/lib/bootstrap/dist/css/bootstrap-theme.min.css">
+		<link rel="stylesheet" href="https://my.interserver.net/lib/font-awesome/css/font-awesome.min.css ">
 		<link rel="stylesheet" href="css/groups.css">
 		<link rel="stylesheet" href="css/cats.css">
-		<script src="https://use.fontawesome.com/1c6f725ec5.js"></script>
-		<script src='https://cdnjs.cloudflare.com/ajax/libs/jquery/3.1.1/jquery.min.js'></script>
+		<link rel="stylesheet" href="https://my.interserver.net/images/myadmin/css/styles.css">
+		<script src="https://my.interserver.net/lib/jquery-1.11.x/dist/jquery.min.js"></script>
 		<script src="https://my.interserver.net/lib/bootstrap/dist/js/bootstrap.min.js"></script>
-		<script  src="js/groups.js"></script>
+		<script src="https://my.interserver.net/lib/sugar/release/sugar.min.js"></script>
+		<script src="https://my.interserver.net/lib/ReconnectingWebSocket/reconnecting-websocket.min.js"></script>
+		<script src="https://my.interserver.net/lib/smoothie/smoothie.js"></script>
+		<script src="https://my.interserver.net/lib/chroma-js/chroma.min.js"></script>
+		<script src="js/swfobject.js"></script>
+		<script src="js/groups.js?2018020601"></script>
 	</head>
 	<body>
 		<div class="green-background"></div>
@@ -40,10 +46,11 @@
 						<h1 class="font-name"></h1>
 						<p class="font-online"></p>
 					</div>
-					<i class="fa fa-search fa-lg" aria-hidden="true"></i>
-					<i class="fa fa-paperclip fa-lg" aria-hidden="true"></i>
-					<i class="fa fa-bars fa-lg" aria-hidden="true" id="show-contact-information"></i>
-					<i class="fa fa-times fa-lg" aria-hidden="true" id="close-contact-information"></i>
+					<i class="icon-ecg" aria-hidden="true"><svg><use xlink:href="img/MyAdmin-Icons.min.svg#icon-ecg"></use></svg></i>
+					<i class="icon-search" aria-hidden="true"><svg><use xlink:href="img/MyAdmin-Icons.min.svg#icon-search"></use></svg></i>
+					<i class="icon-upload" aria-hidden="true"><svg><use xlink:href="img/MyAdmin-Icons.min.svg#icon-upload"></use></svg></i>
+					<i class="icon-menu" aria-hidden="true" id="show-contact-information"><svg><use xlink:href="img/MyAdmin-Icons.min.svg#icon-menu"></use></svg></i>
+					<i class="fa fa-lg fa-close fa-2x" aria-hidden="true" id="close-contact-information"><svg><use xlink:href="img/MyAdmin-Icons.min.svg#icon-close"></use></svg></i>
 				</div>
 				<div class="wrap-chat">
 					<div class="chat"></div>
@@ -124,7 +131,7 @@
 					<div class="modal-footer">
 						<div class="col-md-12">
 							<div class="form-group">
-								<button type="submit" class="btn btn-primary" onclick="login_to_server(); return false; ">Sign In</button>
+								<button type="button" class="btn btn-primary" onclick="login_to_server();">Sign In</button>
 							</div>
 						</div>
 					</div>
