@@ -155,9 +155,8 @@ var WhatsApp = (function ToDoView(app) { //view
 			$(".chat-head #chat-target-picture").css('display', 'block').attr("src",cg.img);
 			$(".chat-name h1").text(cg.name);
 			if(cg.members == undefined) {
-				$(".chat-name p").text("zuletzt online um " + cg.online);
-				// Nachrichten konfigurieren
-				$(".chat-bubble").remove();
+					$(".chat-name p").text("Last Online" + cg.online);
+				$(".chat-bubble").remove(); // configure messages
 				for (var i=0; i<cg.messages.length; i++) {
 					WhatsApp.View.printMessage(cg.messages[i]);
 				}
@@ -172,8 +171,7 @@ var WhatsApp = (function ToDoView(app) { //view
 					}
 				}
 				$(".chat-name p").text(listMembers);
-				// Nachrichten konfigurieren
-				$(".chat-bubble").remove();
+				$(".chat-bubble").remove(); // configure message
 				for (var i=0; i<cg.messages.length; i++) {
 					WhatsApp.View.printMessage(cg.messages[i]);
 				}
@@ -317,3 +315,10 @@ var WhatsApp = (function ToDoCtrl(app) { //controller
 	return app;
 })(WhatsApp);
 WhatsApp.Model.register(WhatsApp.View, WhatsApp.Ctrl);
+$(document).ready(function() {
+	$("#loginModal").modal('show');
+});
+
+function login_to_server() {
+	$("#loginModal").modal('hide');
+}

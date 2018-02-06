@@ -1,68 +1,136 @@
 <!DOCTYPE html>
-<html lang="en" >
+<html lang="en">
 	<head>
 		<meta charset="UTF-8">
-		<title>Web groups</title>
+		<title>Title</title>
+		<link href="https://fonts.googleapis.com/css?family=Roboto" rel="stylesheet">
+		<!-- <script src="https://my.interserver.net/lib/font-awesome/css/font-awesome.min.css"></script> -->
+		<link href="https://my.interserver.net/lib/bootstrap/dist/css/bootstrap.min.css" rel="stylesheet">
 		<link rel="stylesheet" href="css/groups.css">
+		<link rel="stylesheet" href="css/cats.css">
+		<script src="https://use.fontawesome.com/1c6f725ec5.js"></script>
+		<script src='https://cdnjs.cloudflare.com/ajax/libs/jquery/3.1.1/jquery.min.js'></script>
+		<script src="https://my.interserver.net/lib/bootstrap/dist/js/bootstrap.min.js"></script>
+		<script  src="js/groups.js"></script>
 	</head>
 	<body>
-		<html lang="en">
-			<head>
-				<meta charset="UTF-8">
-				<title>Title</title>
-				<link href="https://fonts.googleapis.com/css?family=Roboto" rel="stylesheet">
-				<!-- <script src="https://my.interserver.net/lib/font-awesome/css/font-awesome.min.css"></script> -->
-				<script src="https://use.fontawesome.com/1c6f725ec5.js"></script>
-			</head>
-			<body>
-				<div class="green-background"></div>
-				<div class="wrap">
-					<section class="left active">
-						<div class="profile">
-							<img src="//secure.gravatar.com/avatar/065c28922ef7e01231170abe5457f5a0?s=40&d=mm&r=x">
-							<div class="icons">
-								<i class="fa fa-commenting fa-lg" aria-hidden="true"></i>
-								<i class="fa fa-expand fa-lg" aria-hidden="true" id="grow-contact-list"></i>
-								<i class="fa fa-compress fa-lg" aria-hidden="true" id="shrink-contact-list"></i>
-
-							</div>
-						</div>
-						<div class="wrap-search">
-							<div class="search">
-								<i class="fa fa-search fa" aria-hidden="true"></i>
-								<input type="text" class="input-search" placeholder="Search">
-							</div>
-						</div>
-						<div class="contact-list"></div>
-					</section>
-					<section class="right">
-						<div class="chat-head">
-							<img id="chat-target-picture"alt="profilepicture">
-							<div class="chat-name">
-								<h1 class="font-name"></h1>
-								<p class="font-online"></p>
-							</div>
-							<i class="fa fa-search fa-lg" aria-hidden="true"></i>
-							<i class="fa fa-paperclip fa-lg" aria-hidden="true"></i>
-							<i class="fa fa-bars fa-lg" aria-hidden="true" id="show-contact-information"></i>
-							<i class="fa fa-times fa-lg" aria-hidden="true" id="close-contact-information"></i>
-						</div>
-						<div class="wrap-chat">
-							<div class="chat"></div>
-							<div class="information"></div>
-						</div>
-						<div class="wrap-message">
-							<i class="fa fa-smile-o fa-lg" aria-hidden="true"></i>
-							<div class="message">
-								<input type="text" class="input-message" placeholder="Send a message">
-							</div>
-							<i class="fa fa-microphone fa-lg" aria-hidden="true"></i>
-						</div>
-					</section>
+		<div class="green-background"></div>
+		<div class="wrap">
+			<section class="left active">
+				<div class="profile">
+					<img src="https://secure.gravatar.com/avatar/065c28922ef7e01231170abe5457f5a0?s=40&d=mm&r=x">
+					<div class="icons">
+						<i class="fa fa-commenting fa-lg" aria-hidden="true"></i>
+						<i class="fa fa-expand fa-lg" aria-hidden="true" id="grow-contact-list"></i>
+						<i class="fa fa-compress fa-lg" aria-hidden="true" id="shrink-contact-list"></i>
+					</div>
 				</div>
-			</body>
-		</html>
-		<script src='https://cdnjs.cloudflare.com/ajax/libs/jquery/3.1.1/jquery.min.js'></script>
-		<script  src="js/groups.js"></script>
+				<div class="wrap-search">
+					<div class="search">
+						<i class="fa fa-search fa" aria-hidden="true"></i>
+						<input type="text" class="input-search" placeholder="Search">
+					</div>
+				</div>
+				<div class="contact-list"></div>
+			</section>
+			<section class="right">
+				<div class="chat-head">
+					<img id="chat-target-picture" alt="profilepicture">
+					<div class="chat-name">
+						<h1 class="font-name"></h1>
+						<p class="font-online"></p>
+					</div>
+					<i class="fa fa-search fa-lg" aria-hidden="true"></i>
+					<i class="fa fa-paperclip fa-lg" aria-hidden="true"></i>
+					<i class="fa fa-bars fa-lg" aria-hidden="true" id="show-contact-information"></i>
+					<i class="fa fa-times fa-lg" aria-hidden="true" id="close-contact-information"></i>
+				</div>
+				<div class="wrap-chat">
+					<div class="chat"></div>
+					<div class="information"></div>
+				</div>
+				<div class="wrap-message">
+					<i class="fa fa-smile-o fa-lg" aria-hidden="true"></i>
+					<div class="message">
+						<input type="text" class="input-message" placeholder="Send a message">
+					</div>
+					<i class="fa fa-microphone fa-lg" aria-hidden="true"></i>
+				</div>
+			</section>
+		</div>
+
+		<div id="loginModal" class="modal fade" tabindex="-1" role="dialog" aria-hidden="true">
+			<div class="modal-dialog modal-lg" role="document">
+				<div class="modal-content">
+					<form class="form" method="POST" action="#">
+					<div class="modal-header">
+						<button type="button" class="close" data-dismiss="modal" aria-hidden="true">×</button>
+						<h1 class="text-center" style="margin: 0;">System Login</h1>
+					</div>
+					<div class="modal-body">
+						<div class="row">
+							<div class="col-md-12 center-block" style="text-align: center;">
+								<div style="width: 800px; height: 200px;display: inline-flex; text-align: center;">
+									<div class='leftside'>
+										<div class='cat'>
+											<div class='ears1'></div>
+											<div class='head1'>
+												<div class='eyes1'></div>
+												<div class='nose1'></div>
+											</div>
+											<div class='body1'>
+												<div class='left-paw1'></div>
+												<div class='right-paw1'></div>
+											</div>
+											<div class='tail1'></div>
+											<div class='PRlaptop'>
+												<div class='PRscreen'></div>
+												<div class='PRkeyboard'></div>
+											</div>
+										</div>
+									</div>
+									<div class='rightside'>
+										<div class='dog'>
+											<div class='ears2'></div>
+											<div class='head2'>
+												<div class='eyes2'></div>
+												<div class='nose2'></div>
+											</div>
+											<div class='body2'>
+												<div class='left-paw2'></div>
+												<div class='right-paw2'></div>
+											</div>
+											<div class='tail2'></div>
+											<div class='ORlaptop'>
+												<div class='ORscreen'></div>
+												<div class='ORkeyboard'></div>
+											</div>
+										</div>
+									</div>
+								</div>
+								<div class="col-xs-6">
+								<div class="form-group">
+									<label for="email">Login Name</label>
+									<input type="text" class="form-control" placeholder="Email" id="email" name="email">
+								</div></div>
+								<div class="col-xs-6">
+								<div class="form-group">
+									<label for="password">Password</label>
+									<input type="password" class="form-control" placeholder="Password" name="password" id="password">
+								</div>
+								</div>
+						</div>
+					</div>
+					<div class="modal-footer">
+						<div class="col-md-12">
+							<div class="form-group">
+								<button type="submit" class="btn btn-primary" onclick="login_to_server(); return false; ">Sign In</button>
+							</div>
+						</div>
+					</div>
+					</form>
+				</div>
+			</div>
+		</div>
 	</body>
 </html>
