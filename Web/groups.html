@@ -22,13 +22,13 @@
 	<body>
 		<div class="green-background"></div>
 		<div class="wrap">
-			<section class="left active">
+			<section class="chat-left active">
 				<div class="profile">
-					<img src="https://secure.gravatar.com/avatar/065c28922ef7e01231170abe5457f5a0?s=40&d=mm&r=x">
+					<i class="img icon-chat" aria-hidden="true"><svg><use xlink:href="img/MyAdmin-Icons.min.svg#icon-chat"></use></svg></i>
+					<div class="img-text">MyAdmin</div>
 					<div class="icons">
-						<i class="fa fa-commenting fa-lg" aria-hidden="true"></i>
-						<i class="fa fa-expand fa-lg" aria-hidden="true" id="grow-contact-list"></i>
-						<i class="fa fa-compress fa-lg" aria-hidden="true" id="shrink-contact-list"></i>
+						<i class="fa fa-expand fa-lg" aria-hidden="true" id="grow-left-list"></i>
+						<i class="fa fa-compress fa-lg" aria-hidden="true" id="shrink-left-list"></i>
 					</div>
 				</div>
 				<div class="wrap-search">
@@ -37,17 +37,17 @@
 						<input type="text" class="input-search" placeholder="Search">
 					</div>
 				</div>
-				<div class="contact-list"></div>
+				<div class="room-list"></div>
 			</section>
-			<section class="right">
+			<section class="chat-center">
 				<div class="chat-head">
 					<img id="chat-target-picture" alt="profilepicture">
 					<div class="chat-name">
 						<h1 class="font-name"></h1>
 						<p class="font-online"></p>
 					</div>
-					<i class="icon-ecg" aria-hidden="true"><svg><use xlink:href="img/MyAdmin-Icons.min.svg#icon-ecg"></use></svg></i>
 					<i class="icon-search" aria-hidden="true"><svg><use xlink:href="img/MyAdmin-Icons.min.svg#icon-search"></use></svg></i>
+					<i class="icon-ecg" aria-hidden="true"><svg><use xlink:href="img/MyAdmin-Icons.min.svg#icon-ecg"></use></svg></i>
 					<i class="icon-upload" aria-hidden="true"><svg><use xlink:href="img/MyAdmin-Icons.min.svg#icon-upload"></use></svg></i>
 					<i class="icon-menu" aria-hidden="true" id="show-contact-information"><svg><use xlink:href="img/MyAdmin-Icons.min.svg#icon-menu"></use></svg></i>
 					<i class="fa fa-lg fa-close fa-2x" aria-hidden="true" id="close-contact-information"><svg><use xlink:href="img/MyAdmin-Icons.min.svg#icon-close"></use></svg></i>
@@ -63,6 +63,23 @@
 					</div>
 					<i class="fa fa-microphone fa-lg" aria-hidden="true"></i>
 				</div>
+			</section>
+			<section class="chat-right active">
+				<div class="profile">
+					<div class="icons">
+						<i class="fa fa-expand fa-lg" aria-hidden="true" id="grow-right-list"></i>
+						<i class="fa fa-compress fa-lg" aria-hidden="true" id="shrink-right-list"></i>
+						<i class="fa fa-commenting fa-lg" aria-hidden="true"></i>
+					</div>
+					<img src="https://secure.gravatar.com/avatar/065c28922ef7e01231170abe5457f5a0?s=40&d=mm&r=x">
+				</div>
+				<div class="wrap-search">
+					<div class="search">
+						<i class="fa fa-search fa" aria-hidden="true"></i>
+						<input type="text" class="input-search" placeholder="Search">
+					</div>
+				</div>
+				<div class="contact-list"></div>
 			</section>
 		</div>
 

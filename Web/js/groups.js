@@ -22,13 +22,14 @@ var WhatsApp = (function (app) { //contacts
 var WhatsApp = (function (app) { //groups
 
 	function Group (name,img) {
-		this.id = contactList.length;
+		this.id = roomList.length;
 		this.name = name;
 		this.img = img;
 		this.members = new Array();
 		this.messages = new Array();
 		this.newmsg = 0;
-		contactList.push(this);
+		roomList.push(this);
+		//contactList.push(this);
 	}
 	Group.prototype.addMember = function (contact) {
 		this.members.push(contact);
@@ -74,6 +75,7 @@ var WhatsApp = (function(app) { //subject
 })(WhatsApp || {});
 var currentChat;
 var contactList = new Array();
+var roomList = new Array();
 var name2Image = new Array();
 var WhatsApp = (function ToDoModel (app) { //model
 	var subject = new app.Subject();
@@ -144,6 +146,19 @@ var WhatsApp = (function ToDoModel (app) { //model
 var first = true;
 var WhatsApp = (function ToDoView(app) { //view
 	var view = {
+		printRoom : function (c) {
+			$("#" + c.id).remove();
+			var lastmsg = c.messages[c.messages.length - 1];
+			if (c.newmsg == 0) {
+				var html = $("<div class='room' id='" + c.id + "'><img src='" + c.img + "' alt='profilpicture'><div class='contact-preview'><div class='contact-text'><h1 class='font-name'>" + c.name + "</h1><p class='font-preview'>" + lastmsg.text + "</p></div></div><div class='contact-time'><p>" + lastmsg.time + "</p></div></div>");
+			}
+			else {
+				var html = $("<div class='room new-message-contact' id='" + c.id + "'><img src='" + c.img + "' alt='profilpicture'><div class='contact-preview'><div class='contact-text'><h1 class='font-name'>" + c.name + "</h1><p class='font-preview'>" + lastmsg.text + "</p></div></div><div class='contact-time'><p>" + lastmsg.time + "</p><div class='new-message' id='nm" + c.id + "'><p>" + c.newmsg + "</p></div></div></div>");
+			}
+			var that = c;
+			$(".room-list").prepend(html);
+			WhatsApp.Ctrl.addClick(html, that);
+		} ,
 		printContact : function (c) {
 			$("#" + c.id).remove();
 			var lastmsg = c.messages[c.messages.length - 1];
@@ -251,19 +266,33 @@ var WhatsApp = (function ToDoView(app) { //view
 			$(".information >").remove();
 			$(".information").hide();
 		},
-		growContactList : function () {
-			$('.left').addClass('active');
+		growRoomList : function () {
+			$('.chat-left').addClass('active');
 			/*
-			$('.right').css({
-			  marginLeft: $(".left").outerWidth() + "px"
+			$('.chat-center').css({
+			  marginLeft: $(".chat-left").outerWidth() + "px"
 			});
-			$('.left').css({
+			$('.chat-left').css({
+			  right: "0px",
+			  opacity: "1"
+			});*/
+		},
+		shrinkRoomList : function () {
+			$('.chat-left').removeClass('active');
+		},
+		growContactList : function () {
+			$('.chat-right').addClass('active');
+			/*
+			$('.chat-center').css({
+			  marginLeft: $(".chat-left").outerWidth() + "px"
+			});
+			$('.chat-right').css({
 			  right: "0px",
 			  opacity: "1"
 			});*/
 		},
 		shrinkContactList : function () {
-			$('.left').removeClass('active');
+			$('.chat-right').removeClass('active');
 		},
 		//Observer-Methode
 		notify: function () {
@@ -274,9 +303,15 @@ var WhatsApp = (function ToDoView(app) { //view
 					currentChat = contactList[i];
 				}
 				first = false;
+				for (var i = 0; i < roomList.length; i++) {
+					WhatsApp.View.printRoom(roomList[i]);
+					currentChat = roomList[i];
+				}
+				first = false;
 			}
 			else {
 				WhatsApp.View.printContact(currentChat);
+				WhatsApp.View.printRoom(currentChat);
 			}
 		}
 	}
@@ -313,10 +348,16 @@ var WhatsApp = (function ToDoCtrl(app) { //controller
 				$("#close-contact-information").on("click",function(){
 					WhatsApp.View.closeContactInformation();
 				});
-				$("#grow-contact-list").on("click",function(){
+				$("#grow-left-list").on("click",function(){
+					WhatsApp.View.growRoomList();
+				});
+				$("#shrink-left-list").on("click",function(){
+					WhatsApp.View.shrinkRoomList();
+				});
+				$("#grow-right-list").on("click",function(){
 					WhatsApp.View.growContactList();
 				});
-				$("#shrink-contact-list").on("click",function(){
+				$("#shrink-right-list").on("click",function(){
 					WhatsApp.View.shrinkContactList();
 				});
 				start = false;
@@ -422,6 +463,7 @@ function onmessage(e) {
 			//{"type":"logout","client_id":xxx,"time":"xxx"}
 			say(data['from_client_id'], data['from_client_name'], data['from_client_name']+' Quit', data['time']);
 			delete client_list[data['from_client_id']];
+			flush_room_list();
 			flush_client_list();
 	}
 }
@@ -439,6 +481,23 @@ function onSubmit() {
 	ws.send('{"type":"say","to_client_id":"'+to_client_id+'","to_client_name":"'+to_client_name+'","content":"'+input.value.replace(/"/g, '\\"').replace(/\n/g,'\\n').replace(/\r/g, '\\r')+'"}');
 	input.value = "";
 	input.focus();
+}
+
+// Refresh chat room list box
+function flush_room_list(){
+	var userlist_window = $("#roomlist");
+	var client_list_slelect = $("#room_list");
+	userlist_window.empty();
+	client_list_slelect.empty();
+	userlist_window.append('<h4>Online Users</h4><ul>');
+	client_list_slelect.append('<option value="all" id="cli_all">Everyone</option>');
+	for(var p in client_list){
+		userlist_window.append('<li id="'+p+'" class="bounceInDown"><a href="#" class="clearfix"><img src="https://bootdey.com/img/Content/user_3.jpg" alt="" class="img-circle"><div class="friend-name"><strong>'+client_list[p]+'</strong></div><div class="last-message text-muted">Lorem ipsum dolor sit amet.</div><small class="time text-muted">Yesterday</small><small class="chat-alert text-muted"><i class="fa fa-reply"></i></small></a></li>');
+		//userlist_window.append('<li id="'+p+'">'+client_list[p]+'</li>');
+		client_list_slelect.append('<option value="'+p+'">'+client_list[p]+'</option>');
+	}
+	$("#room_list").val(select_client_id);
+	userlist_window.append('</ul>');
 }
 
 // Refresh user list box
