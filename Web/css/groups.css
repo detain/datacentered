@@ -60,6 +60,7 @@ body {
 }
 
 .chat-left {
+	background-color: #ffffff;
 	width: 70px;
 	-webkit-transition: width .3s ease-in-out;
 	transition: width .3s ease-in-out;
@@ -69,6 +70,7 @@ body {
 	width: 400px;
 }
 .chat-right {
+	background-color: #ffffff;
 	width: 70px;
 	-webkit-transition: width .3s ease-in-out;
 	transition: width .3s ease-in-out;
@@ -147,12 +149,22 @@ body {
 .input-search:focus {
 	outline: none;
 }
-
+.contact-list-title {
+	font-size: 18px;
+	font-weight: bold;
+	color: #777;
+	white-space: nowrap;
+}
+.contact-list-title i {
+	margin-left: 5px;
+	margin-right: 5px;
+	font-size: 12px;
+}
 .contact-list,
 .room-list {
 	background-color: #ffffff;
 	width: 100%;
-	height: calc(100% - 105px);
+	/* height: calc(100% - 105px); */
 	overflow-y: auto;
 	overflow-x: hidden;
 }

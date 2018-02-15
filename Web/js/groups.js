@@ -172,10 +172,24 @@ var WhatsApp = (function ToDoView(app) { //view
 			$(".contact-list").prepend(html);
 			WhatsApp.Ctrl.addClick(html, that);
 		} ,
+		printHost : function (c) {
+			$("#" + c.id).remove();
+			var lastmsg = c.messages[c.messages.length - 1];
+			if (c.newmsg == 0) {
+				var html = $("<div class='contact' id='" + c.id + "'><img src='" + c.img + "' alt='profilpicture'><div class='contact-preview'><div class='contact-text'><h1 class='font-name'>" + c.name + "</h1><p class='font-preview'>" + lastmsg.text + "</p></div></div><div class='contact-time'><p>" + lastmsg.time + "</p></div></div>");
+			}
+			else {
+				var html = $("<div class='contact new-message-contact' id='" + c.id + "'><img src='" + c.img + "' alt='profilpicture'><div class='contact-preview'><div class='contact-text'><h1 class='font-name'>" + c.name + "</h1><p class='font-preview'>" + lastmsg.text + "</p></div></div><div class='contact-time'><p>" + lastmsg.time + "</p><div class='new-message' id='nm" + c.id + "'><p>" + c.newmsg + "</p></div></div></div>");
+			}
+			var that = c;
+			$(".contact-list").prepend(html);
+			WhatsApp.Ctrl.addClick(html, that);
+		} ,
 		printChat : function (cg) {
 			WhatsApp.View.closeContactInformation();
 			$(".chat-head #chat-target-picture").css('display', 'block').attr("src",cg.img);
 			$(".chat-name h1").text(cg.name);
+			$(".chat").html();
 			if(cg.members == undefined) {
 					$(".chat-name p").text("Last Online" + cg.online);
 				$(".chat-bubble").remove(); // configure messages
