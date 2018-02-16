@@ -418,7 +418,8 @@ function connect() {
 function onopen() {
 	var login_data = {
 		"type": "login",
-		"client_name": document.getElementById('email').value,
+		"ima": "admin",
+		"username": document.getElementById('email').value,
 		"password": document.getElementById('password').value,
 		"room_id": 1
 	}
@@ -446,7 +447,11 @@ function onmessage(e) {
 	switch(data['type']){
 		case 'ping': // Server ping client
 			ws.send('{"type":"pong"}');
-			break;;
+			break;
+		case 'error':
+			console.log("There Was An Error:"+$message_data['content']);
+
+			break;
 		case 'login': // Log in to update the user list
 			//{"type":"login","client_id":xxx,"client_name":"xxx","client_list":"[...]","time":"xxx"}
 			say(data['client_id'], data['client_name'],  data['client_name']+' Joined the chat room', data['time']);

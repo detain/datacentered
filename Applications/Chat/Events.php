@@ -123,7 +123,8 @@ class Events {
 				if(empty($_SESSION['login'])) {
 					$msg = 'You have not successfully authenticated within the allowed time, goodbye.';
 					echo $msg.PHP_EOL;
-					myadmin_log('vps', 'error', $msg, __LINE__, __FILE__);
+					//myadmin_log('vps', 'error', $msg, __LINE__, __FILE__);
+					error_log($msg);
 					$new_message = [ // Send the error response
 						'type' => 'error',
 						'content' => $msg,
@@ -169,7 +170,7 @@ class Events {
 								$error = $command->getError();// get the error object, instance of Exception.
 								$msg = 'Got an error '.$error->getMessage().' while connecting to DB';
 								echo $msg.PHP_EOL;
-								myadmin_log('vps', 'error', $msg, __LINE__, __FILE__);
+								error_log('vps', 'error', $msg, __LINE__, __FILE__);
 								$new_message = [ // Send the error response
 									'type' => 'error',
 									'content' => $msg,
