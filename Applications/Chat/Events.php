@@ -10,11 +10,12 @@
 /**
  * Chat the main logic - Mainly onMessage onClose
  */
-use \GatewayWorker\Lib\Gateway;
-use \Workerman\Connection\AsyncTcpConnection;
-use \Workerman\Connection\TcpConnection;
-use \Workerman\Lib\Timer;
-use \GlobalData\Client as GlobalDataClient;
+use Workerman\Worker;
+use GatewayWorker\Lib\Gateway;
+use Workerman\Connection\AsyncTcpConnection;
+use Workerman\Connection\TcpConnection;
+use Workerman\Lib\Timer;
+use GlobalData\Client as GlobalDataClient;
 require_once __DIR__.'/Process.php';
 
 $process_pipes = [];
@@ -159,7 +160,7 @@ class Events {
 				// Client Types:
 				//  host, admin,
 				//  client, guest?  (not right now)
-				$ima = isset($message_data['ima']) && in_array($message_data['ima'], ['host', 'admin'] ? $message_data['ima'] : 'admin';
+				$ima = isset($message_data['ima']) && in_array($message_data['ima'], ['host', 'admin']) ? $message_data['ima'] : 'admin';
 				switch ($ima) {
 					case 'host':
 						$connection->query('select * from vps_masters where vps_ip = ?', function ($command, $conn) use ($loop) {
