@@ -118,6 +118,7 @@ class Events {
 		$message_data = json_decode($message, true); // Client is passed json data
 		if (!$message_data)
 			return ;
+		$connection = Events::$db;
 		switch ($message_data['type']) { // Depending on the type of business
 			case 'pong': // The client responds to the server's heartbeat
 				if(empty($_SESSION['login'])) {
@@ -139,7 +140,7 @@ class Events {
 				$ret = self::$db->select('*')->from('users')->where('uid>3')->offset(5)->limit(2)->query();
 				return Gateway::sendToClient($client_id, json_encode($ret));
 			case 'react_tables':
-				self::$db->query('show tables' /*$data*/, function ($command, $mysql) use ($connection) {
+				$connection->query('show tables' /*$data*/, function ($command, $mysql) use ($client_id) {
 					if ($command->hasError()) {
 						$error = $command->getError();
 					} else {
