@@ -423,7 +423,8 @@ function onopen() {
 		"password": document.getElementById('password').value,
 		"room_id": 1
 	}
-	console.log("websocket handshake successfully, send login data: "+login_data);
+	console.log(login_data);
+	console.log("websocket handshake successfully, send login data: "+JSON.toString(login_data));
 	ws.send(JSON.toString(login_data));
 	if (roomId == "phptty") {
 		var term = new Terminal({
@@ -449,8 +450,7 @@ function onmessage(e) {
 			ws.send('{"type":"pong"}');
 			break;
 		case 'error':
-			console.log("There Was An Error:"+$message_data['content']);
-
+			console.log("There Was An Error:"+data['content']);
 			break;
 		case 'login': // Log in to update the user list
 			//{"type":"login","client_id":xxx,"client_name":"xxx","client_list":"[...]","time":"xxx"}

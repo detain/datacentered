@@ -114,7 +114,7 @@ class Events {
 	 */
 	public static function onMessage($client_id, $message) {
 		global $process_pipes;
-		echo "client:{$_SERVER['REMOTE_ADDR']}:{$_SERVER['REMOTE_PORT']} gateway:{$_SERVER['GATEWAY_ADDR']}:{$_SERVER['GATEWAY_PORT']} client_id:{$client_id} session:".json_encode($_SESSION)." onMessage:{$message}\n"; // debug
+		echo "client:{$_SERVER['REMOTE_ADDR']}:{$_SERVER['REMOTE_PORT']} gateway:{$_SERVER['GATEWAY_ADDR']}:{$_SERVER['GATEWAY_PORT']} client_id:{$client_id} session:".json_encode($_SESSION)." onMessage:".json_encode($message)."\n"; // debug
 		$message_data = json_decode($message, true); // Client is passed json data
 		if (!$message_data)
 			return ;
@@ -350,6 +350,7 @@ class Events {
 	 */
 	public static function onClose($client_id) {
 		echo "client:{$_SERVER['REMOTE_ADDR']}:{$_SERVER['REMOTE_PORT']} gateway:{$_SERVER['GATEWAY_ADDR']}:{$_SERVER['GATEWAY_PORT']} client_id:{$client_id} onClose:''\n"; // debug
+		/*
 		if (isset($_SESSION['room_id'])) { // Remove from the client's list of rooms
 			$room_id = $_SESSION['room_id'];
 			$new_message = [
@@ -360,6 +361,7 @@ class Events {
 			];
 			Gateway::sendToGroup($room_id, json_encode($new_message));
 		}
+		*/
 	}
 
 	public static function update_vps_list_timer() {
@@ -392,39 +394,5 @@ class Events {
 			 $task_connection->close();																	// remember to turn off the asynchronous link after getting the result
 		};
 		$task_connection->connect();																	// execute async link
-	}
-
-	public function workerman_mysql() {
-		self::$db->select('ID,Sex')->from('Persons')->where('sex= :sex')->bindValues(array('sex'=>'M'))->query(); // Get all rows.
-		self::$db->select('ID,Sex')->from('Persons')->where("sex='F'")->query(); // Equivalent to.
-		self::$db->query("SELECT ID,Sex FROM `Persons` WHERE sex='M'"); // Equivalent to.
-
-		self::$db->select('ID,Sex')->from('Persons')->where('sex= :sex')->bindValues(array('sex'=>'M'))->row(); // Get one row.
-		self::$db->select('ID,Sex')->from('Persons')->where("sex= 'F' ")->row(); // Equivalent to.
-		self::$db->row("SELECT ID,Sex FROM `Persons` WHERE sex='M'"); // Equivalent to.
-
-		self::$db->select('ID')->from('Persons')->where('sex= :sex')->bindValues(array('sex'=>'M'))->column(); // Get a column.
-		self::$db->select('ID')->from('Persons')->where("sex= 'F' ")->column(); // Equivalent to.
-		self::$db->column("SELECT `ID` FROM `Persons` WHERE sex='M'"); // Equivalent to.
-
-		self::$db->select('ID,Sex')->from('Persons')->where('sex= :sex')->bindValues(array('sex'=>'M'))->single(); // Get single.
-		self::$db->select('ID,Sex')->from('Persons')->where("sex= 'F' ")->single(); // Equivalent to.
-		self::$db->single("SELECT ID,Sex FROM `Persons` WHERE sex='M'"); // Equivalent to.
-
-		self::$db->select('*')->from('table1')->innerJoin('table2','table1.uid = table2.uid')->where('age > :age')->groupBy(array('aid'))->having('foo="foo"')->orderByASC/*orderByDESC*/(array('did'))->limit(10)->offset(20)->bindValues(array('age' => 13)); // Complex query.
-		self::$db->query("SELECT * FROM table1 INNER JOIN table2 ON table1.uid = table2.uid WHERE age > 13 GROUP BY aid HAVING foo='foo' ORDER BY did LIMIT 10 OFFSET 20"); // Equivalent to.
-
-		$insert_id = self::$db->insert('Persons')->cols(['Firstname'=>'abc','Lastname'=>'efg','Sex'=>'M','Age'=>13])->query(); // Insert.
-		$insert_id = self::$db->query("INSERT INTO `Persons` ( `Firstname`,`Lastname`,`Sex`,`Age`) VALUES ( 'abc', 'efg', 'M', 13)"); // Equivalent to.
-
-		$row_count = self::$db->update('Persons')->cols(array('sex'))->where('ID=1')->bindValue('sex', 'F')->query(); // Updagte.
-		$row_count = self::$db->update('Persons')->cols(array('sex'=>'F'))->where('ID=1')->query(); // Equivalent to.
-		$row_count = self::$db->query("UPDATE `Persons` SET `sex` = 'F' WHERE ID=1"); // Equivalent to.
-
-		$row_count = self::$db->delete('Persons')->where('ID=9')->query(); // Delete.
-		$row_count = self::$db->query("DELETE FROM `Persons` WHERE ID=9"); // Equivalent to.
-
-		self::$db->beginTrans(); // Transaction.
-		self::$db->commitTrans(); // or self::$db->rollBackTrans();
 	}
 }
