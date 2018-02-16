@@ -24,7 +24,7 @@ class Events {
 	public static $process_handle = null;
 	public static $process_pipes = null;
 	public static $db = null;
-	public static $db_type = 'workerman'; // workerman or react or blank for no sql
+	public static $db_type = 'react'; // workerman or react or blank for no sql
 
 	public static function onWorkerStart($worker) {
 		global $global;
@@ -34,29 +34,28 @@ class Events {
 			self::$db = new \Workerman\MySQL\Connection($db_config['db_host'], $db_config['db_port'], $db_config['db_user'], $db_config['db_pass'], $db_config['db_name']);
 		} else {
 			$loop = Worker::getEventLoop();
-			self::$db = new React\MySQL\Connection($loop, [
+			self::$db = new \React\MySQL\Connection($loop, [
 				'host'   => $db_config['db_host'],
 				'dbname' => $db_config['db_name'],
 				'user'   => $db_config['db_user'],
 				'passwd' => $db_config['db_pass'],
 			]);
 			self::$db->on('error', function($e){
-				echo $e;
+				echo 'ERROR:'.$e.PHP_EOL;
+				myadmin_log('vps', 'error', 'Got an error '.$e.' while connecting to DB', __LINE__, __FILE__);
 			});
 			self::$db->connect(function ($e) {
 				if($e) {
-					echo $e;
+					echo 'ERROR:'.$e.PHP_EOL;
+					myadmin_log('vps', 'error', 'Got an error '.$e.' while connecting to DB', __LINE__, __FILE__);
 				} else {
-					echo "connect success\n";
+					echo "SQL connect success\n";
 				}
 			});
 		}
-		// The timer is set only on the process whose id number is 0, and the processes of other 1, 2, and 3 processes do not set the timer
 		if ($worker->id === 0) {
-
 			Timer::add(600, ['Events', 'update_vps_list_timer']);
 			Timer::add(60, ['Events', 'vps_queue_timer']);
-
 			// Save the process handle, close the handle when the process is closed
 			self::$process_handle = popen('vmstat -n 1', 'r');
 			if (self::$process_handle) {
@@ -102,9 +101,9 @@ class Events {
 	}
 
 	public static function onConnect($client_id) {
-		$_SESSION['auth_timer_id'] = Timer::add(30, function($client_id){
+		/* $_SESSION['auth_timer_id'] = Timer::add(30, function($client_id){
 			Gateway::closeClient($client_id);
-		}, array($client_id), false);
+		}, array($client_id), false); */
 	}
 
 	/**
@@ -120,6 +119,17 @@ class Events {
 			return ;
 		switch ($message_data['type']) { // Depending on the type of business
 			case 'pong': // The client responds to the server's heartbeat
+				if(empty($_SESSION['login'])) {
+					$msg = 'You have not successfully authenticated within the allowed time, goodbye.';
+					echo $msg.PHP_EOL;
+					myadmin_log('vps', 'error', $msg, __LINE__, __FILE__);
+					$new_message = [ // Send the error response
+						'type' => 'error',
+						'content' => $msg,
+					];
+					Gateway::sendToCurrentClient(json_encode($new_message));
+					Gateway::closeClient($client_id);
+				}
 				return;
 			case 'workerman_tables':
 				$all_tables = self::$db->query('show tables');
@@ -144,7 +154,117 @@ class Events {
 				//if(ALLOW_CLIENT_INPUT)
 				fwrite(self::$process_pipes->pipes[0], $message_data['content']);
 				return;
-			case 'login': // Client login message format: {type: login, name: xx, room_id: 1}, added to the client, broadcast to all clients xx into the chat room
+			case 'login':
+				// Client login message format: {type: login, name: xx, room_id: 1}, added to the client, broadcast to all clients xx into the chat room
+				// Client Types:
+				//  host, admin,
+				//  client, guest?  (not right now)
+				$ima = isset($message_data['ima']) && in_array($message_data['ima'], ['host', 'admin'] ? $message_data['ima'] : 'admin';
+				switch ($ima) {
+					case 'host':
+						$connection->query('select * from vps_masters where vps_ip = ?', function ($command, $conn) use ($loop) {
+							if ($command->hasError()) { //test whether the query was executed successfully
+								//error
+								$error = $command->getError();// get the error object, instance of Exception.
+								$msg = 'Got an error '.$error->getMessage().' while connecting to DB';
+								echo $msg.PHP_EOL;
+								myadmin_log('vps', 'error', $msg, __LINE__, __FILE__);
+								$new_message = [ // Send the error response
+									'type' => 'error',
+									'content' => $msg,
+								];
+								Gateway::sendToCurrentClient(json_encode($new_message));
+							} else {
+								$results = $command->resultRows; //get the results
+								if (sizeof($results) == 0) {
+									//error
+									$msg = 'This System '.$_SERVER['REMOTE_ADDR'].' does not appear to match up with one of our hosts.';
+									echo $msg.PHP_EOL;
+									myadmin_log('vps', 'error', $msg, __LINE__, __FILE__);
+									$new_message = [ // Send the error response
+										'type' => 'error',
+										'content' => $msg,
+									];
+									Gateway::sendToCurrentClient(json_encode($new_message));
+								} else {
+									$uid = 'vps'.$results[0]['vps_id'];
+									Gateway::bindUid($client_id, $uid);
+									Gateway::joinGroup($client_id, $ima.'s');
+									$_SESSION['row'] = $results[0];
+									$_SESSION['ima'] = $ima;
+									$_SESSION['login'] = true;
+									//echo 'Results:';
+									//var_export($results);
+									//echo PHP_EOL;
+
+									//$fields  = $command->resultFields; // get table fields
+									//echo 'Fields:';
+									//var_export($fields);
+									//echo PHP_EOL;
+								}
+							}
+							$loop->stop(); //stop the main loop.
+						}, [$_SERVER['REMOTE_ADDR']]);
+						break;
+					case 'admin':
+						$connection->query('select * from accounts where account_lid = ? and account_passwd = ?', function ($command, $conn) use ($loop) {
+							if ($command->hasError()) { //test whether the query was executed successfully
+								//error
+								$error = $command->getError();// get the error object, instance of Exception.
+								$msg = 'Got an error '.$error->getMessage().' while connecting to DB';
+								echo $msg.PHP_EOL;
+								myadmin_log('vps', 'error', $msg, __LINE__, __FILE__);
+								$new_message = [ // Send the error response
+									'type' => 'error',
+									'content' => $msg,
+								];
+								Gateway::sendToCurrentClient(json_encode($new_message));
+							} else {
+								$results = $command->resultRows; //get the results
+								if (sizeof($results) == 0) {
+									//error
+									$msg = 'Invalid Credentials Specified For User '.$mesage_data['username'];
+									echo $msg.PHP_EOL;
+									myadmin_log('vps', 'error', $msg, __LINE__, __FILE__);
+									$new_message = [ // Send the error response
+										'type' => 'error',
+										'content' => $msg,
+									];
+									Gateway::sendToCurrentClient(json_encode($new_message));
+
+								} else {
+									$uid = $results[0]['account_id'];
+									Gateway::bindUid($client_id, $uid);
+									Gateway::joinGroup($client_id, $ima.'s');
+									$_SESSION['row'] = $results[0];
+									$_SESSION['ima'] = $ima;
+									$_SESSION['login'] = true;
+									//echo 'Results:';
+									//var_export($results);
+									//echo PHP_EOL;
+
+									//$fields  = $command->resultFields; // get table fields
+									//echo 'Fields:';
+									//var_export($fields);
+									//echo PHP_EOL;
+								}
+							}
+							$loop->stop(); //stop the main loop.
+						}, [$message_data['username'], md5($message_data['password'])]);
+						break;
+					case 'client':
+					case 'guest':
+					default:
+						$msg = 'Invalid Login Type '.$ima.'. Check back later for "client" and "guest" support to be added in addition to the "host" and "admin" types.';
+						echo $msg.PHP_EOL;
+						myadmin_log('vps', 'error', $msg, __LINE__, __FILE__);
+						$new_message = [ // Send the error response
+							'type' => 'error',
+							'content' => $msg,
+						];
+						Gateway::sendToCurrentClient(json_encode($new_message));
+						break;
+				}
 
 				Timer::del($_SESSION['auth_timer_id']); // delete timer if successfull
 
@@ -198,7 +318,7 @@ class Events {
 				return Gateway::sendToGroup($room_id ,json_encode($new_message));
 			case 'bandwidth':
 				foreach ($message_data['content'] as $ip => $data) {
-					$rrdFile = __DIR__.'/../../rrd/'.$_SESSION['client_name'].'_'.$ip.'.rrd';
+					$rrdFile = __DIR__.'/../../../../include/config/rrd'.$_SESSION['client_name'].'_'.$ip.'.rrd';
 					if (!file_exists($rrdFile)) {
 						@mkdir($rrdFile = __DIR__.'/../../rrd/'.$_SESSION['client_name'], 777, TRUE);
 						$rrd = new RRDCreator($rrdFile, 'now', 60);
