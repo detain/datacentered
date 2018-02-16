@@ -206,7 +206,7 @@ class Events {
 									//echo PHP_EOL;
 								}
 							}
-							$loop->stop(); //stop the main loop.
+							//$loop->stop(); //stop the main loop.
 						}, [$_SERVER['REMOTE_ADDR']]);
 						break;
 					case 'admin':
