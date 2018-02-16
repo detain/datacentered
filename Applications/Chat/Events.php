@@ -102,9 +102,6 @@ class Events {
 	}
 
 	public static function onConnect($client_id) {
-		/* $_SESSION['auth_timer_id'] = Timer::add(30, function($client_id){
-			Gateway::closeClient($client_id);
-		}, array($client_id), false); */
 	}
 
 	/**
