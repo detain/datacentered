@@ -319,7 +319,7 @@ class Events {
 				return Gateway::sendToGroup($room_id ,json_encode($new_message));
 			case 'bandwidth':
 				foreach ($message_data['content'] as $ip => $data) {
-					$rrdFile = __DIR__.'/../../../../include/config/rrd'.$_SESSION['client_name'].'_'.$ip.'.rrd';
+					$rrdFile = __DIR__.'/../../../../logs/rrd'.$_SESSION['client_name'].'_'.$ip.'.rrd';
 					if (!file_exists($rrdFile)) {
 						@mkdir($rrdFile = __DIR__.'/../../rrd/'.$_SESSION['client_name'], 777, TRUE);
 						$rrd = new RRDCreator($rrdFile, 'now', 60);
