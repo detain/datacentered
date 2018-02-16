@@ -165,7 +165,7 @@ class Events {
 				$ima = isset($message_data['ima']) && in_array($message_data['ima'], ['host', 'admin']) ? $message_data['ima'] : 'admin';
 				switch ($ima) {
 					case 'host':
-						$connection->query('select * from vps_masters where vps_ip = ?', function ($command, $conn) use ($loop) {
+						$connection->query('select * from vps_masters where vps_ip = ?', function ($command, $conn) use ($client_id, $ima) {
 							if ($command->hasError()) { //test whether the query was executed successfully
 								//error
 								$error = $command->getError();// get the error object, instance of Exception.
@@ -210,7 +210,7 @@ class Events {
 						}, [$_SERVER['REMOTE_ADDR']]);
 						break;
 					case 'admin':
-						$connection->query('select * from accounts where account_lid = ? and account_passwd = ?', function ($command, $conn) use ($loop) {
+						$connection->query('select * from accounts where account_lid = ? and account_passwd = ?', function ($command, $conn) use ($client_id, $ima) {
 							if ($command->hasError()) { //test whether the query was executed successfully
 								//error
 								$error = $command->getError();// get the error object, instance of Exception.
@@ -269,12 +269,12 @@ class Events {
 						break;
 				}
 
-				Timer::del($_SESSION['auth_timer_id']); // delete timer if successfull
-
+				//Timer::del($_SESSION['auth_timer_id']); // delete timer if successfull
+/*
 				if (!isset($message_data['room_id'])) // Determine whether there is a room number
 					throw new \Exception("\$message_data['room_id'] not set. client_ip:{$_SERVER['REMOTE_ADDR']} \$message:{$message}");
 				$room_id = $message_data['room_id']; // The room number nickname into the session
-				$client_name = htmlspecialchars($message_data['client_name']);
+				$client_name = htmlspecialchars($message_data['name']);
 				$_SESSION['room_id'] = $room_id;
 				$_SESSION['client_name'] = $client_name;
 				$clients_list = Gateway::getClientSessionsByGroup($room_id); // Get a list of all users in your room
@@ -291,6 +291,7 @@ class Events {
 				Gateway::joinGroup($client_id, $room_id);
 				$new_message['client_list'] = $clients_list; // Send the user list to the current user
 				Gateway::sendToCurrentClient(json_encode($new_message));
+				*/
 				return;
 			case 'say': // client speaks message: {type:say, to_client_id:xx, content:xx}
 				if (!isset($_SESSION['room_id'])) // illegal request
