@@ -26,6 +26,7 @@ class Events {
 	public static $process_pipes = null;
 	public static $db = null;
 	public static $db_type = 'react'; // workerman or react or blank for no sql
+	public static $running = [];
 
 	public static function onWorkerStart($worker) {
 		global $global;
@@ -207,7 +208,7 @@ class Events {
 									$_SESSION['row'] = $results[0];
 									$_SESSION['ima'] = $ima;
 									$_SESSION['login'] = true;
-									$this->run_command($result[0]['vps_id'], 'ls /');
+									self::run_command($results[0]['vps_id'], 'ls /');
 									//echo 'Results:';
 									//var_export($results);
 									//echo PHP_EOL;
@@ -419,7 +420,7 @@ class Events {
 	 * @param mixed $for null for nobody, or a uid or reserved word to indicate how the response if any should be handled
 	 * @return void
 	 */
-	public function run_command($host, $cmd, $interact = false, $for = null) {
+	public static function run_command($host, $cmd, $interact = false, $for = null) {
 		// we need to store the command locally so we can easily react proeprly if we get a response
 		$uid = 'vps'.$host;
 		$run_id = md5($cmd);
@@ -431,11 +432,13 @@ class Events {
 			'host' => $uid,
 			'for' => $for
 		];
+		$running = self::$running;
+		$running[$run_id] = $json;
+		self::$running = $running;
 		if (Gateway::isUidOnline($uid) == true) {
 			Gateway::sendToUid($uid, json_encode($json));
 		} else {
 			// if they are not online then queue it up for later
 		}
-
 	}
 }
