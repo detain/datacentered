@@ -51,7 +51,7 @@ class Events {
 					echo 'ERROR:'.$e.PHP_EOL;
 					myadmin_log('vps', 'error', 'Got an error '.$e.' while connecting to DB', __LINE__, __FILE__);
 				} else {
-					echo "SQL connect success\n";
+					//echo "SQL connect success\n";
 				}
 			});
 		}
