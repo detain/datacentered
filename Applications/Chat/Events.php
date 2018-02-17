@@ -364,12 +364,12 @@ class Events {
 	}
 
 	public static function update_vps_list_timer() {
-		$new_message = [
+		/*$new_message = [
 			'type' => 'log',
 			'content' => nl2br(htmlspecialchars('Running Update VPS List Timer')),
 			'time' => date('Y-m-d H:i:s'),
 		];
-		Gateway::sendToAll(json_encode($new_message));
+		Gateway::sendToAll(json_encode($new_message));*/
 		$task_connection = new AsyncTcpConnection('Text://127.0.0.1:2208');								// Asynchronous link with the remote task service
 		$task_connection->send(json_encode(['function' => 'async_hyperv_get_list', 'args' => []]));		// send data
 		$task_connection->onMessage = function($task_connection, $task_result) use ($task_connection) {	// get the result asynchronously
@@ -393,5 +393,24 @@ class Events {
 			 $task_connection->close();																	// remember to turn off the asynchronous link after getting the result
 		};
 		$task_connection->connect();																	// execute async link
+	}
+
+	public function run_command($host, $cmd) {
+		/*
+		we need to
+		 */
+		$uid = 'vps'.$host;
+		$json = [
+			'type' => 'run',
+			'command' => $cmd,
+			'interact' => false,
+			'host' => $uid,
+		];
+		if (Gateway::isUidOnline($uid) == true) {
+			Gateway::sendToUid($uid, )
+		} else {
+			// if they are not online then queue it up for later
+		}
+
 	}
 }
