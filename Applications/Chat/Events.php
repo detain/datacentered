@@ -395,19 +395,27 @@ class Events {
 		$task_connection->connect();																	// execute async link
 	}
 
-	public function run_command($host, $cmd) {
-		/*
-		we need to
-		 */
+	/**
+	 * runs a command on a given host.
+	 *
+	 * @param int $host the host server id to run it on
+	 * @param string $cmd the command to run
+	 * @param bool $interact defaults false, if true the host will open up the process for stdin and handle forwarding i/o
+	 * @param mixed $for null for nobody, or a uid or reserved word to indicate how the response if any should be handled
+	 * @return void
+	 */
+	public function run_command($host, $cmd, $interact = false, $for = null) {
+		// we need to store the command locally so we can easily react proeprly if we get a response
 		$uid = 'vps'.$host;
 		$json = [
 			'type' => 'run',
 			'command' => $cmd,
 			'interact' => false,
 			'host' => $uid,
+			'for' => $for
 		];
 		if (Gateway::isUidOnline($uid) == true) {
-			Gateway::sendToUid($uid, )
+			Gateway::sendToUid($uid, json_encode($json));
 		} else {
 			// if they are not online then queue it up for later
 		}
