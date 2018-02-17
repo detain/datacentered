@@ -117,6 +117,19 @@ class Events {
 			return ;
 		$connection = Events::$db;
 		switch ($message_data['type']) { // Depending on the type of business
+			case 'ran': // response(s) from a run command
+				/* $message_data = [
+						'type' => 'ran',
+						'id' => $data['id'],
+						// it contains stderr output
+						'stderr' => $stderr,
+						// it containts stdout output
+						'stdout' => $stdout,
+						// it finished, if term === null then it exited with 'code', otehrwise terminated with signal 'term'
+						'code' => $exitCode,
+						'term' => $termSignal,
+				]; */
+				return;
 			case 'pong': // The client responds to the server's heartbeat
 				if(empty($_SESSION['login'])) {
 					$msg = 'You have not successfully authenticated within the allowed time, goodbye.';
@@ -190,9 +203,11 @@ class Events {
 									$uid = 'vps'.$results[0]['vps_id'];
 									Gateway::bindUid($client_id, $uid);
 									Gateway::joinGroup($client_id, $ima.'s');
+									$_SESSION['name'] = $results[0]['vps_name'];
 									$_SESSION['row'] = $results[0];
 									$_SESSION['ima'] = $ima;
 									$_SESSION['login'] = true;
+									$this->run_command($result[0]['vps_id'], 'ls /');
 									//echo 'Results:';
 									//var_export($results);
 									//echo PHP_EOL;
@@ -407,9 +422,11 @@ class Events {
 	public function run_command($host, $cmd, $interact = false, $for = null) {
 		// we need to store the command locally so we can easily react proeprly if we get a response
 		$uid = 'vps'.$host;
+		$run_id = md5($cmd);
 		$json = [
 			'type' => 'run',
 			'command' => $cmd,
+			'id' => $run_id,
 			'interact' => false,
 			'host' => $uid,
 			'for' => $for
