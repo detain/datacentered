@@ -4,12 +4,14 @@
 		<meta charset="UTF-8">
 		<title>Title</title>
 		<link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto">
+		<link rel="stylesheet" href="https://my.interserver.net/images/myadmin/css/styles.css">
 		<link rel="stylesheet" href="https://my.interserver.net/lib/bootstrap/dist/css/bootstrap.min.css"
 		<link rel="stylesheet" href="https://my.interserver.net/lib/bootstrap/dist/css/bootstrap-theme.min.css">
 		<link rel="stylesheet" href="https://my.interserver.net/lib/font-awesome/css/font-awesome.min.css ">
 		<link rel="stylesheet" href="css/groups.css">
 		<link rel="stylesheet" href="css/cats.css">
-		<link rel="stylesheet" href="https://my.interserver.net/images/myadmin/css/styles.css">
+		<link rel="stylesheet" href="https://my.interserver.net/lib/xterm/dist/xterm.css">
+		<script src="https://my.interserver.net/lib/xterm/dist/xterm.js"></script>
 		<script src="https://my.interserver.net/lib/jquery-1.11.x/dist/jquery.min.js"></script>
 		<script src="https://my.interserver.net/lib/bootstrap/dist/js/bootstrap.min.js"></script>
 		<script src="https://my.interserver.net/lib/sugar/release/sugar.min.js"></script>
@@ -25,7 +27,7 @@
 			<section class="chat-left active">
 				<div class="profile">
 					<i class="img icon-chat" aria-hidden="true"><svg><use xlink:href="img/MyAdmin-Icons.min.svg#icon-chat"></use></svg></i>
-					<div class="img-text">MyAdmin</div>
+					<div class="img-text">ChOpper</div>
 					<div class="icons">
 						<i class="fa fa-expand fa-lg" aria-hidden="true" id="grow-left-list"></i>
 						<i class="fa fa-compress fa-lg" aria-hidden="true" id="shrink-left-list"></i>
@@ -55,6 +57,7 @@
 			</section>
 			<section class="chat-center">
 				<div class="chat-head">
+					<div class="img-text">MyAdmin ChatOps</div>
 					<img id="chat-target-picture" alt="profilepicture">
 					<div class="chat-name">
 						<h1 class="font-name"></h1>
@@ -112,7 +115,14 @@
 					<form class="form" method="POST" action="#">
 					<div class="modal-header">
 						<button type="button" class="close" data-dismiss="modal" aria-hidden="true">×</button>
-						<h1 class="text-center" style="margin: 0;">System Login</h1>
+						<div style="display: relative; left: 5px; top: 5px; ">
+						<div style="position: absolute; left: 5px; top: 0px; font-size: 36px; font-weight: 400;">
+							ChOpper
+							<small>MyAdmin ChatOps</small>
+						</div>
+						<div style="position: absolute; right: 5px; top: 0px; font-size: 36px; font-weight: 400;">
+							Login
+						</div>
 					</div>
 					<div class="modal-body">
 						<div class="row">

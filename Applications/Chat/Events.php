@@ -44,12 +44,12 @@ class Events {
 			]);
 			self::$db->on('error', function($e){
 				echo 'ERROR:'.$e.PHP_EOL;
-				myadmin_log('vps', 'error', 'Got an error '.$e.' while connecting to DB', __LINE__, __FILE__);
+				error_log('Got an error '.$e.' while connecting to DB');
 			});
 			self::$db->connect(function ($e) {
 				if($e) {
 					echo 'ERROR:'.$e.PHP_EOL;
-					myadmin_log('vps', 'error', 'Got an error '.$e.' while connecting to DB', __LINE__, __FILE__);
+					error_log('Got an error '.$e.' while connecting to DB');
 				} else {
 					//echo "SQL connect success\n";
 				}
@@ -135,7 +135,7 @@ class Events {
 				if(empty($_SESSION['login'])) {
 					$msg = 'You have not successfully authenticated within the allowed time, goodbye.';
 					echo $msg.PHP_EOL;
-					//myadmin_log('vps', 'error', $msg, __LINE__, __FILE__);
+					//error_log($msg);
 					error_log($msg);
 					$new_message = [ // Send the error response
 						'type' => 'error',
@@ -194,7 +194,7 @@ class Events {
 									//error
 									$msg = 'This System '.$_SERVER['REMOTE_ADDR'].' does not appear to match up with one of our hosts.';
 									echo $msg.PHP_EOL;
-									myadmin_log('vps', 'error', $msg, __LINE__, __FILE__);
+									error_log($msg);
 									$new_message = [ // Send the error response
 										'type' => 'error',
 										'content' => $msg,
@@ -229,7 +229,7 @@ class Events {
 								$error = $command->getError();// get the error object, instance of Exception.
 								$msg = 'Got an error '.$error->getMessage().' while connecting to DB';
 								echo $msg.PHP_EOL;
-								myadmin_log('vps', 'error', $msg, __LINE__, __FILE__);
+								error_log($msg);
 								$new_message = [ // Send the error response
 									'type' => 'error',
 									'content' => $msg,
@@ -241,7 +241,7 @@ class Events {
 									//error
 									$msg = 'Invalid Credentials Specified For User '.$mesage_data['username'];
 									echo $msg.PHP_EOL;
-									myadmin_log('vps', 'error', $msg, __LINE__, __FILE__);
+									error_log($msg);
 									$new_message = [ // Send the error response
 										'type' => 'error',
 										'content' => $msg,
@@ -273,7 +273,7 @@ class Events {
 					default:
 						$msg = 'Invalid Login Type '.$ima.'. Check back later for "client" and "guest" support to be added in addition to the "host" and "admin" types.';
 						echo $msg.PHP_EOL;
-						myadmin_log('vps', 'error', $msg, __LINE__, __FILE__);
+						error_log($msg);
 						$new_message = [ // Send the error response
 							'type' => 'error',
 							'content' => $msg,

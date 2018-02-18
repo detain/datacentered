@@ -300,6 +300,14 @@ body {
 	padding-top: 10px;
 	white-space: nowrap;
 }
+.chat-head .img-text {
+	font-size: 22px;
+	color: #666;
+	font-weight: bold;
+	padding-left: 10px;
+	padding-top: 10px;
+	white-space: nowrap;
+}
 .chat-left #shrink-left-list,
 .chat-left .img-text,
 .chat-right #shrink-right-list {
