@@ -25,36 +25,31 @@ class Events {
 	public static $process_handle = null;
 	public static $process_pipes = null;
 	public static $db = null;
-	public static $db_type = 'react'; // workerman or react or blank for no sql
 	public static $running = [];
 
 	public static function onWorkerStart($worker) {
 		global $global;
 		$global = new GlobalDataClient('127.0.0.1:2207');	 // initialize the GlobalData client
 		$db_config = include __DIR__.'/../../../../include/config/config.db.php';
-		if (self::$db_type == 'workerman') {
-			self::$db = new \Workerman\MySQL\Connection($db_config['db_host'], $db_config['db_port'], $db_config['db_user'], $db_config['db_pass'], $db_config['db_name']);
-		} else {
-			$loop = Worker::getEventLoop();
-			self::$db = new \React\MySQL\Connection($loop, [
-				'host'   => $db_config['db_host'],
-				'dbname' => $db_config['db_name'],
-				'user'   => $db_config['db_user'],
-				'passwd' => $db_config['db_pass'],
-			]);
-			self::$db->on('error', function($e){
+		$loop = Worker::getEventLoop();
+		self::$db = new \React\MySQL\Connection($loop, [
+			'host'   => $db_config['db_host'],
+			'dbname' => $db_config['db_name'],
+			'user'   => $db_config['db_user'],
+			'passwd' => $db_config['db_pass'],
+		]);
+		self::$db->on('error', function($e){
+			echo 'ERROR:'.$e.PHP_EOL;
+			error_log('Got an error '.$e.' while connecting to DB');
+		});
+		self::$db->connect(function ($e) {
+			if($e) {
 				echo 'ERROR:'.$e.PHP_EOL;
 				error_log('Got an error '.$e.' while connecting to DB');
-			});
-			self::$db->connect(function ($e) {
-				if($e) {
-					echo 'ERROR:'.$e.PHP_EOL;
-					error_log('Got an error '.$e.' while connecting to DB');
-				} else {
-					//echo "SQL connect success\n";
-				}
-			});
-		}
+			} else {
+				//echo "SQL connect success\n";
+			}
+		});
 		if ($worker->id === 0) {
 			Timer::add(600, ['Events', 'update_vps_list_timer']);
 			Timer::add(60, ['Events', 'vps_queue_timer']);
