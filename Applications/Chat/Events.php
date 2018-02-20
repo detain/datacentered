@@ -107,13 +107,88 @@ class Events {
 	 */
 	public static function onMessage($client_id, $message) {
 		global $process_pipes;
-		echo "client:{$_SERVER['REMOTE_ADDR']}:{$_SERVER['REMOTE_PORT']} gateway:{$_SERVER['GATEWAY_ADDR']}:{$_SERVER['GATEWAY_PORT']} client_id:{$client_id} session:".json_encode($_SESSION)." onMessage:".json_encode($message)."\n"; // debug
+		//echo "client:{$_SERVER['REMOTE_ADDR']}:{$_SERVER['REMOTE_PORT']} gateway:{$_SERVER['GATEWAY_ADDR']}:{$_SERVER['GATEWAY_PORT']} client_id:{$client_id} session:".json_encode($_SESSION)." onMessage:".json_encode($message)."\n"; // debug
+		echo "client:{$_SERVER['REMOTE_ADDR']}:{$_SERVER['REMOTE_PORT']} gateway:{$_SERVER['GATEWAY_ADDR']}:{$_SERVER['GATEWAY_PORT']} client_id:{$client_id} session:".json_encode($_SESSION)."\n"; // debug
 		$message_data = json_decode($message, true); // Client is passed json data
 		if (!$message_data)
 			return ;
 		$connection = Events::$db;
+/*
+Client,Hub,clients
+Client,Hub,hosts
+Client,Hub,run
+Client,Hub,groups
+Client,Hub,say
+Client,Hub,running
+Client,Hub,pong
+Host,Hub,pong
+Host,Hub,bandwidth
+Host,Hub,running
+Host,Hub,ran
+*/
 		switch ($message_data['type']) { // Depending on the type of business
-			case 'ran': // response(s) from a run command
+			case 'clients': // from client
+				$json = [
+					'type' => 'clients',
+					'content' => [],
+				];
+				Gateway::sendToCurrentClient(json_encode($new_message));
+				return;
+			case 'hosts': // from client
+				$json = [
+					'type' => 'hosts',
+					'content' => [],
+				];
+				Gateway::sendToCurrentClient(json_encode($new_message));
+				return;
+			case 'groups': // from client
+				$json = [
+					'type' => 'groups',
+					'content' => [],
+				];
+				Gateway::sendToCurrentClient(json_encode($new_message));
+				return;
+			case 'phptty_run': // from client
+				self::$process_pipes = Process::run($client_id, 'htop');
+				return;
+			case 'phptty': // from client
+				//if(ALLOW_CLIENT_INPUT)
+				fwrite(self::$process_pipes->pipes[0], $message_data['content']);
+				return;
+			case 'run': // from client
+				//self::run_command($results[0]['vps_id'], 'ls /');
+				//echo 'Results:';
+				//var_export($results);
+				//echo PHP_EOL;
+
+				//$fields  = $command->resultFields; // get table fields
+				//echo 'Fields:';
+				//var_export($fields);
+				//echo PHP_EOL;
+				$json = [
+					'type' => 'run',
+					'command' => $data['command'],
+					'id' => md5($data['command']),
+					'interact' => false,
+					'host' => $data['host'],   // host uid in format of: 'vps'.$server_id
+					'for' => $for // uid
+				];
+				$running = self::$running;
+				$running[md5($data['command'])] = $json;
+				self::$running = $running;
+				if (Gateway::isUidOnline('vps'.$data['host']) == true) {
+					Gateway::sendToUid('vps'.$data['host'], json_encode($json));
+				} else {
+					// if they are not online then queue it up for later
+				}
+				return;
+			case 'running': // from host or client
+				$json = [
+				];
+				return;
+			case 'ran': // from host
+				// indicates both completion of a run process and its final exit code or terminal signal
+				// response(s) from a run command
 				/* $message_data = [
 						'type' => 'ran',
 						'id' => $data['id'],
@@ -126,7 +201,7 @@ class Events {
 						'term' => $termSignal,
 				]; */
 				return;
-			case 'pong': // The client responds to the server's heartbeat
+			case 'pong': // from client or host
 				if(empty($_SESSION['login'])) {
 					$msg = 'You have not successfully authenticated within the allowed time, goodbye.';
 					echo $msg.PHP_EOL;
@@ -140,30 +215,58 @@ class Events {
 					Gateway::closeClient($client_id);
 				}
 				return;
-			case 'workerman_tables':
-				$all_tables = self::$db->query('show tables');
-				Gateway::sendToCurrentClient(json_encode($all_tables));
-				$ret = self::$db->select('*')->from('users')->where('uid>3')->offset(5)->limit(2)->query();
-				return Gateway::sendToClient($client_id, json_encode($ret));
-			case 'react_tables':
-				$connection->query('show tables' /*$data*/, function ($command, $mysql) use ($client_id) {
-					if ($command->hasError()) {
-						$error = $command->getError();
-					} else {
-						$results = $command->resultRows;
-						$fields  = $command->resultFields;
-						Gateway::sendToCurrentClient(json_encode($results));
+			case 'say': // from client
+				// client speaks message: {type:say, to_client_id:xx, content:xx}
+				if (!isset($_SESSION['room_id'])) // illegal request
+					throw new \Exception("\$_SESSION['room_id'] not set. client_ip:{$_SERVER['REMOTE_ADDR']}");
+				$room_id = $_SESSION['room_id'];
+				$client_name = $_SESSION['client_name'];
+				if ($message_data['to_client_id'] != 'all') { // private chat
+					$new_message = [
+						'type' => 'say',
+						'from_client_id' => $client_id,
+						'from_client_name' =>$client_name,
+						'to_client_id' => $message_data['to_client_id'],
+						'content' => "<b>Say to you: </b>".nl2br(htmlspecialchars($message_data['content'])),
+						'time' => date('Y-m-d H:i:s'),
+					];
+					Gateway::sendToClient($message_data['to_client_id'], json_encode($new_message));
+					$new_message['content'] = "<b>You're right".htmlspecialchars($message_data['to_client_name'])."Say: </b>".nl2br(htmlspecialchars($message_data['content']));
+					return Gateway::sendToCurrentClient(json_encode($new_message));
+				}
+				$new_message = [
+					'type' => 'say',
+					'from_client_id' => $client_id,
+					'from_client_name' =>$client_name,
+					'to_client_id' => 'all',
+					'content' => nl2br(htmlspecialchars($message_data['content'])),
+					'time' => date('Y-m-d H:i:s'),
+				];
+				return Gateway::sendToGroup($room_id ,json_encode($new_message));
+			case 'bandwidth': // from host
+				foreach ($message_data['content'] as $ip => $data) {
+					$rrdFile = __DIR__.'/../../../../logs/rrd'.$_SESSION['name'].'_'.$ip.'.rrd';
+					if (!file_exists($rrdFile)) {
+						@mkdir($rrdFile = __DIR__.'/../../../../logs/rrd/'.$_SESSION['name'], 777, TRUE);
+						$rrd = new RRDCreator($rrdFile, 'now', 60);
+						$rrd->addDataSource('in:ABSOLUTE:60:U:U');
+						$rrd->addDataSource('out:ABSOLUTE:60:U:U');
+						$rrd->addArchive('AVERAGE:0.5:1:10080');
+						$rrd->addArchive('MIN:0.5:1:10080');
+						$rrd->addArchive('MAX:0.5:1:10080');
+						$rrd->addArchive('AVERAGE:0.5:60:8760');
+						$rrd->addArchive('MIN:0.5:60:8760');
+						$rrd->addArchive('MAX:0.5:60:8760');
+						$rrd->addArchive('AVERAGE:0.5:1440:3650');
+						$rrd->addArchive('MIN:0.5:1440:3650');
+						$rrd->addArchive('MAX:0.5:1440:3650');
+						$rrd->save();
 					}
-				});
+					$updater = new RRDUpdater($rrdFile);
+					$updater->update(['in' => $data['in'],'out' => $data['out']]);
+				}
 				return;
-			case 'phptty_run':
-				self::$process_pipes = Process::run($client_id, 'htop');
-				return;
-			case 'phptty':
-				//if(ALLOW_CLIENT_INPUT)
-				fwrite(self::$process_pipes->pipes[0], $message_data['content']);
-				return;
-			case 'login':
+			case 'login': // from client or host
 				// Client login message format: {type: login, name: xx, room_id: 1}, added to the client, broadcast to all clients xx into the chat room
 				// Client Types:
 				//  host, admin,
@@ -199,26 +302,19 @@ class Events {
 									$uid = 'vps'.$results[0]['vps_id'];
 									Gateway::bindUid($client_id, $uid);
 									Gateway::joinGroup($client_id, $ima.'s');
-									$_SESSION['name'] = $results[0]['vps_name'];
-									$_SESSION['row'] = $results[0];
+									$_SESSION['uid'] = $uid;
+									$_SESSION['name'] = $result[0]['vps_name'];
 									$_SESSION['ima'] = $ima;
 									$_SESSION['login'] = true;
-									self::run_command($results[0]['vps_id'], 'ls /');
-									//echo 'Results:';
-									//var_export($results);
-									//echo PHP_EOL;
-
-									//$fields  = $command->resultFields; // get table fields
-									//echo 'Fields:';
-									//var_export($fields);
-									//echo PHP_EOL;
+									Gateway::setSession($client_id, $_SESSION);
+									echo "{$results[0]['vps_name']} has been successfully logged in from {$_SERVER['REMOTE_ADDR']}\n";
 								}
 							}
 							//$loop->stop(); //stop the main loop.
 						}, [$_SERVER['REMOTE_ADDR']]);
 						break;
 					case 'admin':
-						$connection->query('select * from accounts where account_lid = ? and account_passwd = ?', function ($command, $conn) use ($client_id, $ima) {
+						$connection->query('select * from accounts where account_ima="admin" and account_lid = ? and account_passwd = ?', function ($command, $conn) use ($client_id, $ima) {
 							if ($command->hasError()) { //test whether the query was executed successfully
 								//error
 								$error = $command->getError();// get the error object, instance of Exception.
@@ -247,17 +343,11 @@ class Events {
 									$uid = $results[0]['account_id'];
 									Gateway::bindUid($client_id, $uid);
 									Gateway::joinGroup($client_id, $ima.'s');
-									$_SESSION['row'] = $results[0];
+									$_SESSION['uid'] = $uid;
+									$_SESSION['name'] = $result[0]['account_name'];
 									$_SESSION['ima'] = $ima;
 									$_SESSION['login'] = true;
-									//echo 'Results:';
-									//var_export($results);
-									//echo PHP_EOL;
-
-									//$fields  = $command->resultFields; // get table fields
-									//echo 'Fields:';
-									//var_export($fields);
-									//echo PHP_EOL;
+									Gateway::setSession($client_id, $_SESSION);
 								}
 							}
 							$loop->stop(); //stop the main loop.
@@ -276,7 +366,6 @@ class Events {
 						Gateway::sendToCurrentClient(json_encode($new_message));
 						break;
 				}
-
 				//Timer::del($_SESSION['auth_timer_id']); // delete timer if successfull
 /*
 				if (!isset($message_data['room_id'])) // Determine whether there is a room number
@@ -300,56 +389,6 @@ class Events {
 				$new_message['client_list'] = $clients_list; // Send the user list to the current user
 				Gateway::sendToCurrentClient(json_encode($new_message));
 				*/
-				return;
-			case 'say': // client speaks message: {type:say, to_client_id:xx, content:xx}
-				if (!isset($_SESSION['room_id'])) // illegal request
-					throw new \Exception("\$_SESSION['room_id'] not set. client_ip:{$_SERVER['REMOTE_ADDR']}");
-				$room_id = $_SESSION['room_id'];
-				$client_name = $_SESSION['client_name'];
-				if ($message_data['to_client_id'] != 'all') { // private chat
-					$new_message = [
-						'type' => 'say',
-						'from_client_id' => $client_id,
-						'from_client_name' =>$client_name,
-						'to_client_id' => $message_data['to_client_id'],
-						'content' => "<b>Say to you: </b>".nl2br(htmlspecialchars($message_data['content'])),
-						'time' => date('Y-m-d H:i:s'),
-					];
-					Gateway::sendToClient($message_data['to_client_id'], json_encode($new_message));
-					$new_message['content'] = "<b>You're right".htmlspecialchars($message_data['to_client_name'])."Say: </b>".nl2br(htmlspecialchars($message_data['content']));
-					return Gateway::sendToCurrentClient(json_encode($new_message));
-				}
-				$new_message = [
-					'type' => 'say',
-					'from_client_id' => $client_id,
-					'from_client_name' =>$client_name,
-					'to_client_id' => 'all',
-					'content' => nl2br(htmlspecialchars($message_data['content'])),
-					'time' => date('Y-m-d H:i:s'),
-				];
-				return Gateway::sendToGroup($room_id ,json_encode($new_message));
-			case 'bandwidth':
-				foreach ($message_data['content'] as $ip => $data) {
-					$rrdFile = __DIR__.'/../../../../logs/rrd'.$_SESSION['client_name'].'_'.$ip.'.rrd';
-					if (!file_exists($rrdFile)) {
-						@mkdir($rrdFile = __DIR__.'/../../rrd/'.$_SESSION['client_name'], 777, TRUE);
-						$rrd = new RRDCreator($rrdFile, 'now', 60);
-						$rrd->addDataSource('in:ABSOLUTE:60:U:U');
-						$rrd->addDataSource('out:ABSOLUTE:60:U:U');
-						$rrd->addArchive('AVERAGE:0.5:1:10080');
-						$rrd->addArchive('MIN:0.5:1:10080');
-						$rrd->addArchive('MAX:0.5:1:10080');
-						$rrd->addArchive('AVERAGE:0.5:60:8760');
-						$rrd->addArchive('MIN:0.5:60:8760');
-						$rrd->addArchive('MAX:0.5:60:8760');
-						$rrd->addArchive('AVERAGE:0.5:1440:3650');
-						$rrd->addArchive('MIN:0.5:1440:3650');
-						$rrd->addArchive('MAX:0.5:1440:3650');
-						$rrd->save();
-					}
-					$updater = new RRDUpdater($rrdFile);
-					$updater->update(['in' => $data['in'],'out' => $data['out']]);
-				}
 				return;
 		}
 	}

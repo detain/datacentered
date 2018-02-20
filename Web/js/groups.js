@@ -1,4 +1,4 @@
-var WhatsApp = (function (app) { //contacts
+var ChOpper = (function (app) { //contacts
 	function Contact (name,img,online) {
 		this.id = contactList.length;
 		this.name = name;
@@ -18,8 +18,8 @@ var WhatsApp = (function (app) { //contacts
 	}
 	appContacts =  Contact;
 	return appContacts;
-})(WhatsApp || {});
-var WhatsApp = (function (app) { //groups
+})(ChOpper || {});
+var ChOpper = (function (app) { //groups
 
 	function Group (name,img) {
 		this.id = roomList.length;
@@ -39,8 +39,8 @@ var WhatsApp = (function (app) { //groups
 	}
 	appGroups = Group;
 	return appGroups;
-})(WhatsApp || {});
-var WhatsApp = (function (app) { //messages
+})(ChOpper || {});
+var ChOpper = (function (app) { //messages
 	function Message (text,name,time,type,group,img) {
 		this.text = text;
 		this.name = name;
@@ -55,8 +55,8 @@ var WhatsApp = (function (app) { //messages
 	}
 	appMessages =  Message;
 	return appMessages;
-})(WhatsApp || {});
-var WhatsApp = (function(app) { //subject
+})(ChOpper || {});
+var ChOpper = (function(app) { //subject
 	function Subject() {
 		this.observers = [];
 	};
@@ -72,12 +72,12 @@ var WhatsApp = (function(app) { //subject
 	};
 	app.Subject = Subject;
 	return app;
-})(WhatsApp || {});
+})(ChOpper || {});
 var currentChat;
 var contactList = new Array();
 var roomList = new Array();
 var name2Image = new Array();
-var WhatsApp = (function ToDoModel (app) { //model
+var ChOpper = (function ToDoModel (app) { //model
 	var subject = new app.Subject();
 	var Model = {
 		start : function() {
@@ -109,7 +109,7 @@ var WhatsApp = (function ToDoModel (app) { //model
 		},
 		writeMessage : function() {
 			var msg = new appMessages($(".input-message").val(),"",new Date().getHours() + ":" + new Date().getMinutes(),true);
-			WhatsApp.View.printMessage(msg);
+			ChOpper.View.printMessage(msg);
 			currentChat.addMessage(msg);
 			$(".input-message").val("");
 			$("#" + currentChat.id).addClass("active-contact");
@@ -125,12 +125,12 @@ var WhatsApp = (function ToDoModel (app) { //model
 			contactList[id].addMessage(msg);
 			contactList[id].online = new Date().getHours() + ":" + new Date().getMinutes();
 			if(contactList[id] == currentChat) {
-				WhatsApp.View.printMessage(msg);
-				WhatsApp.View.printContact(contactList[id]);
+				ChOpper.View.printMessage(msg);
+				ChOpper.View.printContact(contactList[id]);
 			}
 			else {
 				contactList[id].newmsg ++;
-				WhatsApp.View.printContact(contactList[id]);
+				ChOpper.View.printContact(contactList[id]);
 			}
 		},
 		register : function() {
@@ -142,9 +142,9 @@ var WhatsApp = (function ToDoModel (app) { //model
 	};
 	app.Model = Model;
 	return app;
-})(WhatsApp || {});
+})(ChOpper || {});
 var first = true;
-var WhatsApp = (function ToDoView(app) { //view
+var ChOpper = (function ToDoView(app) { //view
 	var view = {
 		printRoom : function (c) {
 			$("#" + c.id).remove();
@@ -157,7 +157,7 @@ var WhatsApp = (function ToDoView(app) { //view
 			}
 			var that = c;
 			$(".room-list").prepend(html);
-			WhatsApp.Ctrl.addClick(html, that);
+			ChOpper.Ctrl.addClick(html, that);
 		} ,
 		printContact : function (c) {
 			$("#" + c.id).remove();
@@ -170,7 +170,7 @@ var WhatsApp = (function ToDoView(app) { //view
 			}
 			var that = c;
 			$(".contact-list").prepend(html);
-			WhatsApp.Ctrl.addClick(html, that);
+			ChOpper.Ctrl.addClick(html, that);
 		} ,
 		printHost : function (c) {
 			$("#" + c.id).remove();
@@ -183,10 +183,10 @@ var WhatsApp = (function ToDoView(app) { //view
 			}
 			var that = c;
 			$(".contact-list").prepend(html);
-			WhatsApp.Ctrl.addClick(html, that);
+			ChOpper.Ctrl.addClick(html, that);
 		} ,
 		printChat : function (cg) {
-			WhatsApp.View.closeContactInformation();
+			ChOpper.View.closeContactInformation();
 			$(".chat-head #chat-target-picture").css('display', 'block').attr("src",cg.img);
 			$(".chat-name h1").text(cg.name);
 			$(".chat").html();
@@ -194,7 +194,7 @@ var WhatsApp = (function ToDoView(app) { //view
 					$(".chat-name p").text("Last Online" + cg.online);
 				$(".chat-bubble").remove(); // configure messages
 				for (var i=0; i<cg.messages.length; i++) {
-					WhatsApp.View.printMessage(cg.messages[i]);
+					ChOpper.View.printMessage(cg.messages[i]);
 				}
 				currentChat = cg;
 			}
@@ -209,7 +209,7 @@ var WhatsApp = (function ToDoView(app) { //view
 				$(".chat-name p").text(listMembers);
 				$(".chat-bubble").remove(); // configure message
 				for (var i=0; i<cg.messages.length; i++) {
-					WhatsApp.View.printMessage(cg.messages[i]);
+					ChOpper.View.printMessage(cg.messages[i]);
 				}
 				currentChat = cg;
 			}
@@ -252,7 +252,7 @@ var WhatsApp = (function ToDoView(app) { //view
 							if (($(currentChat).find("p").text()) == contactList[i].name) {
 								$(".active-contact").removeClass("active-contact");
 								$("#" + contactList[i].id).addClass("active-contact");
-								WhatsApp.Groups.printChat(contactList[i]);
+								ChOpper.Groups.printChat(contactList[i]);
 							}
 						}
 					});
@@ -267,7 +267,7 @@ var WhatsApp = (function ToDoView(app) { //view
 							if (($(currentChat).find("p").text()) == contactList[i].name) {
 								$(".active-contact").removeClass("active-contact");
 								$("#" + contactList[i].id).addClass("active-contact");
-								WhatsApp.Contacts.printChat(contactList[i]);
+								ChOpper.Contacts.printChat(contactList[i]);
 							}
 						}
 					});
@@ -313,27 +313,27 @@ var WhatsApp = (function ToDoView(app) { //view
 			if (first) {
 				first = false;
 				for (var i = 0; i < contactList.length; i++) {
-					WhatsApp.View.printContact(contactList[i]);
+					ChOpper.View.printContact(contactList[i]);
 					currentChat = contactList[i];
 				}
 				first = false;
 				for (var i = 0; i < roomList.length; i++) {
-					WhatsApp.View.printRoom(roomList[i]);
+					ChOpper.View.printRoom(roomList[i]);
 					currentChat = roomList[i];
 				}
 				first = false;
 			}
 			else {
-				WhatsApp.View.printContact(currentChat);
-				WhatsApp.View.printRoom(currentChat);
+				ChOpper.View.printContact(currentChat);
+				ChOpper.View.printRoom(currentChat);
 			}
 		}
 	}
 	app.View = view;
 	return app;
-})(WhatsApp);
+})(ChOpper);
 var start = true;
-var WhatsApp = (function ToDoCtrl(app) { //controller
+var ChOpper = (function ToDoCtrl(app) { //controller
 	$(document).ready(function () {
 		app.Model.start();
 	});
@@ -345,7 +345,7 @@ var WhatsApp = (function ToDoCtrl(app) { //controller
 				$(this).removeClass("new-message-contact");
 				$("#nm" + that.id).remove();
 				that.newmsg = 0;
-				WhatsApp.View.printChat(that);
+				ChOpper.View.printChat(that);
 			});
 		},
 		//Observer-Methode
@@ -357,22 +357,22 @@ var WhatsApp = (function ToDoCtrl(app) { //controller
 					}
 				});
 				$("#show-contact-information").on("click",function(){
-					WhatsApp.View.showContactInformation();
+					ChOpper.View.showContactInformation();
 				});
 				$("#close-contact-information").on("click",function(){
-					WhatsApp.View.closeContactInformation();
+					ChOpper.View.closeContactInformation();
 				});
 				$("#grow-left-list").on("click",function(){
-					WhatsApp.View.growRoomList();
+					ChOpper.View.growRoomList();
 				});
 				$("#shrink-left-list").on("click",function(){
-					WhatsApp.View.shrinkRoomList();
+					ChOpper.View.shrinkRoomList();
 				});
 				$("#grow-right-list").on("click",function(){
-					WhatsApp.View.growContactList();
+					ChOpper.View.growContactList();
 				});
 				$("#shrink-right-list").on("click",function(){
-					WhatsApp.View.shrinkContactList();
+					ChOpper.View.shrinkContactList();
 				});
 				start = false;
 			}
@@ -380,8 +380,8 @@ var WhatsApp = (function ToDoCtrl(app) { //controller
 	};
 	app.Ctrl = Ctrl;
 	return app;
-})(WhatsApp);
-WhatsApp.Model.register(WhatsApp.View, WhatsApp.Ctrl);
+})(ChOpper);
+ChOpper.Model.register(ChOpper.View, ChOpper.Ctrl);
 $(document).ready(function() {
 	$("#loginModal").modal('show');
 });
@@ -440,7 +440,36 @@ function onopen() {
 		});
 	}
 }
-
+/*
+Source,Destination,Command,Arguments
+Hub,Client,ping
+Hub,Client,error
+Hub,Client,login
+Hub,Client,say
+Hub,Client,log
+Hub,Client,phptty
+Hub,Client,vmstat
+Hub,Client,logout
+Hub,Client,running
+Hub,Client,ran
+Client,Hub,pong
+Client,Hub,clients
+Client,Hub,hosts
+Client,Hub,run
+Client,Hub,groups
+Client,Hub,say
+Client,Hub,running
+Host,Hub,bandwidth
+Host,Hub,pong
+Host,Hub,run
+Host,Hub,running
+Host,Hub,ran
+Hub,Host,ping
+Hub,Host,timers
+Hub,Host,self-update
+Hub,Host,run
+Hub,Host,running
+*/
 // When the server sends a message
 function onmessage(e) {
 	console.log(e.data);
