@@ -244,9 +244,9 @@ Host,Hub,ran
 				return Gateway::sendToGroup($room_id ,json_encode($new_message));
 			case 'bandwidth': // from host
 				foreach ($message_data['content'] as $ip => $data) {
-					$rrdFile = __DIR__.'/../../../../logs/rrd'.$_SESSION['name'].'_'.$ip.'.rrd';
+					$rrdFile = __DIR__.'/../../../../logs/rrd/'.$_SESSION['name'].'/'.$ip.'.rrd';
 					if (!file_exists($rrdFile)) {
-						@mkdir($rrdFile = __DIR__.'/../../../../logs/rrd/'.$_SESSION['name'], 777, TRUE);
+						@mkdir(__DIR__.'/../../../../logs/rrd/'.$_SESSION['name'], 777, TRUE);
 						$rrd = new RRDCreator($rrdFile, 'now', 60);
 						$rrd->addDataSource('in:ABSOLUTE:60:U:U');
 						$rrd->addDataSource('out:ABSOLUTE:60:U:U');
