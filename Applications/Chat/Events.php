@@ -107,7 +107,7 @@ class Events {
 	 */
 	public static function onMessage($client_id, $message) {
 		global $process_pipes;
-		echo "client:{$_SERVER['REMOTE_ADDR']}:{$_SERVER['REMOTE_PORT']} gateway:{$_SERVER['GATEWAY_ADDR']}:{$_SERVER['GATEWAY_PORT']} client_id:{$client_id} session:".json_encode($_SESSION)." onMessage:".serialize($message)."\n"; // debug
+		//echo "client:{$_SERVER['REMOTE_ADDR']}:{$_SERVER['REMOTE_PORT']} gateway:{$_SERVER['GATEWAY_ADDR']}:{$_SERVER['GATEWAY_PORT']} client_id:{$client_id} session:".json_encode($_SESSION)." onMessage:".serialize($message)."\n"; // debug
 		$message_data = json_decode($message, true); // Client is passed json data
 		if (!$message_data)
 			return ;
@@ -246,7 +246,7 @@ Host,Hub,ran
 				foreach ($message_data['content'] as $ip => $data) {
 					$rrdFile = __DIR__.'/../../../../logs/rrd/'.$_SESSION['name'].'/'.$ip.'.rrd';
 					if (!file_exists($rrdFile)) {
-						@mkdir(__DIR__.'/../../../../logs/rrd/'.$_SESSION['name'], 777, TRUE);
+						@mkdir(__DIR__.'/../../../../logs/rrd/'.$_SESSION['name'], 0777, TRUE);
 						$rrd = new RRDCreator($rrdFile, 'now', 60);
 						$rrd->addDataSource('in:ABSOLUTE:60:U:U');
 						$rrd->addDataSource('out:ABSOLUTE:60:U:U');
