@@ -401,8 +401,8 @@ var ws, name, client_list={}, roomId;
 
 // Connect to the server
 function connect() {
-	ws = new ReconnectingWebSocket("wss://"+document.domain+":7272"); // create websocket
-	//ws = new WebSocket("wss://"+document.domain+":7272");
+	//ws = new ReconnectingWebSocket("wss://"+document.domain+":7272"); // create websocket
+	ws = new WebSocket("wss://"+document.domain+":7272");
 	ws.onopen = onopen; // When the socket connection is open, enter the user name
 	ws.onmessage = onmessage; // When there is a message according to the type of message shows different information
 	ws.onclose = function() {
@@ -424,8 +424,9 @@ function onopen() {
 		"room_id": 1
 	}
 	console.log(login_data);
-	console.log("websocket handshake successfully, send login data: "+JSON.toString(login_data));
-	ws.send(JSON.toString(login_data));
+	login_data = JSON.stringify(login_data);
+	console.log("websocket handshake successfully, send login data: "+JSON.stringify(login_data));\
+	ws.send(login_data);
 	if (roomId == "phptty") {
 		var term = new Terminal({
 			cols: 130,

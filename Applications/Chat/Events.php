@@ -107,8 +107,7 @@ class Events {
 	 */
 	public static function onMessage($client_id, $message) {
 		global $process_pipes;
-		//echo "client:{$_SERVER['REMOTE_ADDR']}:{$_SERVER['REMOTE_PORT']} gateway:{$_SERVER['GATEWAY_ADDR']}:{$_SERVER['GATEWAY_PORT']} client_id:{$client_id} session:".json_encode($_SESSION)." onMessage:".json_encode($message)."\n"; // debug
-		echo "client:{$_SERVER['REMOTE_ADDR']}:{$_SERVER['REMOTE_PORT']} gateway:{$_SERVER['GATEWAY_ADDR']}:{$_SERVER['GATEWAY_PORT']} client_id:{$client_id} session:".json_encode($_SESSION)."\n"; // debug
+		echo "client:{$_SERVER['REMOTE_ADDR']}:{$_SERVER['REMOTE_PORT']} gateway:{$_SERVER['GATEWAY_ADDR']}:{$_SERVER['GATEWAY_PORT']} client_id:{$client_id} session:".json_encode($_SESSION)." onMessage:".serialize($message)."\n"; // debug
 		$message_data = json_decode($message, true); // Client is passed json data
 		if (!$message_data)
 			return ;
@@ -300,13 +299,13 @@ Host,Hub,ran
 									Gateway::sendToCurrentClient(json_encode($new_message));
 								} else {
 									$uid = 'vps'.$results[0]['vps_id'];
-									Gateway::bindUid($client_id, $uid);
-									Gateway::joinGroup($client_id, $ima.'s');
 									$_SESSION['uid'] = $uid;
-									$_SESSION['name'] = $result[0]['vps_name'];
+									$_SESSION['name'] = $results[0]['vps_name'];
 									$_SESSION['ima'] = $ima;
 									$_SESSION['login'] = true;
 									Gateway::setSession($client_id, $_SESSION);
+									Gateway::bindUid($client_id, $uid);
+									Gateway::joinGroup($client_id, $ima.'s');
 									echo "{$results[0]['vps_name']} has been successfully logged in from {$_SERVER['REMOTE_ADDR']}\n";
 								}
 							}
@@ -338,20 +337,20 @@ Host,Hub,ran
 										'content' => $msg,
 									];
 									Gateway::sendToCurrentClient(json_encode($new_message));
-
 								} else {
 									$uid = $results[0]['account_id'];
-									Gateway::bindUid($client_id, $uid);
-									Gateway::joinGroup($client_id, $ima.'s');
 									$_SESSION['uid'] = $uid;
-									$_SESSION['name'] = $result[0]['account_name'];
+									$_SESSION['name'] = $results[0]['account_lid'];
 									$_SESSION['ima'] = $ima;
 									$_SESSION['login'] = true;
 									Gateway::setSession($client_id, $_SESSION);
+									Gateway::bindUid($client_id, $uid);
+									Gateway::joinGroup($client_id, $ima.'s');
+									echo "{$results[0]['account_lid']} has been successfully logged in from {$_SERVER['REMOTE_ADDR']}\n";
 								}
 							}
-							$loop->stop(); //stop the main loop.
-						}, [$message_data['username'], md5($message_data['password'])]);
+							//$loop->stop(); //stop the main loop.
+						}, $message_data['username'], md5($message_data['password']));
 						break;
 					case 'client':
 					case 'guest':
