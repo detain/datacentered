@@ -131,8 +131,9 @@ body {
 	display: flex;
 }
 
-.search i {
-	width: 60px;
+.search i,
+.wrap-message i {
+	width: 30px;
 	margin: auto;
 }
 

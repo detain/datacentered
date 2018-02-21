@@ -113,80 +113,75 @@
 			<div class="modal-dialog modal-lg" role="document">
 				<div class="modal-content">
 					<form class="form" method="POST" action="#">
-					<div class="modal-header">
-						<button type="button" class="close" data-dismiss="modal" aria-hidden="true">×</button>
-						<div style="display: relative; left: 5px; top: 5px; ">
-						<div style="position: absolute; left: 5px; top: 0px; font-size: 36px; font-weight: 400;">
-							ChOpper
-							<small>MyAdmin ChatOps</small>
+						<div class="modal-header">
+							<button type="button" class="close" data-dismiss="modal" aria-hidden="true">×</button>
+							<div style="display: relative; left: 5px; top: 5px; ">
+							<div style="float: left; margin-left: 25px; font-size: 36px; font-weight: 400; margin-top: -15px;">
+								ChOpper :: MyAdmin ChatOps
+							</div>
+							<div style="float: right; margin-right: 25px; font-size: 36px; font-weight: 400; margin-top: -15px;">
+								Login
+							</div>
 						</div>
-						<div style="position: absolute; right: 5px; top: 0px; font-size: 36px; font-weight: 400;">
-							Login
-						</div>
-					</div>
-					<div class="modal-body">
-						<div class="row">
-							<div class="col-md-12 center-block" style="text-align: center;">
-								<div style="width: 800px; height: 200px;display: inline-flex; text-align: center;">
-									<div class='leftside'>
-										<div class='cat'>
-											<div class='ears1'></div>
-											<div class='head1'>
-												<div class='eyes1'></div>
-												<div class='nose1'></div>
+						<div class="modal-body">
+							<div class="row">
+								<div class="col-md-12 center-block" style="text-align: center;">
+									<div style="width: 800px; height: 200px;display: inline-flex; text-align: center;">
+										<div class='leftside'>
+											<div class='cat'>
+												<div class='ears1'></div>
+												<div class='head1'>
+													<div class='eyes1'></div>
+													<div class='nose1'></div>
+												</div>
+												<div class='body1'>
+													<div class='left-paw1'></div>
+													<div class='right-paw1'></div>
+												</div>
+												<div class='tail1'></div>
+												<div class='PRlaptop'>
+													<div class='PRscreen'></div>
+													<div class='PRkeyboard'></div>
+												</div>
 											</div>
-											<div class='body1'>
-												<div class='left-paw1'></div>
-												<div class='right-paw1'></div>
-											</div>
-											<div class='tail1'></div>
-											<div class='PRlaptop'>
-												<div class='PRscreen'></div>
-												<div class='PRkeyboard'></div>
+										</div>
+										<div class='rightside'>
+											<div class='dog'>
+												<div class='ears2'></div>
+												<div class='head2'>
+													<div class='eyes2'></div>
+													<div class='nose2'></div>
+												</div>
+												<div class='body2'>
+													<div class='left-paw2'></div>
+													<div class='right-paw2'></div>
+												</div>
+												<div class='tail2'></div>
+												<div class='ORlaptop'>
+													<div class='ORscreen'></div>
+													<div class='ORkeyboard'></div>
+												</div>
 											</div>
 										</div>
 									</div>
-									<div class='rightside'>
-										<div class='dog'>
-											<div class='ears2'></div>
-											<div class='head2'>
-												<div class='eyes2'></div>
-												<div class='nose2'></div>
-											</div>
-											<div class='body2'>
-												<div class='left-paw2'></div>
-												<div class='right-paw2'></div>
-											</div>
-											<div class='tail2'></div>
-											<div class='ORlaptop'>
-												<div class='ORscreen'></div>
-												<div class='ORkeyboard'></div>
-											</div>
-										</div>
+									<div class="col-xs-6">
+									<div class="form-group">
+										<label for="email">Login Name</label>
+										<input type="text" class="form-control" placeholder="Email" id="email" name="email" autocomplete="username">
+									</div></div>
+									<div class="col-xs-6">
+									<div class="form-group">
+										<label for="password">Password</label>
+										<input type="password" class="form-control" placeholder="Password" name="password" id="password" autocomplete="current-password">
 									</div>
-								</div>
-								<div class="col-xs-6">
-								<div class="form-group">
-									<label for="email">Login Name</label>
-									<input type="text" class="form-control" placeholder="Email" id="email" name="email" autocomplete="username">
-								</div></div>
-								<div class="col-xs-6">
-								<div class="form-group">
-									<label for="password">Password</label>
-									<input type="password" class="form-control" placeholder="Password" name="password" id="password" autocomplete="current-password">
-								</div>
-								</div>
-						</div>
-					</div>
-					<div class="modal-footer">
-						<div class="col-md-12">
-							<div class="form-group">
-								<button type="button" class="btn btn-primary" onclick="login_to_server();">Sign In</button>
+									</div>
 							</div>
 						</div>
 					</div>
-					</form>
-				</div>
+					<div class="modal-footer">
+						<button type="button" class="btn btn-primary" onclick="login_to_server();">Sign In</button>
+					</div>
+				</form>
 			</div>
 		</div>
 	</body>
