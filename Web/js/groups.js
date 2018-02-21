@@ -423,9 +423,9 @@ function onopen() {
 		"password": document.getElementById('password').value,
 		"room_id": 1
 	}
-	console.log(login_data);
+	//console.log(login_data);
 	login_data = JSON.stringify(login_data);
-	console.log("websocket handshake successfully, send login data: "+JSON.stringify(login_data));
+	//console.log("websocket handshake successfully, send login data: "+JSON.stringify(login_data));
 	ws.send(login_data);
 	if (roomId == "phptty") {
 		var term = new Terminal({

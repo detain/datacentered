@@ -258,7 +258,7 @@
 	  "messages" : [
 		{
 		  "text" : "Hello",
-		  "name" : "Mariah Carey",
+		  "name" : "Liv Tyler",
 		  "time" : "17:30",
 		  "type" : true
 		},
@@ -270,7 +270,7 @@
 		},
 		{
 		  "text" : "Hello",
-		  "name" : "Mariah Carey",
+		  "name" : "Liv Tyler",
 		  "time" : "17:33",
 		  "type" : true
 		},
@@ -348,7 +348,7 @@
 		},
 		{
 		  "text" : "Hello",
-		  "name" : "Mariah Carey",
+		  "name" : "Liv Tyler",
 		  "time" : "17:48",
 		  "type" : true
 		},
@@ -360,7 +360,7 @@
 		},
 		{
 		  "text" : "Hello",
-		  "name" : "Mariah Carey",
+		  "name" : "Liv Tyler",
 		  "time" : "17:53",
 		  "type" : true
 		},
