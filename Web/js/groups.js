@@ -1,7 +1,8 @@
 var ChOpper = (function (app) { //contacts
-	function Contact (name,img,online) {
-		this.id = contactList.length;
+	function Contact (id,ima,name,img,online) {
+		this.id = id;
 		this.name = name;
+		this.ima = ima;
 		this.img = img;
 		this.online = online;
 		this.messages = new Array();
@@ -20,7 +21,6 @@ var ChOpper = (function (app) { //contacts
 	return appContacts;
 })(ChOpper || {});
 var ChOpper = (function (app) { //groups
-
 	function Group (name,img) {
 		this.id = roomList.length;
 		this.name = name;
@@ -75,37 +75,41 @@ var ChOpper = (function(app) { //subject
 })(ChOpper || {});
 var currentChat;
 var contactList = new Array();
+var hostList = new Array();
 var roomList = new Array();
 var name2Image = new Array();
-var ChOpper = (function ToDoModel (app) { //model
+var ChOpper = (function ChOpperModel (app) { //model
 	var subject = new app.Subject();
 	var Model = {
 		start : function() {
 			$.getJSON("group_messages.json", function (data) {
-				for (var i=0; i<data.elements.length; i++) {
-					var e = data.elements[i];
-					if (e.online == undefined) {
-						var group = new appGroups(e.name,e.img);
-						for (var j = 0; j < e.members.length; j++) {
-							group.addMember(contactList[e.members[j].contact]);
-							contactList[e.members[j].contact].addGroup(group);
-						}
-						for (var j = 0; j < e.messages.length; j++) {
-							var m = e.messages[j];
-							var message = new appMessages(m.text, m.name, m.time, m.type, true);
-							group.addMessage(message);
-						}
-					} else {
-						var contact = new appContacts(e.name, e.img, e.online);
-						for (var j = 0; j < e.messages.length; j++) {
-							var m = e.messages[j];
-							var message = new appMessages(m.text, m.name, m.time, m.type, false, e.img);
-							contact.addMessage(message);
-						}
+				app.Model.load(data.elements);
+			});
+		},
+		load : function(data) {
+			for (var i=0; i<data.length; i++) {
+				var e = data[i];
+				if (e.online == undefined) {
+					var group = new appGroups(e.name,e.img);
+					for (var j = 0; j < e.members.length; j++) {
+						group.addMember(contactList[e.members[j].contact]);
+						contactList[e.members[j].contact].addGroup(group);
+					}
+					for (var j = 0; j < e.messages.length; j++) {
+						var m = e.messages[j];
+						var message = new appMessages(m.text, m.name, m.time, m.type, true);
+						group.addMessage(message);
+					}
+				} else {
+					var contact = new appContacts(e.id, e.name, e.ima, e.img, e.online);
+					for (var j = 0; j < e.messages.length; j++) {
+						var m = e.messages[j];
+						var message = new appMessages(m.text, m.name, m.time, m.type, false, e.img);
+						contact.addMessage(message);
 					}
 				}
-				subject.notifyObservers();
-			});
+			}
+			subject.notifyObservers();
 		},
 		writeMessage : function() {
 			var msg = new appMessages($(".input-message").val(),"",new Date().getHours() + ":" + new Date().getMinutes(),true);
@@ -144,7 +148,7 @@ var ChOpper = (function ToDoModel (app) { //model
 	return app;
 })(ChOpper || {});
 var first = true;
-var ChOpper = (function ToDoView(app) { //view
+var ChOpper = (function ChOpperView(app) { //view
 	var view = {
 		printRoom : function (c) {
 			$("#" + c.id).remove();
@@ -333,7 +337,7 @@ var ChOpper = (function ToDoView(app) { //view
 	return app;
 })(ChOpper);
 var start = true;
-var ChOpper = (function ToDoCtrl(app) { //controller
+var ChOpper = (function ChOpperCtrl(app) { //controller
 	$(document).ready(function () {
 		app.Model.start();
 	});
@@ -407,7 +411,7 @@ function connect() {
 	ws.onmessage = onmessage; // When there is a message according to the type of message shows different information
 	ws.onclose = function() {
 		console.log("Connection is closed, timing reconnection");
-		connect();
+		//connect();
 	};
 	ws.onerror = function() {
 		console.log("An error occurred");
@@ -427,6 +431,7 @@ function onopen() {
 	login_data = JSON.stringify(login_data);
 	//console.log("websocket handshake successfully, send login data: "+JSON.stringify(login_data));
 	ws.send(login_data);
+
 	if (roomId == "phptty") {
 		var term = new Terminal({
 			cols: 130,
@@ -444,6 +449,9 @@ function onopen() {
 /*
 Source,Destination,Command,Arguments
 Hub,Client,ping
+Hub,Client,clients
+Hub,Client,hosts
+Hub,Client,groups
 Hub,Client,error
 Hub,Client,login
 Hub,Client,say
@@ -479,19 +487,24 @@ function onmessage(e) {
 		case 'ping': // Server ping client
 			ws.send('{"type":"pong"}');
 			break;
+		case 'clients':
+			console.log('processing clients');
+			console.log(data['content']);
+			ChOpper.Model.start(data['content']);
+			break;
 		case 'error':
 			console.log("There Was An Error:"+data['content']);
 			break;
 		case 'login': // Log in to update the user list
 			//{"type":"login","client_id":xxx,"client_name":"xxx","client_list":"[...]","time":"xxx"}
-			say(data['client_id'], data['client_name'],  data['client_name']+' Joined the chat room', data['time']);
+			say(data['id'], data['name'],  data['name']+' Joined the chat room', data['time']);
 			if(data['client_list']) {
 				client_list = data['client_list'];
 			} else {
-				client_list[data['client_id']] = data['client_name'];
+				client_list[data['id']] = data['name'];
 			}
 			flush_client_list();
-			console.log(data['client_name']+" login successful");
+			console.log(data['name']+" login successful");
 			break;
 		case 'say': // speaking
 			//{"type":"say","from_client_id":xxx,"to_client_id":"all/client_id","content":"xxx","time":"xxx"}

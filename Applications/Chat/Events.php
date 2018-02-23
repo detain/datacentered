@@ -127,16 +127,25 @@ Host,Hub,ran
 */
 		switch ($message_data['type']) { // Depending on the type of business
 			case 'clients': // from client
-				$json = [
+				$sessions = Gateway::getAllClientSessions();
+				$clients = [];
+				foreach ($sessions as $session_id => $session_data) {
+					$client = [
+						'id' => $session_data['uid'],
+						'name' => $session_data['name'],
+						'ima' => $session_data['ima'],
+						'online' => $session_data['online'],
+						'messages' => [],
+					];
+					if ($session_data['ima'] == 'host')
+						$client['img'] = $session_data['module'];
+					else
+						$client['img'] = $session_data['picture'];
+					$clients[] = $client;
+				}
+				$new_message = [ // Send the error response
 					'type' => 'clients',
-					'content' => [],
-				];
-				Gateway::sendToCurrentClient(json_encode($new_message));
-				return;
-			case 'hosts': // from client
-				$json = [
-					'type' => 'hosts',
-					'content' => [],
+					'content' => $clients,
 				];
 				Gateway::sendToCurrentClient(json_encode($new_message));
 				return;
@@ -300,8 +309,10 @@ Host,Hub,ran
 								} else {
 									$uid = 'vps'.$results[0]['vps_id'];
 									$_SESSION['uid'] = $uid;
+									$_SESSION['module'] = 'vps';
 									$_SESSION['name'] = $results[0]['vps_name'];
 									$_SESSION['ima'] = $ima;
+									$_SESSION['online'] = time();
 									$_SESSION['login'] = true;
 									Gateway::setSession($client_id, $_SESSION);
 									Gateway::bindUid($client_id, $uid);
@@ -313,7 +324,7 @@ Host,Hub,ran
 						}, [$_SERVER['REMOTE_ADDR']]);
 						break;
 					case 'admin':
-						$connection->query('select * from accounts where account_ima="admin" and account_lid = ? and account_passwd = ?', function ($command, $conn) use ($client_id, $ima) {
+						$connection->query('select accounts.*, account_value as picture from accounts left join accounts_ext on accounts.account_id=accounts_ext.account_id and account_key="picture" where account_ima="admin" and account_lid = ? and account_passwd = ?', function ($command, $conn) use ($client_id, $ima) {
 							if ($command->hasError()) { //test whether the query was executed successfully
 								//error
 								$error = $command->getError();// get the error object, instance of Exception.
@@ -342,11 +353,44 @@ Host,Hub,ran
 									$_SESSION['uid'] = $uid;
 									$_SESSION['name'] = $results[0]['account_lid'];
 									$_SESSION['ima'] = $ima;
+									$_SESSION['online'] = time();
+									$_SESSION['picture'] = $results[0]['picture'];
 									$_SESSION['login'] = true;
 									Gateway::setSession($client_id, $_SESSION);
 									Gateway::bindUid($client_id, $uid);
 									Gateway::joinGroup($client_id, $ima.'s');
 									echo "{$results[0]['account_lid']} has been successfully logged in from {$_SERVER['REMOTE_ADDR']}\n";
+									$sessions = Gateway::getAllClientSessions();
+									$clients = [];
+									foreach ($sessions as $session_id => $session_data) {
+										$client = [
+											'id' => $session_data['uid'],
+											'name' => $session_data['name'],
+											'ima' => $session_data['ima'],
+											'online' => $session_data['online'],
+											'messages' => [],
+										];
+										if ($session_data['ima'] == 'host')
+											$client['img'] = $session_data['module'];
+										else
+											$client['img'] = $session_data['picture'];
+										$clients[] = $client;
+									}
+									$new_message = [ // Send the error response
+										'type' => 'clients',
+										'content' => $clients,
+									];
+									$new_message = [ // Send the error response
+										'type' => 'login',
+										'id' => $uid,
+										'name' => $results[0]['account_lid'],
+										'ima' => $ima,
+										'online' => time(),
+										'img' => is_null($results[0]['picture']) ? 'https://secure.gravatar.com/'.md5(strtolower(trim($results[0]['account_lid']))).'?s=80&d=identicon&r=x' : $results[0]['picture'],
+									];
+									Gateway::sendToGroup('admins', json_encode($new_message));
+									//echo "Sending Clients List ".json_encode($new_message, JSON_PRETTY_PRINT).PHP_EOL;
+									//Gateway::sendToCurrentClient(json_encode($new_message));
 								}
 							}
 							//$loop->stop(); //stop the main loop.
