@@ -126,6 +126,9 @@ Host,Hub,running
 Host,Hub,ran
 */
 		switch ($message_data['type']) { // Depending on the type of business
+			case 'self-update':
+				Gateway::sendToGroup('hosts', $message);
+				return;
 			case 'clients': // from client
 				$sessions = Gateway::getAllClientSessions();
 				$clients = [];
@@ -252,6 +255,8 @@ Host,Hub,ran
 				];
 				return Gateway::sendToGroup($room_id ,json_encode($new_message));
 			case 'bandwidth': // from host
+				if (!is_array($message_data['content']))
+					echo "error with bandwidth content " . var_export($message_data['content'], true).PHP_EOL;
 				foreach ($message_data['content'] as $ip => $data) {
 					$rrdFile = __DIR__.'/../../../../logs/rrd/'.$_SESSION['name'].'/'.$ip.'.rrd';
 					if (!file_exists($rrdFile)) {
