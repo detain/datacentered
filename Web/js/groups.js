@@ -1,3 +1,8 @@
+if (typeof console == "undefined") { this.console = { log: function (msg) { } };}
+WEB_SOCKET_SWF_LOCATION = "/swf/WebSocketMain.swf"; // If the browser does not support websocket, will use this flash automatically simulate websocket protocol, this process is transparent to developers
+WEB_SOCKET_DEBUG = true; // Open flash websocket debug
+var ws, name, client_list={}, roomId;
+
 var ChOpper = (function (app) { //contacts
 	function Contact (id,ima,name,img,online) {
 		this.id = id;
@@ -20,6 +25,7 @@ var ChOpper = (function (app) { //contacts
 	appContacts =  Contact;
 	return appContacts;
 })(ChOpper || {});
+
 var ChOpper = (function (app) { //groups
 	function Group (name,img) {
 		this.id = roomList.length;
@@ -40,6 +46,7 @@ var ChOpper = (function (app) { //groups
 	appGroups = Group;
 	return appGroups;
 })(ChOpper || {});
+
 var ChOpper = (function (app) { //messages
 	function Message (text,name,time,type,group,img) {
 		this.text = text;
@@ -56,6 +63,7 @@ var ChOpper = (function (app) { //messages
 	appMessages =  Message;
 	return appMessages;
 })(ChOpper || {});
+
 var ChOpper = (function(app) { //subject
 	function Subject() {
 		this.observers = [];
@@ -73,18 +81,25 @@ var ChOpper = (function(app) { //subject
 	app.Subject = Subject;
 	return app;
 })(ChOpper || {});
+
 var currentChat;
 var contactList = new Array();
 var hostList = new Array();
 var roomList = new Array();
 var name2Image = new Array();
+
 var ChOpper = (function ChOpperModel (app) { //model
 	var subject = new app.Subject();
 	var Model = {
 		start : function() {
-			$.getJSON("group_messages.json", function (data) {
-				app.Model.load(data.elements);
+			$("#loginModal").modal('show');
+			$("#login-submit").on('click', function() {
+				$("#loginModal").modal('hide');
+				app.Ctrl.connect();
 			});
+			/*$.getJSON("group_messages.json", function (data) {
+				app.Model.load(data.elements);
+			});*/
 		},
 		load : function(data) {
 			for (var i=0; i<data.length; i++) {
@@ -137,6 +152,123 @@ var ChOpper = (function ChOpperModel (app) { //model
 				ChOpper.View.printContact(contactList[id]);
 			}
 		},
+		onClose : function() {
+			console.log("Connection is closed, timing reconnection");
+			//connect();
+		},
+		onError : function() {
+			console.log("An error occurred");
+		},
+		onOpen : function() { // When the socket connection is open, enter the user name
+			var login_data = {
+				"type": "login",
+				"ima": "admin",
+				"username": document.getElementById('email').value,
+				"password": document.getElementById('password').value,
+				"room_id": 1
+			}
+			console.log(login_data);
+			login_data = JSON.stringify(login_data);
+			console.log("websocket handshake successfully, send login data: "+JSON.stringify(login_data));
+			ws.send(login_data);
+
+			if (roomId == "phptty") {
+				var term = new Terminal({
+					cols: 130,
+					rows: 40,
+					cursorBlink: false
+				});
+				ws.send('{"type":"phptty_run","content":"htop"}');
+				term.open(document.body);
+				term.on('data', function(data) {
+					var myObj = {"type":"phptty","content":data};
+					ws.send(JSON.stringify(myObj));
+				});
+			}
+		},
+		onMessage : function(e) { // When there is a message according to the type of message shows different information
+/*
+Source,Destination,Command,Arguments
+Hub,Client,ping
+Hub,Client,clients
+Hub,Client,hosts
+Hub,Client,groups
+Hub,Client,error
+Hub,Client,login
+Hub,Client,say
+Hub,Client,log
+Hub,Client,phptty
+Hub,Client,vmstat
+Hub,Client,logout
+Hub,Client,running
+Hub,Client,ran
+Client,Hub,pong
+Client,Hub,clients
+Client,Hub,hosts
+Client,Hub,run
+Client,Hub,groups
+Client,Hub,say
+Client,Hub,running
+Host,Hub,bandwidth
+Host,Hub,pong
+Host,Hub,run
+Host,Hub,running
+Host,Hub,ran
+Hub,Host,ping
+Hub,Host,timers
+Hub,Host,self-update
+Hub,Host,run
+Hub,Host,running
+*/
+			console.log("got message");
+			console.log(e.data);
+			var data = JSON.parse(e.data);
+			switch(data['type']){
+				case 'ping': // Server ping client
+					ws.send('{"type":"pong"}');
+					break;
+				case 'clients':
+					console.log('processing clients');
+					console.log(data['content']);
+					ChOpper.Model.start(data['content']);
+					break;
+				case 'error':
+					console.log("There Was An Error:"+data['content']);
+					break;
+				case 'login': // Log in to update the user list
+					//{"type":"login","client_id":xxx,"client_name":"xxx","client_list":"[...]","time":"xxx"}
+					say(data['id'], data['name'],  data['name']+' Joined the chat room', data['time']);
+					if(data['client_list']) {
+						client_list = data['client_list'];
+					} else {
+						client_list[data['id']] = data['name'];
+					}
+					flush_client_list();
+					console.log(data['name']+" login successful");
+					break;
+				case 'say': // speaking
+					//{"type":"say","from_id":xxx,"to_client_id":"all/client_id","content":"xxx","time":"xxx"}
+					say(data['from_id'], data['from_name'], data['content'], data['time']);
+					break;
+				case 'log':
+					console.log(data['content'])
+					say(0, 'Server', data['content'], data['time']);
+					break;
+				case 'phptty':
+					term.write(data['content']);
+					break;
+				case 'vmstat':
+					receiveStats(data['content']);
+					break;
+				// User exits to update user list
+				case 'logout':
+					//{"type":"logout","client_id":xxx,"time":"xxx"}
+					say(data['from_id'], data['from_name'], data['from_name']+' Quit', data['time']);
+					delete client_list[data['from_id']];
+					flush_room_list();
+					flush_client_list();
+			}
+		},
 		register : function() {
 			subject.unsubscribeAll();
 			for (var x = 0 ; x < arguments.length; x++) {
@@ -147,7 +279,9 @@ var ChOpper = (function ChOpperModel (app) { //model
 	app.Model = Model;
 	return app;
 })(ChOpper || {});
+
 var first = true;
+
 var ChOpper = (function ChOpperView(app) { //view
 	var view = {
 		printRoom : function (c) {
@@ -199,8 +333,7 @@ var ChOpper = (function ChOpperView(app) { //view
 					ChOpper.View.printMessage(cg.messages[i]);
 				}
 				currentChat = cg;
-			}
-			else {
+			} else {
 				var listMembers = "";
 				for (var i=0; i<cg.members.length; i++) {
 					listMembers += cg.members[i].name;
@@ -334,7 +467,9 @@ var ChOpper = (function ChOpperView(app) { //view
 	app.View = view;
 	return app;
 })(ChOpper);
+
 var start = true;
+
 var ChOpper = (function ChOpperCtrl(app) { //controller
 	$(document).ready(function () {
 		app.Model.start();
@@ -378,160 +513,22 @@ var ChOpper = (function ChOpperCtrl(app) { //controller
 				});
 				start = false;
 			}
+		},
+		connect : function() { // Connect to the server
+			//ws = new ReconnectingWebSocket("wss://"+document.domain+":7272"); // create websocket
+			ws = new WebSocket("wss://"+document.domain+":7272");
+			ws.onopen = app.Model.onOpen;
+			ws.onmessage = app.Model.onMessage;
+			ws.onclose = app.Model.onCLose;
+			ws.onerror = app.Model.onError;
 		}
 	};
 	app.Ctrl = Ctrl;
 	return app;
 })(ChOpper);
+
 ChOpper.Model.register(ChOpper.View, ChOpper.Ctrl);
-$(document).ready(function() {
-	$("#loginModal").modal('show');
-});
 
-function login_to_server() {
-	$("#loginModal").modal('hide');
-	connect();
-	return false;
-}
-
-if (typeof console == "undefined") {    this.console = { log: function (msg) {  } };}
-// If the browser does not support websocket, will use this flash automatically simulate websocket protocol, this process is transparent to developers
-WEB_SOCKET_SWF_LOCATION = "/swf/WebSocketMain.swf";
-// Open flash websocket debug
-WEB_SOCKET_DEBUG = true;
-var ws, name, client_list={}, roomId;
-
-// Connect to the server
-function connect() {
-	//ws = new ReconnectingWebSocket("wss://"+document.domain+":7272"); // create websocket
-	ws = new WebSocket("wss://"+document.domain+":7272");
-	ws.onopen = onopen; // When the socket connection is open, enter the user name
-	ws.onmessage = onmessage; // When there is a message according to the type of message shows different information
-	ws.onclose = function() {
-		console.log("Connection is closed, timing reconnection");
-		//connect();
-	};
-	ws.onerror = function() {
-		console.log("An error occurred");
-	};
-}
-
-// When there is a message according to the type of message shows different information......
-function onopen() {
-	var login_data = {
-		"type": "login",
-		"ima": "admin",
-		"username": document.getElementById('email').value,
-		"password": document.getElementById('password').value,
-		"room_id": 1
-	}
-	console.log(login_data);
-	login_data = JSON.stringify(login_data);
-	console.log("websocket handshake successfully, send login data: "+JSON.stringify(login_data));
-	ws.send(login_data);
-
-	if (roomId == "phptty") {
-		var term = new Terminal({
-			cols: 130,
-			rows: 40,
-			cursorBlink: false
-		});
-		ws.send('{"type":"phptty_run","content":"htop"}');
-		term.open(document.body);
-		term.on('data', function(data) {
-			var myObj = {"type":"phptty","content":data};
-			ws.send(JSON.stringify(myObj));
-		});
-	}
-}
-/*
-Source,Destination,Command,Arguments
-Hub,Client,ping
-Hub,Client,clients
-Hub,Client,hosts
-Hub,Client,groups
-Hub,Client,error
-Hub,Client,login
-Hub,Client,say
-Hub,Client,log
-Hub,Client,phptty
-Hub,Client,vmstat
-Hub,Client,logout
-Hub,Client,running
-Hub,Client,ran
-Client,Hub,pong
-Client,Hub,clients
-Client,Hub,hosts
-Client,Hub,run
-Client,Hub,groups
-Client,Hub,say
-Client,Hub,running
-Host,Hub,bandwidth
-Host,Hub,pong
-Host,Hub,run
-Host,Hub,running
-Host,Hub,ran
-Hub,Host,ping
-Hub,Host,timers
-Hub,Host,self-update
-Hub,Host,run
-Hub,Host,running
-*/
-// When the server sends a message
-function onmessage(e) {
-	console.log(e.data);
-	var data = JSON.parse(e.data);
-	switch(data['type']){
-		case 'ping': // Server ping client
-			ws.send('{"type":"pong"}');
-			break;
-		case 'clients':
-			console.log('processing clients');
-			console.log(data['content']);
-			ChOpper.Model.start(data['content']);
-			break;
-		case 'error':
-			console.log("There Was An Error:"+data['content']);
-			break;
-		case 'login': // Log in to update the user list
-			//{"type":"login","client_id":xxx,"client_name":"xxx","client_list":"[...]","time":"xxx"}
-			say(data['id'], data['name'],  data['name']+' Joined the chat room', data['time']);
-			if(data['client_list']) {
-				client_list = data['client_list'];
-			} else {
-				client_list[data['id']] = data['name'];
-			}
-			flush_client_list();
-			console.log(data['name']+" login successful");
-			break;
-		case 'say': // speaking
-			//{"type":"say","from_client_id":xxx,"to_client_id":"all/client_id","content":"xxx","time":"xxx"}
-			say(data['from_client_id'], data['from_client_name'], data['content'], data['time']);
-			break;
-		case 'log':
-			console.log(data['content'])
-			say(0, 'Server', data['content'], data['time']);
-			break;
-		case 'phptty':
-			term.write(data['content']);
-			break;
-		case 'vmstat':
-			receiveStats(data['content']);
-			break;
-		// User exits to update user list
-		case 'logout':
-			//{"type":"logout","client_id":xxx,"time":"xxx"}
-			say(data['from_client_id'], data['from_client_name'], data['from_client_name']+' Quit', data['time']);
-			delete client_list[data['from_client_id']];
-			flush_room_list();
-			flush_client_list();
-	}
-}
-
-// enter your name
-function show_prompt(){
-	$('#loginModal').modal('show');
-}
 
 // submit the conversation
 function onSubmit() {
@@ -578,7 +575,7 @@ function flush_client_list(){
 }
 
 // Speaking
-function say(from_client_id, from_client_name, content, time){
+function say(from_id, from_name, content, time){
 	/*
 	// Analysis of Sina microblogging picture
 	content = content.replace(/(http|https):\/\/[\w]+.sinaimg.cn[\S]+(jpg|png|gif)/gi, function(img) {
@@ -594,9 +591,9 @@ function say(from_client_id, from_client_name, content, time){
 	);
 	*/
 	var img = $('.profile img').attr('src');
-	$('.chat').append('<div class="rightchat clearfix"><span class="chat-img pull-right"><img src="'+img+'" alt="User Avatar"></span><div class="chat-body clearfix"><div class="header"><strong class="primary-font">'+from_client_name+'</strong><small class="pull-right text-muted"><i class="fa fa-clock-o"></i> '+time+'</small></div><p>'+content+'</p></div></div>');
-	//$("#dialog").append('<li class="left clearfix"><span class="chat-img pull-left"><img src="https://bootdey.com/img/Content/user_3.jpg?'+from_client_id+'" alt="User Avatar"></span><div class="chat-body clearfix"><div class="header"><strong class="primary-font">'+from_client_name+'</strong><small class="pull-right text-muted"><i class="fa fa-clock-o"></i> '+time+'</small></div><p>'+content+'</p></div></li>').parseEmotion();
-	//$("#dialog").append('<div class="speech_item"><img src="http://lorempixel.com/38/38/?'+from_client_id+'" class="user_icon" /> '+from_client_name+' <br> '+time+'<div style="clear:both;"></div><p class="triangle-isosceles top">'+content+'</p> </div>').parseEmotion();
+	$('.chat').append('<div class="rightchat clearfix"><span class="chat-img pull-right"><img src="'+img+'" alt="User Avatar"></span><div class="chat-body clearfix"><div class="header"><strong class="primary-font">'+from_name+'</strong><small class="pull-right text-muted"><i class="fa fa-clock-o"></i> '+time+'</small></div><p>'+content+'</p></div></div>');
+	//$("#dialog").append('<li class="left clearfix"><span class="chat-img pull-left"><img src="https://bootdey.com/img/Content/user_3.jpg?'+from_id+'" alt="User Avatar"></span><div class="chat-body clearfix"><div class="header"><strong class="primary-font">'+from_name+'</strong><small class="pull-right text-muted"><i class="fa fa-clock-o"></i> '+time+'</small></div><p>'+content+'</p></div></li>').parseEmotion();
+	//$("#dialog").append('<div class="speech_item"><img src="http://lorempixel.com/38/38/?'+from_id+'" class="user_icon" /> '+from_name+' <br> '+time+'<div style="clear:both;"></div><p class="triangle-isosceles top">'+content+'</p> </div>').parseEmotion();
 
 }
 

@@ -18,8 +18,6 @@ use Workerman\Lib\Timer;
 use GlobalData\Client as GlobalDataClient;
 require_once __DIR__.'/Process.php';
 
-$process_pipes = [];
-
 class Events {
 
 	public static $process_handle = null;
@@ -108,7 +106,7 @@ class Events {
 	 * @param mixed $message
 	 */
 	public static function onMessage($client_id, $message) {
-		global $process_pipes;
+		global $global;
 		//echo "client:{$_SERVER['REMOTE_ADDR']}:{$_SERVER['REMOTE_PORT']} gateway:{$_SERVER['GATEWAY_ADDR']}:{$_SERVER['GATEWAY_PORT']} client_id:{$client_id} session:".json_encode($_SESSION)." onMessage:".serialize($message)."\n"; // debug
 		$message_data = json_decode($message, true); // Client is passed json data
 		if (!$message_data)
@@ -135,29 +133,27 @@ Host,Hub,ran
 				$sessions = Gateway::getAllClientSessions();
 				$clients = [];
 				foreach ($sessions as $session_id => $session_data) {
-					$client = [
-						'id' => $session_data['uid'],
-						'name' => $session_data['name'],
-						'ima' => $session_data['ima'],
-						'online' => $session_data['online'],
-						'messages' => [],
-					];
-					if ($session_data['ima'] == 'host')
-						$client['img'] = $session_data['module'];
-					else
-						$client['img'] = $session_data['picture'];
-					$clients[] = $client;
+					if (isset($session_data['uid'])) {
+						$client = [
+							'id' => $session_data['uid'],
+							'name' => $session_data['name'],
+							'ima' => $session_data['ima'],
+							'online' => $session_data['online'],
+							'messages' => [],
+						];
+						if ($session_data['ima'] == 'host')
+							$client['img'] = $session_data['module'];
+						else
+							$client['img'] = $session_data['picture'];
+						$clients[] = $client;
+					}
+				}
+				foreach ($global['rooms'] as $room) {
+					$clients[] = $room;
 				}
 				$new_message = [ // Send the error response
 					'type' => 'clients',
 					'content' => $clients,
-				];
-				Gateway::sendToCurrentClient(json_encode($new_message));
-				return;
-			case 'groups': // from client
-				$json = [
-					'type' => 'groups',
-					'content' => [],
 				];
 				Gateway::sendToCurrentClient(json_encode($new_message));
 				return;
@@ -229,33 +225,43 @@ Host,Hub,ran
 				}
 				return;
 			case 'say': // from client
-				// client speaks message: {type:say, to_client_id:xx, content:xx}
-				if (!isset($_SESSION['room_id'])) // illegal request
-					throw new \Exception("\$_SESSION['room_id'] not set. client_ip:{$_SERVER['REMOTE_ADDR']}");
-				$room_id = $_SESSION['room_id'];
-				$client_name = $_SESSION['client_name'];
-				if ($message_data['to_client_id'] != 'all') { // private chat
+				// client speaks message: {type:say, is: client|room, to:xx, content:xx}
+				if (!isset($message_data['to'])) // illegal request
+					throw new \Exception("\$message_data['to'] not set. client_ip:{$_SERVER['REMOTE_ADDR']}");
+				if (!isset($message_data['is'])) // illegal request
+					throw new \Exception("\$message_data['is'] not set. client_ip:{$_SERVER['REMOTE_ADDR']}");
+				if (!isset($message_data['content'])) // illegal request
+					throw new \Exception("\$message_data['content'] not set. client_ip:{$_SERVER['REMOTE_ADDR']}");
+				if ($message_data['is'] == 'room') {
 					$new_message = [
 						'type' => 'say',
-						'from_client_id' => $client_id,
-						'from_client_name' =>$client_name,
-						'to_client_id' => $message_data['to_client_id'],
-						'content' => "<b>Say to you: </b>".nl2br(htmlspecialchars($message_data['content'])),
+						'from_id' => $_SESSION['uid'],
+						'from_name' => $_SESSION['name'],
+						'is' => $message_data['is'],
+						'to' => $message_data['to'],
+						'content' => nl2br(htmlspecialchars($message_data['content'])),
 						'time' => date('Y-m-d H:i:s'),
 					];
-					Gateway::sendToClient($message_data['to_client_id'], json_encode($new_message));
-					$new_message['content'] = "<b>You're right".htmlspecialchars($message_data['to_client_name'])."Say: </b>".nl2br(htmlspecialchars($message_data['content']));
-					return Gateway::sendToCurrentClient(json_encode($new_message));
+					$rooms = $global['rooms'];
+					$rooms[0]['messages'][] = [
+						'from_id' => $_SESSION['uid'],
+						'from_name' => $_SESSION['name'],
+						'content' => nl2br(htmlspecialchars($message_data['content'])),
+						'time' => date('Y-m-d H:i:s'),
+					];
+					$global['rooms'] = $rooms;
+					return Gateway::sendToGroup($message_data['to'], json_encode($new_message));
 				}
 				$new_message = [
 					'type' => 'say',
-					'from_client_id' => $client_id,
-					'from_client_name' =>$client_name,
-					'to_client_id' => 'all',
+					'from_id' => $_SESSION['uid'],
+					'from_name' => $_SESSION['name'],
+					'is' => $message_data['is'],
+					'to' => $message_data['to'],
 					'content' => nl2br(htmlspecialchars($message_data['content'])),
 					'time' => date('Y-m-d H:i:s'),
 				];
-				return Gateway::sendToGroup($room_id ,json_encode($new_message));
+				return Gateway::sendToUid($message_data['to'], json_encode($new_message));
 			case 'bandwidth': // from host
 				if (!is_array($message_data['content']))
 					echo "error with bandwidth content " . var_export($message_data['content'], true).PHP_EOL;
@@ -319,7 +325,7 @@ Host,Hub,ran
 									$_SESSION['module'] = 'vps';
 									$_SESSION['name'] = $results[0]['vps_name'];
 									$_SESSION['ima'] = $ima;
-									$_SESSION['online'] = time();
+									$_SESSION['online'] = date('Y-m-d H:i:s');
 									$_SESSION['login'] = true;
 									Gateway::setSession($client_id, $_SESSION);
 									Gateway::bindUid($client_id, $uid);
@@ -360,7 +366,7 @@ Host,Hub,ran
 									$_SESSION['uid'] = $uid;
 									$_SESSION['name'] = $results[0]['account_lid'];
 									$_SESSION['ima'] = $ima;
-									$_SESSION['online'] = time();
+									$_SESSION['online'] = date('Y-m-d H:i:s');
 									$_SESSION['picture'] = $results[0]['picture'];
 									$_SESSION['login'] = true;
 									Gateway::setSession($client_id, $_SESSION);
@@ -396,6 +402,21 @@ Host,Hub,ran
 										'img' => is_null($results[0]['picture']) ? 'https://secure.gravatar.com/'.md5(strtolower(trim($results[0]['account_lid']))).'?s=80&d=identicon&r=x' : $results[0]['picture'],
 									];
 									Gateway::sendToGroup('admins', json_encode($new_message));
+									if (!isset($global['rooms'])) {
+										$rooms = [];
+										$room = [
+											'id' => 'room_'.(sizeof($rooms) + 1),
+											'name' => 'General Chat',
+											'img' => 'https://upload.wikimedia.org/wikipedia/commons/thumb/a/a6/Rubik%27s_cube.svg/220px-Rubik%27s_cube.svg.png',
+											'members' => [],
+											'messages' => [],
+										];
+										$rooms[] = $room;
+										$global['rooms'] = $rooms;
+									}
+									$rooms = $global['rooms'];
+									$rooms[0]['members'][] = $uid;
+									$global['rooms'] = $rooms;
 									//echo "Sending Clients List ".json_encode($new_message, JSON_PRETTY_PRINT).PHP_EOL;
 									//Gateway::sendToCurrentClient(json_encode($new_message));
 								}
@@ -464,12 +485,11 @@ Host,Hub,ran
 	}
 
 	public static function vps_queue_timer() {
-
 		/**
 		 * @var \React\MySQL\Connection
 		 */
 		$connection = Events::$db;
-		$connection->query('select * from vps_masters where vps_ip = ?', function ($command, $conn) use ($client_id, $ima) {
+		$connection->query('select * from queue_log where history_section="vpsqueue"', function ($command, $conn) use ($client_id, $ima) {
 			if ($command->hasError()) { //test whether the query was executed successfully
 				//error
 				$error = $command->getError();// get the error object, instance of Exception.
@@ -508,8 +528,7 @@ Host,Hub,ran
 				}
 			}
 			//$loop->stop(); //stop the main loop.
-		}, [$_SERVER['REMOTE_ADDR']]);
-
+		});
 	}
 
 	public static function hyperv_update_list_timer() {
