@@ -51,8 +51,10 @@ class Events {
 			}
 		});
 		if ($worker->id === 0) {
-			Timer::add(600, ['Events', 'update_vps_list_timer']);
+			Timer::add(3600, ['Events', 'hyperv_update_list_timer']);
+			Timer::add(60, ['Events', 'hyperv_queue_timer']);
 			Timer::add(60, ['Events', 'vps_queue_timer']);
+			/*
 			// Save the process handle, close the handle when the process is closed
 			self::$process_handle = popen('vmstat -n 1', 'r');
 			if (self::$process_handle) {
@@ -86,14 +88,14 @@ class Events {
 				};
 			} else {
 			   echo "vmstat 1 fail\n";
-			}
+			}*/
 		}
 	}
 
 	public static function onWorkerStop($worker) {
 		if ($worker->id == 0) {
-			@shell_exec('killall vmstat');
-			@pclose(self::process_handle);
+			/*@shell_exec('killall vmstat');
+			@pclose(self::process_handle);*/
 		}
 	}
 
@@ -461,7 +463,56 @@ Host,Hub,ran
 		*/
 	}
 
-	public static function update_vps_list_timer() {
+	public static function vps_queue_timer() {
+
+		/**
+		 * @var \React\MySQL\Connection
+		 */
+		$connection = Events::$db;
+		$connection->query('select * from vps_masters where vps_ip = ?', function ($command, $conn) use ($client_id, $ima) {
+			if ($command->hasError()) { //test whether the query was executed successfully
+				//error
+				$error = $command->getError();// get the error object, instance of Exception.
+				$msg = 'Got an error '.$error->getMessage().' while connecting to DB';
+				echo $msg.PHP_EOL;
+				error_log('vps', 'error', $msg, __LINE__, __FILE__);
+				$new_message = [ // Send the error response
+					'type' => 'error',
+					'content' => $msg,
+				];
+				Gateway::sendToCurrentClient(json_encode($new_message));
+			} else {
+				$results = $command->resultRows; //get the results
+				if (sizeof($results) == 0) {
+					//error
+					$msg = 'This System '.$_SERVER['REMOTE_ADDR'].' does not appear to match up with one of our hosts.';
+					echo $msg.PHP_EOL;
+					error_log($msg);
+					$new_message = [ // Send the error response
+						'type' => 'error',
+						'content' => $msg,
+					];
+					Gateway::sendToCurrentClient(json_encode($new_message));
+				} else {
+					$uid = 'vps'.$results[0]['vps_id'];
+					$_SESSION['uid'] = $uid;
+					$_SESSION['module'] = 'vps';
+					$_SESSION['name'] = $results[0]['vps_name'];
+					$_SESSION['ima'] = $ima;
+					$_SESSION['online'] = time();
+					$_SESSION['login'] = true;
+					Gateway::setSession($client_id, $_SESSION);
+					Gateway::bindUid($client_id, $uid);
+					Gateway::joinGroup($client_id, $ima.'s');
+					echo "{$results[0]['vps_name']} has been successfully logged in from {$_SERVER['REMOTE_ADDR']}\n";
+				}
+			}
+			//$loop->stop(); //stop the main loop.
+		}, [$_SERVER['REMOTE_ADDR']]);
+
+	}
+
+	public static function hyperv_update_list_timer() {
 		/*$new_message = [
 			'type' => 'log',
 			'content' => nl2br(htmlspecialchars('Running Update VPS List Timer')),
@@ -477,7 +528,7 @@ Host,Hub,ran
 		$task_connection->connect();																	// execute async link
 	}
 
-	public static function vps_queue_timer() {
+	public static function hyperv_queue_timer() {
 		/*$new_message = [
 			'type' => 'log',
 			'content' => nl2br(htmlspecialchars('Running VPS Queue Timer')),

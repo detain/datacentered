@@ -155,8 +155,7 @@ var ChOpper = (function ChOpperView(app) { //view
 			var lastmsg = c.messages[c.messages.length - 1];
 			if (c.newmsg == 0) {
 				var html = $("<div class='room' id='" + c.id + "'><img src='" + c.img + "' alt='profilpicture'><div class='contact-preview'><div class='contact-text'><h1 class='font-name'>" + c.name + "</h1><p class='font-preview'>" + lastmsg.text + "</p></div></div><div class='contact-time'><p>" + lastmsg.time + "</p></div></div>");
-			}
-			else {
+			} else {
 				var html = $("<div class='room new-message-contact' id='" + c.id + "'><img src='" + c.img + "' alt='profilpicture'><div class='contact-preview'><div class='contact-text'><h1 class='font-name'>" + c.name + "</h1><p class='font-preview'>" + lastmsg.text + "</p></div></div><div class='contact-time'><p>" + lastmsg.time + "</p><div class='new-message' id='nm" + c.id + "'><p>" + c.newmsg + "</p></div></div></div>");
 			}
 			var that = c;
@@ -168,8 +167,7 @@ var ChOpper = (function ChOpperView(app) { //view
 			var lastmsg = c.messages[c.messages.length - 1];
 			if (c.newmsg == 0) {
 				var html = $("<div class='contact' id='" + c.id + "'><img src='" + c.img + "' alt='profilpicture'><div class='contact-preview'><div class='contact-text'><h1 class='font-name'>" + c.name + "</h1><p class='font-preview'>" + lastmsg.text + "</p></div></div><div class='contact-time'><p>" + lastmsg.time + "</p></div></div>");
-			}
-			else {
+			} else {
 				var html = $("<div class='contact new-message-contact' id='" + c.id + "'><img src='" + c.img + "' alt='profilpicture'><div class='contact-preview'><div class='contact-text'><h1 class='font-name'>" + c.name + "</h1><p class='font-preview'>" + lastmsg.text + "</p></div></div><div class='contact-time'><p>" + lastmsg.time + "</p><div class='new-message' id='nm" + c.id + "'><p>" + c.newmsg + "</p></div></div></div>");
 			}
 			var that = c;
@@ -427,9 +425,9 @@ function onopen() {
 		"password": document.getElementById('password').value,
 		"room_id": 1
 	}
-	//console.log(login_data);
+	console.log(login_data);
 	login_data = JSON.stringify(login_data);
-	//console.log("websocket handshake successfully, send login data: "+JSON.stringify(login_data));
+	console.log("websocket handshake successfully, send login data: "+JSON.stringify(login_data));
 	ws.send(login_data);
 
 	if (roomId == "phptty") {

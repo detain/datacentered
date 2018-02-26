@@ -32,11 +32,11 @@ while ($db->next_record(MYSQL_ASSOC)) {
 	$rows[$db->Record['vps_id']] = $db->Record;
 	$sids[] = $db->Record['vps_id'];
 }
-//	vps_queue_handler($server_info, 'getnewvps');
+//	echo vps_queue_handler($server_info, 'getnewvps');
 $db->query("select * from vps where vps_status='pending-setup' and vps_server in (".implode(',', $sids).")", __LINE__, __FILE__);
 while ($db->next_record(MYSQL_ASSOC))
 	$rows[$db->Record['vps_server']]['newvps'][] = $db->Record;
-//	vps_queue_handler($server_info, 'getqueue');
+//	echo vps_queue_handler($server_info, 'getqueue');
 $db->query("select vps.*, hl1.* from vps, queue_log as hl1 left join queue_log as hl2 on hl2.history_type=hl1.history_id and hl2.history_section='vpsqueuedone' where hl1.history_section='vpsqueue' and hl1.history_type=vps_id and hl2.history_id is null and vps_server in (".implode(',', $sids).")", __LINE__, __FILE__);
 while ($db->next_record(MYSQL_ASSOC))
 	$rows[$db->Record['vps_server']]['queue'][] = $db->Record;
