@@ -53,7 +53,7 @@ class Events {
 		if ($worker->id === 0) {
 			Timer::add(3600, ['Events', 'hyperv_update_list_timer']);
 			Timer::add(60, ['Events', 'hyperv_queue_timer']);
-			Timer::add(60, ['Events', 'vps_queue_timer']);
+			//Timer::add(60, ['Events', 'vps_queue_timer']);
 			/*
 			// Save the process handle, close the handle when the process is closed
 			self::$process_handle = popen('vmstat -n 1', 'r');
