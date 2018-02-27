@@ -114,19 +114,6 @@ class Events {
 		if (!$message_data)
 			return ;
 		$connection = Events::$db;
-/*
-Client,Hub,clients
-Client,Hub,hosts
-Client,Hub,run
-Client,Hub,groups
-Client,Hub,say
-Client,Hub,running
-Client,Hub,pong
-Host,Hub,pong
-Host,Hub,bandwidth
-Host,Hub,running
-Host,Hub,ran
-*/
 		switch ($message_data['type']) { // Depending on the type of business
 			case 'self-update':
 				Gateway::sendToGroup('hosts', $message);
@@ -291,10 +278,6 @@ Host,Hub,ran
 				}
 				return;
 			case 'login': // from client or host
-				// Client login message format: {type: login, name: xx, room_id: 1}, added to the client, broadcast to all clients xx into the chat room
-				// Client Types:
-				//  host, admin,
-				//  client, guest?  (not right now)
 				$ima = isset($message_data['ima']) && in_array($message_data['ima'], ['host', 'admin']) ? $message_data['ima'] : 'admin';
 				switch ($ima) {
 					case 'host':
@@ -438,29 +421,6 @@ Host,Hub,ran
 						Gateway::sendToCurrentClient(json_encode($new_message));
 						break;
 				}
-				//Timer::del($_SESSION['auth_timer_id']); // delete timer if successfull
-/*
-				if (!isset($message_data['room_id'])) // Determine whether there is a room number
-					throw new \Exception("\$message_data['room_id'] not set. client_ip:{$_SERVER['REMOTE_ADDR']} \$message:{$message}");
-				$room_id = $message_data['room_id']; // The room number nickname into the session
-				$client_name = htmlspecialchars($message_data['name']);
-				$_SESSION['room_id'] = $room_id;
-				$_SESSION['client_name'] = $client_name;
-				$clients_list = Gateway::getClientSessionsByGroup($room_id); // Get a list of all users in your room
-				foreach($clients_list as $tmp_client_id=>$item)
-					$clients_list[$tmp_client_id] = $item['client_name'];
-				$clients_list[$client_id] = $client_name;
-				$new_message = [ // Broadcast to all clients in the current room, xx into the chat room message {type:login, client_id:xx, name:xx}
-					'type' => $message_data['type'],
-					'client_id' => $client_id,
-					'client_name' => htmlspecialchars($client_name),
-					'time' => date('Y-m-d H:i:s')
-				];
-				Gateway::sendToGroup($room_id, json_encode($new_message));
-				Gateway::joinGroup($client_id, $room_id);
-				$new_message['client_list'] = $clients_list; // Send the user list to the current user
-				Gateway::sendToCurrentClient(json_encode($new_message));
-				*/
 				return;
 		}
 	}
@@ -493,7 +453,6 @@ Host,Hub,ran
 		$conn->query('select * from queue_log left join vps on vps_id=history_type where history_section="vpsqueue"', function ($command, $conn) {
 			global $global;
 			if ($command->hasError()) { //test whether the query was executed successfully
-				//error
 				$error = $command->getError();// get the error object, instance of Exception.
 				$msg = 'Got an error '.$error->getMessage().' while connecting to DB';
 				echo $msg.PHP_EOL;
