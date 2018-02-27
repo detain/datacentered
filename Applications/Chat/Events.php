@@ -156,14 +156,9 @@ class Events {
 				return;
 			case 'run': // from client
 				//self::run_command($results[0]['vps_id'], 'ls /');
-				//echo 'Results:';
-				//var_export($results);
-				//echo PHP_EOL;
-
+				//echo 'Results:'.var_export($results,true).PHP_EOL;
 				//$fields  = $command->resultFields; // get table fields
-				//echo 'Fields:';
-				//var_export($fields);
-				//echo PHP_EOL;
+				//echo 'Fields:'.var_export($fields,true).PHP_EOL;
 				$json = [
 					'type' => 'run',
 					'command' => $data['command'],
