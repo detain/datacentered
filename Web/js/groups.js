@@ -1,7 +1,7 @@
 if (typeof console == "undefined") { this.console = { log: function (msg) { } };}
 WEB_SOCKET_SWF_LOCATION = "/swf/WebSocketMain.swf"; // If the browser does not support websocket, will use this flash automatically simulate websocket protocol, this process is transparent to developers
 WEB_SOCKET_DEBUG = true; // Open flash websocket debug
-var ws, name, client_list={}, roomId;
+var ws, name, roomId;
 
 var ChOpper = (function (app) { //contacts
 	function Contact (id,ima,name,img,online) {
@@ -12,48 +12,48 @@ var ChOpper = (function (app) { //contacts
 		this.online = online;
 		this.messages = new Array();
 		this.newmsg = 0;
-		this.groups = new Array();
-		contactList.push(this);
+		this.rooms = new Array();
+		contactList[id] = this;
 		name2Image[name] = img;
 	}
 	Contact.prototype.addMessage = function (msg) {
 		this.messages.push(msg);
 	}
-	Contact.prototype.addGroup = function (group) {
-		this.groups.push(group);
+	Contact.prototype.addRoom = function (room) {
+		this.rooms.push(room);
 	}
 	appContacts =  Contact;
 	return appContacts;
 })(ChOpper || {});
 
-var ChOpper = (function (app) { //groups
-	function Group (name,img) {
+var ChOpper = (function (app) { //rooms
+	function Room (name,img) {
 		this.id = roomList.length;
 		this.name = name;
 		this.img = img;
 		this.members = new Array();
 		this.messages = new Array();
 		this.newmsg = 0;
-		roomList.push(this);
+		roomList[id] = this;
 		//contactList.push(this);
 	}
-	Group.prototype.addMember = function (contact) {
+	Room.prototype.addMember = function (contact) {
 		this.members.push(contact);
 	}
-	Group.prototype.addMessage = function (msg) {
+	Room.prototype.addMessage = function (msg) {
 		this.messages.push(msg);
 	}
-	appGroups = Group;
-	return appGroups;
+	appRooms = Room;
+	return appRooms;
 })(ChOpper || {});
 
 var ChOpper = (function (app) { //messages
-	function Message (text,name,time,type,group,img) {
+	function Message (text,name,time,type,room,img) {
 		this.text = text;
 		this.name = name;
 		this.time = time;
 		this.type = type;
-		this.group = group;
+		this.room = room;
 		if (typeof img == "undefined") {
 			this.img = name2Image[name];
 		} else {
@@ -105,15 +105,15 @@ var ChOpper = (function ChOpperModel (app) { //model
 			for (var i=0; i<data.length; i++) {
 				var e = data[i];
 				if (e.online == undefined) {
-					var group = new appGroups(e.name,e.img);
+					var room = new appRooms(e.name,e.img);
 					for (var j = 0; j < e.members.length; j++) {
-						group.addMember(contactList[e.members[j].contact]);
-						contactList[e.members[j].contact].addGroup(group);
+						room.addMember(contactList[e.members[j].contact]);
+						contactList[e.members[j].contact].addRoom(room);
 					}
 					for (var j = 0; j < e.messages.length; j++) {
 						var m = e.messages[j];
 						var message = new appMessages(m.text, m.name, m.time, m.type, true);
-						group.addMessage(message);
+						room.addMessage(message);
 					}
 				} else {
 					var contact = new appContacts(e.id, e.name, e.ima, e.img, e.online);
@@ -134,20 +134,18 @@ var ChOpper = (function ChOpperModel (app) { //model
 			$("#" + currentChat.id).addClass("active-contact");
 			subject.notifyObservers();
 		},
-		getMessage : function (text,id,name) {
-			if (name == undefined) {
-				var msg = new appMessages(text, contactList[id].name, new Date().getHours() + ":" + new Date().getMinutes(), false, false, contactList[id].img);
+		getMessage : function (type,text,id) {
+			var msg = new appMessages(text, contactList[id].name, new Date().getHours() + ":" + new Date().getMinutes(), false, false, contactList[id].img);
+			if (type == "room") {
+				roomList[0].addMessage(msg);
+			} else {
+				contactList[id].addMessage(msg);
+				contactList[id].online = new Date().getHours() + ":" + new Date().getMinutes();
 			}
-			else {
-				var msg = new appMessages(text, name, new Date().getHours() + ":" + new Date().getMinutes(), false, true, contactList[id].img);
-			}
-			contactList[id].addMessage(msg);
-			contactList[id].online = new Date().getHours() + ":" + new Date().getMinutes();
 			if(contactList[id] == currentChat) {
 				ChOpper.View.printMessage(msg);
 				ChOpper.View.printContact(contactList[id]);
-			}
-			else {
+			} else {
 				contactList[id].newmsg ++;
 				ChOpper.View.printContact(contactList[id]);
 			}
@@ -171,7 +169,6 @@ var ChOpper = (function ChOpperModel (app) { //model
 			login_data = JSON.stringify(login_data);
 			console.log("websocket handshake successfully, send login data: "+JSON.stringify(login_data));
 			ws.send(login_data);
-
 			if (roomId == "phptty") {
 				var term = new Terminal({
 					cols: 130,
@@ -236,14 +233,23 @@ Hub,Host,running
 					console.log("There Was An Error:"+data['content']);
 					break;
 				case 'login': // Log in to update the user list
-					//{"type":"login","client_id":xxx,"client_name":"xxx","client_list":"[...]","time":"xxx"}
-					say(data['id'], data['name'],  data['name']+' Joined the chat room', data['time']);
-					if(data['client_list']) {
-						client_list = data['client_list'];
+					//{"type":"login","id":xxx,"name":"xxx","ima":"client|host","email":"","ip":"","time":"xxx"}
+					if (data['ima'] == 'admin' && (document.getElementById('email').value == data['email'] || document.getElementById('email').value == data['name'])) {
+						console.log("getting clients list");
+						ws.send('{"type":"clients"}');
 					} else {
-						client_list[data['id']] = data['name'];
+						var contact = new appContacts(data.id, data.name, data.ima, data.img, data.online);
 					}
-					flush_client_list();
+					ChOpper.View.printMessage(data['name']+' Logged in');
+					if(contactList[data.id] == currentChat) {
+
+						//ChOpper.View.printContact(contactList[data.id]);
+					} else {
+						contactList[data.id].newmsg ++;
+						//ChOpper.View.printContact(contactList[data.id]);
+					}
+					var message = new appMessages('Joined the chat room', data['name'], data['time'], data['type'], true);
+					//roomList[0].addMessage(message);
 					console.log(data['name']+" login successful");
 					break;
 				case 'say': // speaking
@@ -264,7 +270,7 @@ Hub,Host,running
 				case 'logout':
 					//{"type":"logout","client_id":xxx,"time":"xxx"}
 					say(data['from_id'], data['from_name'], data['from_name']+' Quit', data['time']);
-					delete client_list[data['from_id']];
+					delete contactList[data['from_id']];
 					flush_room_list();
 					flush_client_list();
 			}
@@ -299,10 +305,18 @@ var ChOpper = (function ChOpperView(app) { //view
 		printContact : function (c) {
 			$("#" + c.id).remove();
 			var lastmsg = c.messages[c.messages.length - 1];
-			if (c.newmsg == 0) {
-				var html = $("<div class='contact' id='" + c.id + "'><img src='" + c.img + "' alt='profilpicture'><div class='contact-preview'><div class='contact-text'><h1 class='font-name'>" + c.name + "</h1><p class='font-preview'>" + lastmsg.text + "</p></div></div><div class='contact-time'><p>" + lastmsg.time + "</p></div></div>");
+			if (typeof lastmsg == "undefined") {
+				if (c.newmsg == 0) {
+					var html = $("<div class='contact' id='" + c.id + "'><img src='" + c.img + "' alt='profilpicture'><div class='contact-preview'><div class='contact-text'><h1 class='font-name'>" + c.name + "</h1></div></div><div class='contact-time'></div></div>");
+				} else {
+					var html = $("<div class='contact new-message-contact' id='" + c.id + "'><img src='" + c.img + "' alt='profilpicture'><div class='contact-preview'><div class='contact-text'><h1 class='font-name'>" + c.name + "</h1></div></div><div class='contact-time'><div class='new-message' id='nm" + c.id + "'><p>" + c.newmsg + "</p></div></div></div>");
+				}
 			} else {
-				var html = $("<div class='contact new-message-contact' id='" + c.id + "'><img src='" + c.img + "' alt='profilpicture'><div class='contact-preview'><div class='contact-text'><h1 class='font-name'>" + c.name + "</h1><p class='font-preview'>" + lastmsg.text + "</p></div></div><div class='contact-time'><p>" + lastmsg.time + "</p><div class='new-message' id='nm" + c.id + "'><p>" + c.newmsg + "</p></div></div></div>");
+				if (c.newmsg == 0) {
+					var html = $("<div class='contact' id='" + c.id + "'><img src='" + c.img + "' alt='profilpicture'><div class='contact-preview'><div class='contact-text'><h1 class='font-name'>" + c.name + "</h1><p class='font-preview'>" + lastmsg.text + "</p></div></div><div class='contact-time'><p>" + lastmsg.time + "</p></div></div>");
+				} else {
+					var html = $("<div class='contact new-message-contact' id='" + c.id + "'><img src='" + c.img + "' alt='profilpicture'><div class='contact-preview'><div class='contact-text'><h1 class='font-name'>" + c.name + "</h1><p class='font-preview'>" + lastmsg.text + "</p></div></div><div class='contact-time'><p>" + lastmsg.time + "</p><div class='new-message' id='nm" + c.id + "'><p>" + c.newmsg + "</p></div></div></div>");
+				}
 			}
 			var that = c;
 			$(".contact-list").prepend(html);
@@ -350,7 +364,7 @@ var ChOpper = (function ChOpperView(app) { //view
 			}
 		},
 		printMessage : function (gc) {
-			if (gc.group) {
+			if (gc.room) {
 				if (gc.type) {
 					$(".chat").append('<div class="me rightchat clearfix"><span class="chat-img pull-right"><img src="'+gc.img+'" alt="User Avatar"></span><div class="chat-body clearfix"><div class="header"><strong class="primary-font">'+gc.name+'</strong><small class="pull-right text-muted"><i class="fa fa-clock-o"></i> '+gc.time+'</small></div><p>'+gc.text+'</p></div></div>');
 					//$(".chat").append('<div class="chat-bubble me"><div class="rightchat clearfix"><span class="chat-img pull-left"><img src="'+gc.img+'" alt="User Avatar"></span><div class="chat-body clearfix"><div class="header"><strong class="primary-font">'+gc.name+'</strong><small class="pull-right text-muted"><i class="fa fa-clock-o"></i> '+gc.time+'</small></div><p>'+gc.text+'</p></div></div>');
@@ -360,8 +374,7 @@ var ChOpper = (function ChOpperView(app) { //view
 					//$(".chat").append('<div class="chat-bubble you"><div class="leftchat clearfix"><span class="chat-img pull-left"><img src="'+gc.img+'" alt="User Avatar"></span><div class="chat-body clearfix"><div class="header"><strong class="primary-font">'+gc.name+'</strong><small class="pull-right text-muted"><i class="fa fa-clock-o"></i> '+gc.time+'</small></div><p>'+gc.text+'</p></div></div>');
 					//$(".chat").append("<div class='chat-bubble you'><div class='your-mouth'></div><h4>" + gc.name + "</h4><div class='content'>" + gc.text + "</div><div class='time'>" + gc.time + "</div></div>");
 				}
-			}
-			else {
+			} else {
 				if (gc.type) {
 					$(".chat").append('<div class="me rightchat clearfix"><span class="chat-img pull-left"><img src="'+gc.img+'" alt="User Avatar"></span><div class="chat-body clearfix"><div class="header"><strong class="primary-font">'+gc.name+'</strong><small class="pull-right text-muted"><i class="fa fa-clock-o"></i> '+gc.time+'</small></div><p>'+gc.text+'</p></div></div>');
 					//$(".chat").append('<div class="chat-bubble me"><div class="rightchat clearfix"><span class="chat-img pull-left"><img src="'+gc.img+'" alt="User Avatar"></span><div class="chat-body clearfix"><div class="header"><strong class="primary-font">'+gc.name+'</strong><small class="pull-right text-muted"><i class="fa fa-clock-o"></i> '+gc.time+'</small></div><p>'+gc.text+'</p></div></div>');
@@ -378,25 +391,25 @@ var ChOpper = (function ChOpperView(app) { //view
 			$(".information").css("display", "flex");
 			$("#close-contact-information").show();
 			if (currentChat.members == undefined) {
-				$(".information").append("<img src='" + currentChat.img + "'><div><h1>Name:</h1><p>" + currentChat.name + "</p></div><div id='listGroups'><h1>Gemeinsame Gruppen:</h1></div>");
-				for (var i = 0; i < currentChat.groups.length; i++) {
-					html = $("<div class='listGroups'><img src='" + currentChat.groups[i].img + "'><p>" + currentChat.groups[i].name + "</p></div>");
-					$("#listGroups").append(html);
+				$(".information").append("<img src='" + currentChat.img + "'><div><h1>Name:</h1><p>" + currentChat.name + "</p></div><div id='listRooms'><h1>Gemeinsame Gruppen:</h1></div>");
+				for (var i = 0; i < currentChat.rooms.length; i++) {
+					html = $("<div class='listRooms'><img src='" + currentChat.rooms[i].img + "'><p>" + currentChat.rooms[i].name + "</p></div>");
+					$("#listRooms").append(html);
 					$(html).click(function (e) {
 						for (var i = 0; i < contactList.length; i++) {
 							if (($(currentChat).find("p").text()) == contactList[i].name) {
 								$(".active-contact").removeClass("active-contact");
 								$("#" + contactList[i].id).addClass("active-contact");
-								ChOpper.Groups.printChat(contactList[i]);
+								ChOpper.Rooms.printChat(contactList[i]);
 							}
 						}
 					});
 				}
 			} else {
-				$(".information").append("<img src='" + currentChat.img + "'><div><h1>Name:</h1><p>" + currentChat.name + "</p></div><div id='listGroups'><h1>Mitglieder:</h1></div>");
+				$(".information").append("<img src='" + currentChat.img + "'><div><h1>Name:</h1><p>" + currentChat.name + "</p></div><div id='listRooms'><h1>Mitglieder:</h1></div>");
 				for (var i = 0; i < currentChat.members.length; i++) {
-					html = $("<div class='listGroups'><img src='" + currentChat.members[i].img + "'><p>" + currentChat.members[i].name + "</p></div>");
-					$("#listGroups").append(html);
+					html = $("<div class='listRooms'><img src='" + currentChat.members[i].img + "'><p>" + currentChat.members[i].name + "</p></div>");
+					$("#listRooms").append(html);
 					$(html).click(function (e) {
 						for (var i = 0; i < contactList.length; i++) {
 							if (($(currentChat).find("p").text()) == contactList[i].name) {
@@ -493,6 +506,14 @@ var ChOpper = (function ChOpperCtrl(app) { //controller
 						app.Model.writeMessage();
 					}
 				});
+				$("#input-submit").on('click', function() {
+					var input = document.getElementById("textarea");
+					var to_client_id = $("#client_list option:selected").attr("value");
+					var to_client_name = $("#client_list option:selected").text();
+					ws.send('{"type":"say","to_client_id":"'+to_client_id+'","to_client_name":"'+to_client_name+'","content":"'+input.value.replace(/"/g, '\\"').replace(/\n/g,'\\n').replace(/\r/g, '\\r')+'"}');
+					input.value = "";
+					input.focus();
+				});
 				$("#show-contact-information").on("click",function(){
 					ChOpper.View.showContactInformation();
 				});
@@ -528,82 +549,3 @@ var ChOpper = (function ChOpperCtrl(app) { //controller
 })(ChOpper);
 
 ChOpper.Model.register(ChOpper.View, ChOpper.Ctrl);
-
-
-// submit the conversation
-function onSubmit() {
-	var input = document.getElementById("textarea");
-	var to_client_id = $("#client_list option:selected").attr("value");
-	var to_client_name = $("#client_list option:selected").text();
-	ws.send('{"type":"say","to_client_id":"'+to_client_id+'","to_client_name":"'+to_client_name+'","content":"'+input.value.replace(/"/g, '\\"').replace(/\n/g,'\\n').replace(/\r/g, '\\r')+'"}');
-	input.value = "";
-	input.focus();
-}
-
-// Refresh chat room list box
-function flush_room_list(){
-	var userlist_window = $("#roomlist");
-	var client_list_slelect = $("#room_list");
-	userlist_window.empty();
-	client_list_slelect.empty();
-	userlist_window.append('<h4>Online Users</h4><ul>');
-	client_list_slelect.append('<option value="all" id="cli_all">Everyone</option>');
-	for(var p in client_list){
-		userlist_window.append('<li id="'+p+'" class="bounceInDown"><a href="#" class="clearfix"><img src="https://bootdey.com/img/Content/user_3.jpg" alt="" class="img-circle"><div class="friend-name"><strong>'+client_list[p]+'</strong></div><div class="last-message text-muted">Lorem ipsum dolor sit amet.</div><small class="time text-muted">Yesterday</small><small class="chat-alert text-muted"><i class="fa fa-reply"></i></small></a></li>');
-		//userlist_window.append('<li id="'+p+'">'+client_list[p]+'</li>');
-		client_list_slelect.append('<option value="'+p+'">'+client_list[p]+'</option>');
-	}
-	$("#room_list").val(select_client_id);
-	userlist_window.append('</ul>');
-}
-
-// Refresh user list box
-function flush_client_list(){
-	var userlist_window = $("#userlist");
-	var client_list_slelect = $("#client_list");
-	userlist_window.empty();
-	client_list_slelect.empty();
-	userlist_window.append('<h4>Online Users</h4><ul>');
-	client_list_slelect.append('<option value="all" id="cli_all">Everyone</option>');
-	for(var p in client_list){
-		userlist_window.append('<li id="'+p+'" class="bounceInDown"><a href="#" class="clearfix"><img src="https://bootdey.com/img/Content/user_3.jpg" alt="" class="img-circle"><div class="friend-name"><strong>'+client_list[p]+'</strong></div><div class="last-message text-muted">Lorem ipsum dolor sit amet.</div><small class="time text-muted">Yesterday</small><small class="chat-alert text-muted"><i class="fa fa-reply"></i></small></a></li>');
-		//userlist_window.append('<li id="'+p+'">'+client_list[p]+'</li>');
-		client_list_slelect.append('<option value="'+p+'">'+client_list[p]+'</option>');
-	}
-	$("#client_list").val(select_client_id);
-	userlist_window.append('</ul>');
-}
-
-// Speaking
-function say(from_id, from_name, content, time){
-	/*
-	// Analysis of Sina microblogging picture
-	content = content.replace(/(http|https):\/\/[\w]+.sinaimg.cn[\S]+(jpg|png|gif)/gi, function(img) {
-		return "<a target='_blank' href='"+img+"'>"+"<img src='"+img+"'>"+"</a>";}
-	);
-	// resolve the url
-	content = content.replace(/(http|https):\/\/[\S]+/gi, function(url) {
-		if(url.indexOf(".sinaimg.cn/") < 0)
-			return "<a target='_blank' href='"+url+"'>"+url+"</a>";
-		else
-			return url;
-		}
-	);
-	*/
-	var img = $('.profile img').attr('src');
-	$('.chat').append('<div class="rightchat clearfix"><span class="chat-img pull-right"><img src="'+img+'" alt="User Avatar"></span><div class="chat-body clearfix"><div class="header"><strong class="primary-font">'+from_name+'</strong><small class="pull-right text-muted"><i class="fa fa-clock-o"></i> '+time+'</small></div><p>'+content+'</p></div></div>');
-	//$("#dialog").append('<li class="left clearfix"><span class="chat-img pull-left"><img src="https://bootdey.com/img/Content/user_3.jpg?'+from_id+'" alt="User Avatar"></span><div class="chat-body clearfix"><div class="header"><strong class="primary-font">'+from_name+'</strong><small class="pull-right text-muted"><i class="fa fa-clock-o"></i> '+time+'</small></div><p>'+content+'</p></div></li>').parseEmotion();
-	//$("#dialog").append('<div class="speech_item"><img src="http://lorempixel.com/38/38/?'+from_id+'" class="user_icon" /> '+from_name+' <br> '+time+'<div style="clear:both;"></div><p class="triangle-isosceles top">'+content+'</p> </div>').parseEmotion();
-
-}
-
-$(function() {
-	select_client_id = 'all';
-	$("#client_list").change(function(){
-		select_client_id = $("#client_list option:selected").attr("value");
-	});
-	$('.face').click(function(event){
-		event.stopPropagation();
-	});
-});
-

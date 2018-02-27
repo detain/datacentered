@@ -380,18 +380,18 @@ body {
 	margin-bottom: 5px;
 }
 
-.listGroups {
+.listRooms {
 	display: flex;
 	margin: 0px !important;
 }
 
-.listGroups img {
+.listRooms img {
 	width: 40px;
 	height: 40px;
 	margin: 0px 10px 0px 0px;
 }
 
-.listGroups p {
+.listRooms p {
 	margin: auto 0px;
 }
 

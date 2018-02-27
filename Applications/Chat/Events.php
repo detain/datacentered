@@ -28,6 +28,8 @@ class Events {
 	public static function onWorkerStart($worker) {
 		global $global;
 		$global = new GlobalDataClient('127.0.0.1:2207');	 // initialize the GlobalData client
+		$hosts = [];
+		$global->hosts = $hosts;
 		$db_config = include __DIR__.'/../../../../include/config/config.db.php';
 		$loop = Worker::getEventLoop();
 		self::$db = new \React\MySQL\Connection($loop, [
@@ -148,7 +150,8 @@ Host,Hub,ran
 						$clients[] = $client;
 					}
 				}
-				foreach ($global['rooms'] as $room) {
+				$rooms = $global->rooms;
+				foreach ($rooms as $room) {
 					$clients[] = $room;
 				}
 				$new_message = [ // Send the error response
@@ -242,14 +245,14 @@ Host,Hub,ran
 						'content' => nl2br(htmlspecialchars($message_data['content'])),
 						'time' => date('Y-m-d H:i:s'),
 					];
-					$rooms = $global['rooms'];
+					$rooms = $global->rooms;
 					$rooms[0]['messages'][] = [
 						'from_id' => $_SESSION['uid'],
 						'from_name' => $_SESSION['name'],
 						'content' => nl2br(htmlspecialchars($message_data['content'])),
 						'time' => date('Y-m-d H:i:s'),
 					];
-					$global['rooms'] = $rooms;
+					$global->rooms = $rooms;
 					return Gateway::sendToGroup($message_data['to'], json_encode($new_message));
 				}
 				$new_message = [
@@ -296,6 +299,7 @@ Host,Hub,ran
 				switch ($ima) {
 					case 'host':
 						$connection->query('select * from vps_masters where vps_ip = ?', function ($command, $conn) use ($client_id, $ima) {
+							global $global;
 							if ($command->hasError()) { //test whether the query was executed successfully
 								//error
 								$error = $command->getError();// get the error object, instance of Exception.
@@ -325,12 +329,27 @@ Host,Hub,ran
 									$_SESSION['module'] = 'vps';
 									$_SESSION['name'] = $results[0]['vps_name'];
 									$_SESSION['ima'] = $ima;
+									$_SESSION['ip'] = $results[0]['vps_ip'];
+									$_SESSION['type'] = $results[0]['vps_type'];
 									$_SESSION['online'] = date('Y-m-d H:i:s');
 									$_SESSION['login'] = true;
+									$hosts = $global->hosts;
+									$hosts[$results[0]['vps_id']] = $results[0];
+									$global->hosts = $hosts;
 									Gateway::setSession($client_id, $_SESSION);
 									Gateway::bindUid($client_id, $uid);
 									Gateway::joinGroup($client_id, $ima.'s');
 									echo "{$results[0]['vps_name']} has been successfully logged in from {$_SERVER['REMOTE_ADDR']}\n";
+									$new_message = [ // Send the error response
+										'type' => 'login',
+										'id' => $uid,
+										'ip' => $results[0]['vps_ip'],
+										'type' => $results[0]['vps_type'],
+										'name' => $results[0]['vps_name'],
+										'ima' => $ima,
+										'online' => time(),
+									];
+									Gateway::sendToGroup('admins', json_encode($new_message));
 								}
 							}
 							//$loop->stop(); //stop the main loop.
@@ -338,6 +357,7 @@ Host,Hub,ran
 						break;
 					case 'admin':
 						$connection->query('select accounts.*, account_value as picture from accounts left join accounts_ext on accounts.account_id=accounts_ext.account_id and account_key="picture" where account_ima="admin" and account_lid = ? and account_passwd = ?', function ($command, $conn) use ($client_id, $ima) {
+							global $global;
 							if ($command->hasError()) { //test whether the query was executed successfully
 								//error
 								$error = $command->getError();// get the error object, instance of Exception.
@@ -372,37 +392,7 @@ Host,Hub,ran
 									Gateway::setSession($client_id, $_SESSION);
 									Gateway::bindUid($client_id, $uid);
 									Gateway::joinGroup($client_id, $ima.'s');
-									echo "{$results[0]['account_lid']} has been successfully logged in from {$_SERVER['REMOTE_ADDR']}\n";
-									$sessions = Gateway::getAllClientSessions();
-									$clients = [];
-									foreach ($sessions as $session_id => $session_data) {
-										$client = [
-											'id' => $session_data['uid'],
-											'name' => $session_data['name'],
-											'ima' => $session_data['ima'],
-											'online' => $session_data['online'],
-											'messages' => [],
-										];
-										if ($session_data['ima'] == 'host')
-											$client['img'] = $session_data['module'];
-										else
-											$client['img'] = $session_data['picture'];
-										$clients[] = $client;
-									}
-									$new_message = [ // Send the error response
-										'type' => 'clients',
-										'content' => $clients,
-									];
-									$new_message = [ // Send the error response
-										'type' => 'login',
-										'id' => $uid,
-										'name' => $results[0]['account_lid'],
-										'ima' => $ima,
-										'online' => time(),
-										'img' => is_null($results[0]['picture']) ? 'https://secure.gravatar.com/'.md5(strtolower(trim($results[0]['account_lid']))).'?s=80&d=identicon&r=x' : $results[0]['picture'],
-									];
-									Gateway::sendToGroup('admins', json_encode($new_message));
-									if (!isset($global['rooms'])) {
+									if (!isset($global->rooms)) {
 										$rooms = [];
 										$room = [
 											'id' => 'room_'.(sizeof($rooms) + 1),
@@ -412,11 +402,22 @@ Host,Hub,ran
 											'messages' => [],
 										];
 										$rooms[] = $room;
-										$global['rooms'] = $rooms;
+										$global->rooms = $rooms;
 									}
-									$rooms = $global['rooms'];
+									$rooms = $global->rooms;
 									$rooms[0]['members'][] = $uid;
-									$global['rooms'] = $rooms;
+									$global->rooms = $rooms;
+									echo "{$results[0]['account_lid']} has been successfully logged in from {$_SERVER['REMOTE_ADDR']}\n";
+									$new_message = [ // Send the error response
+										'type' => 'login',
+										'id' => $uid,
+										'email' => $results[0]['account_lid'],
+										'name' => $results[0]['account_name'],
+										'ima' => $ima,
+										'online' => time(),
+										'img' => is_null($results[0]['picture']) ? 'https://secure.gravatar.com/'.md5(strtolower(trim($results[0]['account_lid']))).'?s=80&d=identicon&r=x' : $results[0]['picture'],
+									];
+									Gateway::sendToGroup('admins', json_encode($new_message));
 									//echo "Sending Clients List ".json_encode($new_message, JSON_PRETTY_PRINT).PHP_EOL;
 									//Gateway::sendToCurrentClient(json_encode($new_message));
 								}
@@ -488,8 +489,9 @@ Host,Hub,ran
 		/**
 		 * @var \React\MySQL\Connection
 		 */
-		$connection = Events::$db;
-		$connection->query('select * from queue_log where history_section="vpsqueue"', function ($command, $conn) use ($client_id, $ima) {
+		$conn = Events::$db;
+		$conn->query('select * from queue_log left join vps on vps_id=history_type where history_section="vpsqueue"', function ($command, $conn) {
+			global $global;
 			if ($command->hasError()) { //test whether the query was executed successfully
 				//error
 				$error = $command->getError();// get the error object, instance of Exception.
@@ -503,31 +505,44 @@ Host,Hub,ran
 				Gateway::sendToCurrentClient(json_encode($new_message));
 			} else {
 				$results = $command->resultRows; //get the results
-				if (sizeof($results) == 0) {
-					//error
-					$msg = 'This System '.$_SERVER['REMOTE_ADDR'].' does not appear to match up with one of our hosts.';
-					echo $msg.PHP_EOL;
-					error_log($msg);
-					$new_message = [ // Send the error response
-						'type' => 'error',
-						'content' => $msg,
-					];
-					Gateway::sendToCurrentClient(json_encode($new_message));
-				} else {
-					$uid = 'vps'.$results[0]['vps_id'];
-					$_SESSION['uid'] = $uid;
-					$_SESSION['module'] = 'vps';
-					$_SESSION['name'] = $results[0]['vps_name'];
-					$_SESSION['ima'] = $ima;
-					$_SESSION['online'] = time();
-					$_SESSION['login'] = true;
-					Gateway::setSession($client_id, $_SESSION);
-					Gateway::bindUid($client_id, $uid);
-					Gateway::joinGroup($client_id, $ima.'s');
-					echo "{$results[0]['vps_name']} has been successfully logged in from {$_SERVER['REMOTE_ADDR']}\n";
+				if (sizeof($results) > 0) {
+					$queues = [];
+					foreach ($results as $row) {
+						if (is_numeric($row['history_type'])) {
+							if (is_null($row['vps_id'])) {
+								// no vps id in db matching, delete
+							} else {
+								$id = $row['vps_server'];
+								if (in_array($id, array_keys($global->hosts))) {
+									if (!in_array($id, array_keys($queues)))
+										$queues[$id] = [];
+									$queues[$id][] = $row;
+								}
+							}
+						} else {
+							$id = str_replace('vps', '', $row['history_type']);
+							if (in_array($id, array_keys($global->hosts))) {
+								if (!in_array($id, array_keys($queues)))
+									$queues[$id] = [];
+								$queues[$id][] = $row;
+							}
+						}
+					}
+					if (sizeof($queues) > 0) {
+						foreach ($queues as $server_id => $rows) {
+							$server_data = $global->hosts[$server_id];
+							$var = 'vps_host_'.$server_id;
+							if (!isset($global->$var))
+								$global->$var = 0;
+							if ($global->cas($var, 0, 1)) {
+
+								vps_queue_handler($service_master, 'serverlist');
+								$global->$var = 0;
+							}
+						}
+					}
 				}
 			}
-			//$loop->stop(); //stop the main loop.
 		});
 	}
 
