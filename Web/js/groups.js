@@ -13,14 +13,11 @@ var ChOpper = (function (app) { //contacts
 		this.messages = new Array();
 		this.newmsg = 0;
 		this.rooms = new Array();
-		contactList[id] = this;
+		contactList[this.id] = this;
 		name2Image[name] = img;
 	}
 	Contact.prototype.addMessage = function (msg) {
 		this.messages.push(msg);
-	}
-	Contact.prototype.addRoom = function (room) {
-		this.rooms.push(room);
 	}
 	appContacts =  Contact;
 	return appContacts;
@@ -34,7 +31,7 @@ var ChOpper = (function (app) { //rooms
 		this.members = new Array();
 		this.messages = new Array();
 		this.newmsg = 0;
-		roomList[id] = this;
+		roomList[this.id] = this;
 		//contactList.push(this);
 	}
 	Room.prototype.addMember = function (contact) {
@@ -92,11 +89,6 @@ var ChOpper = (function ChOpperModel (app) { //model
 	var subject = new app.Subject();
 	var Model = {
 		start : function() {
-			$("#loginModal").modal('show');
-			$("#login-submit").on('click', function() {
-				$("#loginModal").modal('hide');
-				app.Ctrl.connect();
-			});
 			/*$.getJSON("group_messages.json", function (data) {
 				app.Model.load(data.elements);
 			});*/
@@ -108,7 +100,6 @@ var ChOpper = (function ChOpperModel (app) { //model
 					var room = new appRooms(e.name,e.img);
 					for (var j = 0; j < e.members.length; j++) {
 						room.addMember(contactList[e.members[j].contact]);
-						contactList[e.members[j].contact].addRoom(room);
 					}
 					for (var j = 0; j < e.messages.length; j++) {
 						var m = e.messages[j];
@@ -150,131 +141,6 @@ var ChOpper = (function ChOpperModel (app) { //model
 				ChOpper.View.printContact(contactList[id]);
 			}
 		},
-		onClose : function() {
-			console.log("Connection is closed, timing reconnection");
-			//connect();
-		},
-		onError : function() {
-			console.log("An error occurred");
-		},
-		onOpen : function() { // When the socket connection is open, enter the user name
-			var login_data = {
-				"type": "login",
-				"ima": "admin",
-				"username": document.getElementById('email').value,
-				"password": document.getElementById('password').value,
-				"room_id": 1
-			}
-			console.log(login_data);
-			login_data = JSON.stringify(login_data);
-			console.log("websocket handshake successfully, send login data: "+JSON.stringify(login_data));
-			ws.send(login_data);
-			if (roomId == "phptty") {
-				var term = new Terminal({
-					cols: 130,
-					rows: 40,
-					cursorBlink: false
-				});
-				ws.send('{"type":"phptty_run","content":"htop"}');
-				term.open(document.body);
-				term.on('data', function(data) {
-					var myObj = {"type":"phptty","content":data};
-					ws.send(JSON.stringify(myObj));
-				});
-			}
-		},
-		onMessage : function(e) { // When there is a message according to the type of message shows different information
-/*
-Source,Destination,Command,Arguments
-Hub,Client,ping
-Hub,Client,clients
-Hub,Client,hosts
-Hub,Client,groups
-Hub,Client,error
-Hub,Client,login
-Hub,Client,say
-Hub,Client,log
-Hub,Client,phptty
-Hub,Client,vmstat
-Hub,Client,logout
-Hub,Client,running
-Hub,Client,ran
-Client,Hub,pong
-Client,Hub,clients
-Client,Hub,hosts
-Client,Hub,run
-Client,Hub,groups
-Client,Hub,say
-Client,Hub,running
-Host,Hub,bandwidth
-Host,Hub,pong
-Host,Hub,run
-Host,Hub,running
-Host,Hub,ran
-Hub,Host,ping
-Hub,Host,timers
-Hub,Host,self-update
-Hub,Host,run
-Hub,Host,running
-*/
-			console.log("got message");
-			console.log(e.data);
-			var data = JSON.parse(e.data);
-			switch(data['type']){
-				case 'ping': // Server ping client
-					ws.send('{"type":"pong"}');
-					break;
-				case 'clients':
-					console.log('processing clients');
-					console.log(data['content']);
-					ChOpper.Model.start(data['content']);
-					break;
-				case 'error':
-					console.log("There Was An Error:"+data['content']);
-					break;
-				case 'login': // Log in to update the user list
-					//{"type":"login","id":xxx,"name":"xxx","ima":"client|host","email":"","ip":"","time":"xxx"}
-					if (data['ima'] == 'admin' && (document.getElementById('email').value == data['email'] || document.getElementById('email').value == data['name'])) {
-						console.log("getting clients list");
-						ws.send('{"type":"clients"}');
-					} else {
-						var contact = new appContacts(data.id, data.name, data.ima, data.img, data.online);
-					}
-					ChOpper.View.printMessage(data['name']+' Logged in');
-					if(contactList[data.id] == currentChat) {
-
-						//ChOpper.View.printContact(contactList[data.id]);
-					} else {
-						contactList[data.id].newmsg ++;
-						//ChOpper.View.printContact(contactList[data.id]);
-					}
-					var message = new appMessages('Joined the chat room', data['name'], data['time'], data['type'], true);
-					//roomList[0].addMessage(message);
-					console.log(data['name']+" login successful");
-					break;
-				case 'say': // speaking
-					//{"type":"say","from_id":xxx,"to_client_id":"all/client_id","content":"xxx","time":"xxx"}
-					say(data['from_id'], data['from_name'], data['content'], data['time']);
-					break;
-				case 'log':
-					console.log(data['content'])
-					say(0, 'Server', data['content'], data['time']);
-					break;
-				case 'phptty':
-					term.write(data['content']);
-					break;
-				case 'vmstat':
-					receiveStats(data['content']);
-					break;
-				// User exits to update user list
-				case 'logout':
-					//{"type":"logout","client_id":xxx,"time":"xxx"}
-					say(data['from_id'], data['from_name'], data['from_name']+' Quit', data['time']);
-					delete contactList[data['from_id']];
-					flush_room_list();
-					flush_client_list();
-			}
-		},
 		register : function() {
 			subject.unsubscribeAll();
 			for (var x = 0 ; x < arguments.length; x++) {
@@ -293,16 +159,25 @@ var ChOpper = (function ChOpperView(app) { //view
 		printRoom : function (c) {
 			$("#" + c.id).remove();
 			var lastmsg = c.messages[c.messages.length - 1];
-			if (c.newmsg == 0) {
-				var html = $("<div class='room' id='" + c.id + "'><img src='" + c.img + "' alt='profilpicture'><div class='contact-preview'><div class='contact-text'><h1 class='font-name'>" + c.name + "</h1><p class='font-preview'>" + lastmsg.text + "</p></div></div><div class='contact-time'><p>" + lastmsg.time + "</p></div></div>");
+			if (typeof lastmsg == "undefined") {
+				if (c.newmsg == 0) {
+					var html = $("<div class='room' id='" + c.id + "'><img src='" + c.img + "' alt='profilpicture'><div class='contact-preview'><div class='contact-text'><h1 class='font-name'>" + c.name + "</h1></div></div><div class='contact-time'></div></div>");
+				} else {
+					var html = $("<div class='room new-message-contact' id='" + c.id + "'><img src='" + c.img + "' alt='profilpicture'><div class='contact-preview'><div class='contact-text'><h1 class='font-name'>" + c.name + "</h1></div></div><div class='contact-time'><div class='new-message' id='nm" + c.id + "'><p>" + c.newmsg + "</p></div></div></div>");
+				}
 			} else {
-				var html = $("<div class='room new-message-contact' id='" + c.id + "'><img src='" + c.img + "' alt='profilpicture'><div class='contact-preview'><div class='contact-text'><h1 class='font-name'>" + c.name + "</h1><p class='font-preview'>" + lastmsg.text + "</p></div></div><div class='contact-time'><p>" + lastmsg.time + "</p><div class='new-message' id='nm" + c.id + "'><p>" + c.newmsg + "</p></div></div></div>");
+				if (c.newmsg == 0) {
+					var html = $("<div class='room' id='" + c.id + "'><img src='" + c.img + "' alt='profilpicture'><div class='contact-preview'><div class='contact-text'><h1 class='font-name'>" + c.name + "</h1><p class='font-preview'>" + lastmsg.text + "</p></div></div><div class='contact-time'><p>" + lastmsg.time + "</p></div></div>");
+				} else {
+					var html = $("<div class='room new-message-contact' id='" + c.id + "'><img src='" + c.img + "' alt='profilpicture'><div class='contact-preview'><div class='contact-text'><h1 class='font-name'>" + c.name + "</h1><p class='font-preview'>" + lastmsg.text + "</p></div></div><div class='contact-time'><p>" + lastmsg.time + "</p><div class='new-message' id='nm" + c.id + "'><p>" + c.newmsg + "</p></div></div></div>");
+				}
 			}
 			var that = c;
 			$(".room-list").prepend(html);
 			ChOpper.Ctrl.addClick(html, that);
 		} ,
 		printContact : function (c) {
+			//console.log(c);
 			$("#" + c.id).remove();
 			var lastmsg = c.messages[c.messages.length - 1];
 			if (typeof lastmsg == "undefined") {
@@ -341,7 +216,7 @@ var ChOpper = (function ChOpperView(app) { //view
 			$(".chat-name h1").text(cg.name);
 			$(".chat").html();
 			if(cg.members == undefined) {
-					$(".chat-name p").text("Last Online" + cg.online);
+				$(".chat-name p").text("Last Online" + cg.online);
 				$(".chat-bubble").remove(); // configure messages
 				for (var i=0; i<cg.messages.length; i++) {
 					ChOpper.View.printMessage(cg.messages[i]);
@@ -460,19 +335,24 @@ var ChOpper = (function ChOpperView(app) { //view
 		notify: function () {
 			if (first) {
 				first = false;
-				for (var i = 0; i < contactList.length; i++) {
-					ChOpper.View.printContact(contactList[i]);
-					currentChat = contactList[i];
+				for (var id in contactList) {
+					//console.log("contact "+id);
+					//console.log(contactList[id]);
+					ChOpper.View.printContact(contactList[id]);
+					currentChat = contactList[id];
 				}
 				first = false;
-				for (var i = 0; i < roomList.length; i++) {
-					ChOpper.View.printRoom(roomList[i]);
-					currentChat = roomList[i];
+				for (var id in roomList) {
+					//console.log("room "+id);
+					//console.log(roomList[id]);
+					ChOpper.View.printRoom(roomList[id]);
+					currentChat = roomList[id];
 				}
 				first = false;
-			}
-			else {
+			} else {
+				console.log("current contact"+currentChat);
 				ChOpper.View.printContact(currentChat);
+				console.log("current room"+currentChat);
 				ChOpper.View.printRoom(currentChat);
 			}
 		}
@@ -485,6 +365,11 @@ var start = true;
 
 var ChOpper = (function ChOpperCtrl(app) { //controller
 	$(document).ready(function () {
+		$("#loginModal").modal('show');
+		$("#login-submit").on('click', function() {
+			$("#loginModal").modal('hide');
+			app.Ctrl.connect();
+		});
 		app.Model.start();
 	});
 	var Ctrl = {
@@ -503,7 +388,7 @@ var ChOpper = (function ChOpperCtrl(app) { //controller
 			if (start) {
 				$(".input-message").keyup(function(ev) {
 					if(ev.which == 13 || ev.keyCode == 13) {
-						app.Model.writeMessage();
+						ChOpper.Ctrl.writeMessage();
 					}
 				});
 				$("#input-submit").on('click', function() {
@@ -535,13 +420,142 @@ var ChOpper = (function ChOpperCtrl(app) { //controller
 				start = false;
 			}
 		},
+		onClose : function() {
+			console.log("Connection is closed, timing reconnection");
+			//connect();
+		},
+		onError : function() {
+			console.log("An error occurred");
+		},
+		onOpen : function() { // When the socket connection is open, enter the user name
+			var login_data = {
+				"type": "login",
+				"ima": "admin",
+				"username": document.getElementById('email').value,
+				"password": document.getElementById('password').value,
+				"room_id": 1
+			}
+			console.log(login_data);
+			login_data = JSON.stringify(login_data);
+			console.log("websocket handshake successfully, send login data: "+JSON.stringify(login_data));
+			ws.send(login_data);
+			if (roomId == "phptty") {
+				var term = new Terminal({
+					cols: 130,
+					rows: 40,
+					cursorBlink: false
+				});
+				ws.send('{"type":"phptty_run","content":"htop"}');
+				term.open(document.body);
+				term.on('data', function(data) {
+					var myObj = {"type":"phptty","content":data};
+					ws.send(JSON.stringify(myObj));
+				});
+			}
+		},
+		onMessage : function(e) { // When there is a message according to the type of message shows different information
+/*
+Source,Destination,Command,Arguments
+Hub,Client,ping
+Hub,Client,clients
+Hub,Client,hosts
+Hub,Client,groups
+Hub,Client,error
+Hub,Client,login
+Hub,Client,say
+Hub,Client,log
+Hub,Client,phptty
+Hub,Client,vmstat
+Hub,Client,logout
+Hub,Client,running
+Hub,Client,ran
+Client,Hub,pong
+Client,Hub,clients
+Client,Hub,hosts
+Client,Hub,run
+Client,Hub,groups
+Client,Hub,say
+Client,Hub,running
+Host,Hub,bandwidth
+Host,Hub,pong
+Host,Hub,run
+Host,Hub,running
+Host,Hub,ran
+Hub,Host,ping
+Hub,Host,timers
+Hub,Host,self-update
+Hub,Host,run
+Hub,Host,running
+*/
+			//console.log("got message");
+			var data = JSON.parse(e.data);
+			switch(data['type']){
+				case 'ping': // Server ping client
+					ws.send('{"type":"pong"}');
+					break;
+				case 'clients':
+					console.log('processing clients');
+					//console.log(data['content']);
+					app.Model.load(data['content']);
+					break;
+				case 'error':
+					console.log("There Was An Error:"+data['content']);
+					break;
+				case 'login': // Log in to update the user list
+					//{"type":"login","id":xxx,"name":"xxx","ima":"client|host","email":"","ip":"","time":"xxx"}
+					if (data['ima'] == 'admin' && (document.getElementById('email').value == data['email'] || document.getElementById('email').value == data['name'])) {
+						console.log("getting clients list");
+						ws.send('{"type":"clients"}');
+					} else {
+						var contact = new appContacts(data.id, data.name, data.ima, data.img, data.online);
+					}
+					ChOpper.View.printMessage(data['name']+' Logged in');
+					if(contactList[data.id] == currentChat) {
+
+						//ChOpper.View.printContact(contactList[data.id]);
+					} else {
+						contactList[data.id].newmsg ++;
+						//ChOpper.View.printContact(contactList[data.id]);
+					}
+					var message = new appMessages('Joined the chat room', data['name'], data['time'], data['type'], true);
+					//roomList[0].addMessage(message);
+					console.log(data['name']+" login successful");
+					break;
+				case 'say': // speaking
+					//{"type":"say","from_id":xxx,"to_client_id":"all/client_id","content":"xxx","time":"xxx"}
+					say(data['from_id'], data['from_name'], data['content'], data['time']);
+					break;
+				case 'log':
+					console.log(data['content'])
+					say(0, 'Server', data['content'], data['time']);
+					break;
+				case 'phptty':
+					term.write(data['content']);
+					break;
+				case 'vmstat':
+					receiveStats(data['content']);
+					break;
+				// User exits to update user list
+				case 'logout':
+					//{"type":"logout","client_id":xxx,"time":"xxx"}
+					say(data['from_id'], data['from_name'], data['from_name']+' Quit', data['time']);
+					delete contactList[data['from_id']];
+					flush_room_list();
+					flush_client_list();
+					break;
+				default:
+					console.log("unknown message");
+					console.log(e.data);
+					break;
+			}
+		},
 		connect : function() { // Connect to the server
 			//ws = new ReconnectingWebSocket("wss://"+document.domain+":7272"); // create websocket
 			ws = new WebSocket("wss://"+document.domain+":7272");
-			ws.onopen = app.Model.onOpen;
-			ws.onmessage = app.Model.onMessage;
-			ws.onclose = app.Model.onCLose;
-			ws.onerror = app.Model.onError;
+			ws.onopen = app.Ctrl.onOpen;
+			ws.onmessage = app.Ctrl.onMessage;
+			ws.onclose = app.Ctrl.onClose;
+			ws.onerror = app.Ctrl.onError;
 		}
 	};
 	app.Ctrl = Ctrl;
