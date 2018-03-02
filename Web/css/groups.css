@@ -172,7 +172,11 @@ body {
 
 .contact,
 .active-contact,
-.new-message-contact,
+.new-message-contact {
+	height: 50px;
+	background-color: #ffffff;
+	display: flex;
+}
 .room,
 .active-room,
 .new-message-room {
@@ -183,7 +187,12 @@ body {
 
 .contact img,
 .active-contact img,
-.new-message-contact img,
+.new-message-contact img {
+	/* width: 50px; */
+	height: 40px;
+	margin: 10px 20px 10px 5px;
+	border-radius: 50%;
+}
 .room img,
 .active-room img,
 .new-message-room img {
@@ -209,7 +218,7 @@ body {
 .chat-right.active .contact img,
 .chat-right.active .active-contact img,
 .chat-right.active .new-message-contact img {
-	margin: 10px;
+	margin: 5px;
 	position: relative;
 }
 

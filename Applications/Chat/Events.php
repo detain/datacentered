@@ -124,7 +124,6 @@ class Events {
 				return;
 			case 'clients': // from client
 				if ($_SESSION['login'] == TRUE && $_SESSION['ima'] == 'admin') {
-					echo "Got Clients Request\n";
 					$sessions = Gateway::getAllClientSessions();
 					$clients = [];
 					foreach ($sessions as $session_id => $session_data) {
@@ -138,24 +137,6 @@ class Events {
 							];
 							if ($session_data['ima'] == 'host') {
 								$client['type'] = $session_data['type'];
-								/*
-								if (in_array($session_data['type'], [1,2,3,4]))
-									$client['img'] = 'https://my.interserver.net/images/new/vps-kvm.png';
-								elseif (in_array($session_data['type'], [5,6]))
-									$client['img'] = 'https://my.interserver.net/images/new/openvz.png';
-								elseif (in_array($session_data['type'], [7,8]))
-									$client['img'] = 'https://my.interserver.net/images/new/vps-xen.png';
-								elseif ($session_data['type'] == 9)
-									$client['img'] = 'https://my.interserver.net/images/logos/lxc/lxc.png';
-								elseif ($session_data['type'] == 10)
-									$client['img'] = 'https://my.interserver.net/images/new/vps-vmware.png';
-								elseif ($session_data['type'] == 11)
-									$client['img'] = 'https://my.interserver.net/images/new/vps-hyperv.png';
-								elseif (in_array($session_data['type'], [12,13]))
-									$client['img'] = 'https://my.interserver.net/images/new/openvz.png';
-								else
-									$client['img'] = 'https://my.interserver.net/images/new/vps-hosting.png';
-								*/
 							} else
 								$client['img'] = $session_data['img'];
 							$clients[] = $client;
@@ -173,7 +154,7 @@ class Events {
 						'type' => 'clients',
 						'content' => $clients,
 					];
-					echo "Got Length ".strlen(json_encode($new_message)).PHP_EOL;
+					echo "Loaded Clients, Request Length:".strlen(json_encode($new_message)).PHP_EOL;
 					Gateway::sendToCurrentClient(json_encode($new_message));
 				}
 				return;
@@ -530,7 +511,6 @@ class Events {
 							if (!isset($global->$var))
 								$global->$var = 0;
 							if ($global->cas($var, 0, 1)) {
-
 								vps_queue_handler($service_master, 'serverlist');
 								$global->$var = 0;
 							}

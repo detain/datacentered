@@ -1,7 +1,7 @@
 if (typeof console == "undefined") { this.console = { log: function (msg) { } };}
 WEB_SOCKET_SWF_LOCATION = "/swf/WebSocketMain.swf"; // If the browser does not support websocket, will use this flash automatically simulate websocket protocol, this process is transparent to developers
 WEB_SOCKET_DEBUG = true; // Open flash websocket debug
-var ws, name, roomId;
+var ws;
 
 var ChOpper = (function (app) { //contacts
 	function Contact (id,name,ima,img,online) {
@@ -80,6 +80,7 @@ var ChOpper = (function(app) { //subject
 })(ChOpper || {});
 
 var currentChat;
+var myChatId;
 var contactList = new Array();
 var hostList = new Array();
 var roomList = new Array();
@@ -140,7 +141,8 @@ var ChOpper = (function ChOpperModel (app) { //model
 			subject.notifyObservers();
 		},
 		writeMessage : function() {
-			var msg = new appMessages($(".input-message").val(),"",new Date().getHours() + ":" + new Date().getMinutes(),true);
+			var contact = contactList[myChatId];
+			var msg = new appMessages($(".input-message").val(),contact.name,new Date().getHours() + ":" + new Date().getMinutes(),true,false,contact.img);
 			ChOpper.View.printMessage(msg);
 			currentChat.addMessage(msg);
 			$(".input-message").val("");
@@ -280,7 +282,7 @@ var ChOpper = (function ChOpperView(app) { //view
 				}
 			} else {
 				if (gc.type) {
-					$(".chat").append('<div class="me rightchat clearfix"><span class="chat-img pull-left"><img src="'+gc.img+'" alt="User Avatar"></span><div class="chat-body clearfix"><div class="header"><strong class="primary-font">'+gc.name+'</strong><small class="pull-right text-muted"><i class="fa fa-clock-o"></i> '+gc.time+'</small></div><p>'+gc.text+'</p></div></div>');
+					$(".chat").append('<div class="me rightchat clearfix"><span class="chat-img pull-right"><img src="'+gc.img+'" alt="User Avatar"></span><div class="chat-body clearfix"><div class="header"><strong class="primary-font">'+gc.name+'</strong><small class="pull-right text-muted"><i class="fa fa-clock-o"></i> '+gc.time+'</small></div><p>'+gc.text+'</p></div></div>');
 					//$(".chat").append('<div class="chat-bubble me"><div class="rightchat clearfix"><span class="chat-img pull-left"><img src="'+gc.img+'" alt="User Avatar"></span><div class="chat-body clearfix"><div class="header"><strong class="primary-font">'+gc.name+'</strong><small class="pull-right text-muted"><i class="fa fa-clock-o"></i> '+gc.time+'</small></div><p>'+gc.text+'</p></div></div>');
 					//$(".chat").append("<div class='chat-bubble me'><div class='my-mouth'></div><div class='content'>" + gc.text + "</div><div class='time'>" + gc.time + "</div></div>");
 				} else {
@@ -295,7 +297,7 @@ var ChOpper = (function ChOpperView(app) { //view
 			$(".information").css("display", "flex");
 			$("#close-contact-information").show();
 			if (currentChat.members == undefined) {
-				$(".information").append("<img src='" + currentChat.img + "'><div><h1>Name:</h1><p>" + currentChat.name + "</p></div><div id='listRooms'><h1>Gemeinsame Gruppen:</h1></div>");
+				$(".information").append("<img src='" + currentChat.img + "'><div><h1>Name:</h1><p>" + currentChat.name + "</p></div><div id='listRooms'><h1>Rooms:</h1></div>");
 				for (var i = 0; i < currentChat.rooms.length; i++) {
 					html = $("<div class='listRooms'><img src='" + currentChat.rooms[i].img + "'><p>" + currentChat.rooms[i].name + "</p></div>");
 					$("#listRooms").append(html);
@@ -383,13 +385,13 @@ var ChOpper = (function ChOpperView(app) { //view
 				}
 				first = false;
 			} else {
-				console.log("current contact"+currentChat);
+				console.log("current contact "+currentChat.id);
 				if (currentChat.ima == "host") {
 					ChOpper.View.printHost(currentChat);
 				} else {
 					ChOpper.View.printContact(currentChat);
 				}
-				console.log("current room"+currentChat);
+				console.log("current room "+currentChat.id);
 				ChOpper.View.printRoom(currentChat);
 			}
 		}
@@ -425,7 +427,7 @@ var ChOpper = (function ChOpperCtrl(app) { //controller
 			if (start) {
 				$(".input-message").keyup(function(ev) {
 					if(ev.which == 13 || ev.keyCode == 13) {
-						ChOpper.Ctrl.writeMessage();
+						ChOpper.Model.writeMessage();
 					}
 				});
 				$("#input-submit").on('click', function() {
@@ -476,6 +478,7 @@ var ChOpper = (function ChOpperCtrl(app) { //controller
 			login_data = JSON.stringify(login_data);
 			console.log("websocket handshake successfully, send login data: "+JSON.stringify(login_data));
 			ws.send(login_data);
+			/*
 			if (roomId == "phptty") {
 				var term = new Terminal({
 					cols: 130,
@@ -488,7 +491,7 @@ var ChOpper = (function ChOpperCtrl(app) { //controller
 					var myObj = {"type":"phptty","content":data};
 					ws.send(JSON.stringify(myObj));
 				});
-			}
+			}*/
 		},
 		onMessage : function(e) { // When there is a message according to the type of message shows different information
 /*
@@ -526,7 +529,7 @@ Hub,Host,running
 */
 			//console.log("got message");
 			var data = JSON.parse(e.data);
-			switch(data['type']){
+			switch(data.type){
 				case 'ping': // Server ping client
 					ws.send('{"type":"pong"}');
 					break;
@@ -541,15 +544,17 @@ Hub,Host,running
 				case 'login': // Log in to update the user list
 					//{"type":"login","id":xxx,"name":"xxx","ima":"client|host","email":"","ip":"","time":"xxx"}
 					var contact = new appContacts(data.id, data.name, data.ima, data.img, data.online);
-					if (data['ima'] == 'admin' && (document.getElementById('email').value == data['email'] || document.getElementById('email').value == data['name'])) {
-						$("#profile-image").attr('src', data['img']);
+					if (data.ima == 'admin' && (document.getElementById('email').value == data.email || document.getElementById('email').value == data.name)) {
+						myChatId = data.id;
+						$("#profile-image").attr('src', data.img);
 						//contactList[data['id']].img = data['img'];
 						console.log("getting clients list");
 						ws.send('{"type":"clients"}');
 					} else {
 						//var contact = new appContacts(data.id, data.name, data.ima, data.img, data.online);
 					}
-					ChOpper.View.printMessage(data['name']+' Logged in');
+					var msg = new appMessages(data.name+' Logged in', data.name, new Date().getHours() + ":" + new Date().getMinutes(), true, false, data.img);
+					ChOpper.View.printMessage(msg);
 					if(contactList[data.id] == currentChat) {
 
 						//ChOpper.View.printContact(contactList[data.id]);
@@ -557,17 +562,17 @@ Hub,Host,running
 						contactList[data.id].newmsg ++;
 						//ChOpper.View.printContact(contactList[data.id]);
 					}
-					var message = new appMessages('Joined the chat room', data['name'], data['time'], data['type'], true);
+					var message = new appMessages('Joined the chat room', data.name, data.time, data.type, true);
 					//roomList[0].addMessage(message);
-					console.log(data['name']+" login successful");
+					console.log(data.name+" login successful");
 					break;
 				case 'say': // speaking
 					//{"type":"say","from_id":xxx,"to_client_id":"all/client_id","content":"xxx","time":"xxx"}
-					say(data['from_id'], data['from_name'], data['content'], data['time']);
+					say(data['from_id'], data['from_name'], data['content'], data.time);
 					break;
 				case 'log':
 					console.log(data['content'])
-					say(0, 'Server', data['content'], data['time']);
+					say(0, 'Server', data['content'], data.time);
 					break;
 				case 'phptty':
 					term.write(data['content']);
@@ -578,7 +583,7 @@ Hub,Host,running
 				// User exits to update user list
 				case 'logout':
 					//{"type":"logout","client_id":xxx,"time":"xxx"}
-					say(data['from_id'], data['from_name'], data['from_name']+' Quit', data['time']);
+					say(data['from_id'], data['from_name'], data['from_name']+' Quit', data.time);
 					delete contactList[data['from_id']];
 					flush_room_list();
 					flush_client_list();
