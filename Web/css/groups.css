@@ -150,12 +150,16 @@ body {
 .input-search:focus {
 	outline: none;
 }
+.room-list-title,
+.host-list-title,
 .contact-list-title {
 	font-size: 18px;
 	font-weight: bold;
 	color: #777;
 	white-space: nowrap;
 }
+.room-list-title i,
+.host-list-title i,
 .contact-list-title i {
 	margin-left: 5px;
 	margin-right: 5px;
@@ -202,6 +206,23 @@ body {
 	border-radius: 50%;
 }
 
+.contact-list,
+.host-list,
+.room-list {
+	-webkit-transition: width .3s ease-in-out;
+	transition: width .3s ease-in-out;
+	display: none;
+}
+
+.contact-list.active,
+.host-list.active,
+.room-list.active {
+	-webkit-transition: width .3s ease-in-out;
+	transition: width .3s ease-in-out;
+	display: block;
+}
+
+.host-list ::-webkit-scrollbar,
 .contact-list ::-webkit-scrollbar,
 .room-list ::-webkit-scrollbar {
 	width: 0px;  /* remove scrollbar space */
@@ -234,9 +255,17 @@ body {
 	font-weight: bold;
 }
 
-.contact-preview {
+.room-preview {
 	width: 100%;
 	height: 70px;
+	border-bottom: 1px solid #eeeeee;
+	display: flex;
+	overflow: hidden;
+}
+.host-preview,
+.contact-preview {
+	width: 100%;
+	height: 50px;
 	border-bottom: 1px solid #eeeeee;
 	display: flex;
 	overflow: hidden;

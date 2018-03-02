@@ -185,15 +185,15 @@ var ChOpper = (function ChOpperView(app) { //view
 			var lastmsg = c.messages[c.messages.length - 1];
 			if (typeof lastmsg == "undefined") {
 				if (c.newmsg == 0) {
-					var html = $("<div class='room' id='" + c.id + "'><img src='" + c.img + "' alt='profilpicture'><div class='contact-preview'><div class='contact-text'><h1 class='font-name'>" + c.name + "</h1></div></div><div class='contact-time'></div></div>");
+					var html = $("<div class='room' id='" + c.id + "'><img src='" + c.img + "' alt='profilpicture'><div class='room-preview'><div class='contact-text'><h1 class='font-name'>" + c.name + "</h1></div></div><div class='contact-time'></div></div>");
 				} else {
-					var html = $("<div class='room new-message-contact' id='" + c.id + "'><img src='" + c.img + "' alt='profilpicture'><div class='contact-preview'><div class='contact-text'><h1 class='font-name'>" + c.name + "</h1></div></div><div class='contact-time'><div class='new-message' id='nm" + c.id + "'><p>" + c.newmsg + "</p></div></div></div>");
+					var html = $("<div class='room new-message-contact' id='" + c.id + "'><img src='" + c.img + "' alt='profilpicture'><div class='room-preview'><div class='contact-text'><h1 class='font-name'>" + c.name + "</h1></div></div><div class='contact-time'><div class='new-message' id='nm" + c.id + "'><p>" + c.newmsg + "</p></div></div></div>");
 				}
 			} else {
 				if (c.newmsg == 0) {
-					var html = $("<div class='room' id='" + c.id + "'><img src='" + c.img + "' alt='profilpicture'><div class='contact-preview'><div class='contact-text'><h1 class='font-name'>" + c.name + "</h1><p class='font-preview'>" + lastmsg.text + "</p></div></div><div class='contact-time'><p>" + lastmsg.time + "</p></div></div>");
+					var html = $("<div class='room' id='" + c.id + "'><img src='" + c.img + "' alt='profilpicture'><div class='room-preview'><div class='contact-text'><h1 class='font-name'>" + c.name + "</h1><p class='font-preview'>" + lastmsg.text + "</p></div></div><div class='contact-time'><p>" + lastmsg.time + "</p></div></div>");
 				} else {
-					var html = $("<div class='room new-message-contact' id='" + c.id + "'><img src='" + c.img + "' alt='profilpicture'><div class='contact-preview'><div class='contact-text'><h1 class='font-name'>" + c.name + "</h1><p class='font-preview'>" + lastmsg.text + "</p></div></div><div class='contact-time'><p>" + lastmsg.time + "</p><div class='new-message' id='nm" + c.id + "'><p>" + c.newmsg + "</p></div></div></div>");
+					var html = $("<div class='room new-message-contact' id='" + c.id + "'><img src='" + c.img + "' alt='profilpicture'><div class='room-preview'><div class='contact-text'><h1 class='font-name'>" + c.name + "</h1><p class='font-preview'>" + lastmsg.text + "</p></div></div><div class='contact-time'><p>" + lastmsg.time + "</p><div class='new-message' id='nm" + c.id + "'><p>" + c.newmsg + "</p></div></div></div>");
 				}
 			}
 			var that = c;
@@ -226,15 +226,15 @@ var ChOpper = (function ChOpperView(app) { //view
 			var lastmsg = c.messages[c.messages.length - 1];
 			if (typeof lastmsg == "undefined") {
 				if (c.newmsg == 0) {
-					var html = $("<div class='contact' id='" + c.id + "'><img src='" + c.img + "' alt='profilpicture'><div class='contact-preview'><div class='contact-text'><h1 class='font-name'>" + c.name + "</h1></div></div><div class='contact-time'></div></div>");
+					var html = $("<div class='contact' id='" + c.id + "'><img src='" + c.img + "' alt='profilpicture'><div class='host-preview'><div class='contact-text'><h1 class='font-name'>" + c.name + "</h1></div></div><div class='contact-time'></div></div>");
 				} else {
-					var html = $("<div class='contact new-message-contact' id='" + c.id + "'><img src='" + c.img + "' alt='profilpicture'><div class='contact-preview'><div class='contact-text'><h1 class='font-name'>" + c.name + "</h1></div></div><div class='contact-time'><div class='new-message' id='nm" + c.id + "'><p>" + c.newmsg + "</p></div></div></div>");
+					var html = $("<div class='contact new-message-contact' id='" + c.id + "'><img src='" + c.img + "' alt='profilpicture'><div class='host-preview'><div class='contact-text'><h1 class='font-name'>" + c.name + "</h1></div></div><div class='contact-time'><div class='new-message' id='nm" + c.id + "'><p>" + c.newmsg + "</p></div></div></div>");
 				}
 			} else {
 				if (c.newmsg == 0) {
-					var html = $("<div class='contact' id='" + c.id + "'><img src='" + c.img + "' alt='profilpicture'><div class='contact-preview'><div class='contact-text'><h1 class='font-name'>" + c.name + "</h1><p class='font-preview'>" + lastmsg.text + "</p></div></div><div class='contact-time'><p>" + lastmsg.time + "</p></div></div>");
+					var html = $("<div class='contact' id='" + c.id + "'><img src='" + c.img + "' alt='profilpicture'><div class='host-preview'><div class='contact-text'><h1 class='font-name'>" + c.name + "</h1><p class='font-preview'>" + lastmsg.text + "</p></div></div><div class='contact-time'><p>" + lastmsg.time + "</p></div></div>");
 				} else {
-					var html = $("<div class='contact new-message-contact' id='" + c.id + "'><img src='" + c.img + "' alt='profilpicture'><div class='contact-preview'><div class='contact-text'><h1 class='font-name'>" + c.name + "</h1><p class='font-preview'>" + lastmsg.text + "</p></div></div><div class='contact-time'><p>" + lastmsg.time + "</p><div class='new-message' id='nm" + c.id + "'><p>" + c.newmsg + "</p></div></div></div>");
+					var html = $("<div class='contact new-message-contact' id='" + c.id + "'><img src='" + c.img + "' alt='profilpicture'><div class='host-preview'><div class='contact-text'><h1 class='font-name'>" + c.name + "</h1><p class='font-preview'>" + lastmsg.text + "</p></div></div><div class='contact-time'><p>" + lastmsg.time + "</p><div class='new-message' id='nm" + c.id + "'><p>" + c.newmsg + "</p></div></div></div>");
 				}
 			}
 			var that = c;
@@ -312,7 +312,7 @@ var ChOpper = (function ChOpperView(app) { //view
 					});
 				}
 			} else {
-				$(".information").append("<img src='" + currentChat.img + "'><div><h1>Name:</h1><p>" + currentChat.name + "</p></div><div id='listRooms'><h1>Mitglieder:</h1></div>");
+				$(".information").append("<img src='" + currentChat.img + "'><div><h1>Name:</h1><p>" + currentChat.name + "</p></div><div id='listRooms'><h1>Members:</h1></div>");
 				for (var i = 0; i < currentChat.members.length; i++) {
 					html = $("<div class='listRooms'><img src='" + currentChat.members[i].img + "'><p>" + currentChat.members[i].name + "</p></div>");
 					$("#listRooms").append(html);
@@ -361,6 +361,30 @@ var ChOpper = (function ChOpperView(app) { //view
 		},
 		shrinkContactList : function () {
 			$('.chat-right').removeClass('active');
+		},
+		collapseContactList : function() {
+			$('.contact-list-title i').removeClass('fa-compress').addClass('fa-expand');
+			$('.contact-list').removeClass('active');
+		},
+		expandContactList : function() {
+			$('.contact-list-title i').removeClass('fa-expand').addClass('fa-compress');
+			$('.contact-list').addClass('active');
+		},
+		collapseHostList : function() {
+			$('.host-list-title i').removeClass('fa-compress').addClass('fa-expand');
+			$('.host-list').removeClass('active');
+		},
+		expandHostList : function() {
+			$('.host-list-title i').removeClass('fa-expand').addClass('fa-compress');
+			$('.host-list').addClass('active');
+		},
+		collapseRoomList : function() {
+			$('.room-list-title i').removeClass('fa-compress').addClass('fa-expand');
+			$('.room-list').removeClass('active');
+		},
+		expandRoomList : function() {
+			$('.room-list-title i').removeClass('fa-expand').addClass('fa-compress');
+			$('.room-list').addClass('active');
 		},
 		//Observer-Methode
 		notify: function () {
@@ -455,6 +479,27 @@ var ChOpper = (function ChOpperCtrl(app) { //controller
 				});
 				$("#shrink-right-list").on("click",function(){
 					ChOpper.View.shrinkContactList();
+				});
+				$(".contact-list-title i").on("click",function(){
+					if ($(this).hasClass('fa-compress')) {
+						ChOpper.View.collapseContactList();
+					} else{
+						ChOpper.View.expandContactList();
+					}
+				});
+				$(".host-list-title i").on("click",function(){
+					if ($(this).hasClass('fa-compress')) {
+						ChOpper.View.collapseHostList();
+					} else{
+						ChOpper.View.expandHostList();
+					}
+				});
+				$(".room-list-title i").on("click",function(){
+					if ($(this).hasClass('fa-compress')) {
+						ChOpper.View.collapseRoomList();
+					} else{
+						ChOpper.View.expandRoomList();
+					}
 				});
 				start = false;
 			}
