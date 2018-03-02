@@ -26,6 +26,8 @@ class Events {
 	public static $running = [];
 
 	public static function onWorkerStart($worker) {
+		$worker->maxSendBufferSize = 102400000;
+		$worker->sendToGatewayBufferSize = 102400000;
 		global $global;
 		$global = new GlobalDataClient('127.0.0.1:2207');	 // initialize the GlobalData client
 		$hosts = [];
@@ -122,6 +124,7 @@ class Events {
 				return;
 			case 'clients': // from client
 				if ($_SESSION['login'] == TRUE && $_SESSION['ima'] == 'admin') {
+					echo "Got Clients Request\n";
 					$sessions = Gateway::getAllClientSessions();
 					$clients = [];
 					foreach ($sessions as $session_id => $session_data) {
@@ -133,10 +136,28 @@ class Events {
 								'online' => $session_data['online'],
 								'messages' => [],
 							];
-							if ($session_data['ima'] == 'host')
-								$client['img'] = $session_data['module'];
-							else
-								$client['img'] = $session_data['picture'];
+							if ($session_data['ima'] == 'host') {
+								$client['type'] = $session_data['type'];
+								/*
+								if (in_array($session_data['type'], [1,2,3,4]))
+									$client['img'] = 'https://my.interserver.net/images/new/vps-kvm.png';
+								elseif (in_array($session_data['type'], [5,6]))
+									$client['img'] = 'https://my.interserver.net/images/new/openvz.png';
+								elseif (in_array($session_data['type'], [7,8]))
+									$client['img'] = 'https://my.interserver.net/images/new/vps-xen.png';
+								elseif ($session_data['type'] == 9)
+									$client['img'] = 'https://my.interserver.net/images/logos/lxc/lxc.png';
+								elseif ($session_data['type'] == 10)
+									$client['img'] = 'https://my.interserver.net/images/new/vps-vmware.png';
+								elseif ($session_data['type'] == 11)
+									$client['img'] = 'https://my.interserver.net/images/new/vps-hyperv.png';
+								elseif (in_array($session_data['type'], [12,13]))
+									$client['img'] = 'https://my.interserver.net/images/new/openvz.png';
+								else
+									$client['img'] = 'https://my.interserver.net/images/new/vps-hosting.png';
+								*/
+							} else
+								$client['img'] = $session_data['img'];
 							$clients[] = $client;
 						}
 					}
@@ -152,6 +173,7 @@ class Events {
 						'type' => 'clients',
 						'content' => $clients,
 					];
+					echo "Got Length ".strlen(json_encode($new_message)).PHP_EOL;
 					Gateway::sendToCurrentClient(json_encode($new_message));
 				}
 				return;
@@ -383,7 +405,7 @@ class Events {
 									$_SESSION['name'] = $results[0]['account_lid'];
 									$_SESSION['ima'] = $ima;
 									$_SESSION['online'] = date('Y-m-d H:i:s');
-									$_SESSION['picture'] = $results[0]['picture'];
+									$_SESSION['img'] = is_null($results[0]['picture']) ? 'https://secure.gravatar.com/avatar/'.md5(strtolower(trim($results[0]['account_lid']))).'?s=80&d=identicon&r=x' : $results[0]['picture'];
 									$_SESSION['login'] = true;
 									Gateway::setSession($client_id, $_SESSION);
 									Gateway::bindUid($client_id, $uid);
@@ -412,7 +434,7 @@ class Events {
 										'name' => $results[0]['account_name'],
 										'ima' => $ima,
 										'online' => time(),
-										'img' => is_null($results[0]['picture']) ? 'https://secure.gravatar.com/'.md5(strtolower(trim($results[0]['account_lid']))).'?s=80&d=identicon&r=x' : $results[0]['picture'],
+										'img' => is_null($results[0]['picture']) ? 'https://secure.gravatar.com/avatar/'.md5(strtolower(trim($results[0]['account_lid']))).'?s=80&d=identicon&r=x' : $results[0]['picture'],
 									];
 									Gateway::sendToGroup('admins', json_encode($new_message));
 									//echo "Sending Clients List ".json_encode($new_message, JSON_PRETTY_PRINT).PHP_EOL;

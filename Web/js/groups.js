@@ -4,7 +4,7 @@ WEB_SOCKET_DEBUG = true; // Open flash websocket debug
 var ws, name, roomId;
 
 var ChOpper = (function (app) { //contacts
-	function Contact (id,ima,name,img,online) {
+	function Contact (id,name,ima,img,online) {
 		this.id = id;
 		this.name = name;
 		this.ima = ima;
@@ -107,10 +107,32 @@ var ChOpper = (function ChOpperModel (app) { //model
 						room.addMessage(message);
 					}
 				} else {
-					var contact = new appContacts(e.id, e.name, e.ima, e.img, e.online);
+					var img;
+					if (e.ima == "host") {
+						if (e.type == 1 || e.type == 2 || e.type == 3 || e.type == 4) {
+							img = 'https://my.interserver.net/images/new/vps-kvm.png';
+						} else if (e.type == 5 || e.type == 6) {
+							img = 'https://my.interserver.net/images/new/openvz.png';
+						} else if (e.type == 7 || e.type == 8) {
+							img = 'https://my.interserver.net/images/new/vps-xen.png';
+						} else if (e.type == 9) {
+							img = 'https://my.interserver.net/images/logos/lxc/lxc.png';
+						} else if (e.type == 10) {
+							img = 'https://my.interserver.net/images/new/vps-vmware.png';
+						} else if (e.type == 11) {
+							img = 'https://my.interserver.net/images/new/vps-hyperv.png';
+						} else if (e.type == 12 || e.type == 13) {
+							img = 'https://my.interserver.net/images/new/openvz.jpg';
+						} else {
+							img = 'https://my.interserver.net/images/new/vps-hosting.png';
+						}
+					} else {
+						img = e.img;
+					}
+					var contact = new appContacts(e.id, e.name, e.ima, img, e.online);
 					for (var j = 0; j < e.messages.length; j++) {
 						var m = e.messages[j];
-						var message = new appMessages(m.text, m.name, m.time, m.type, false, e.img);
+						var message = new appMessages(m.text, m.name, m.time, m.type, false, img);
 						contact.addMessage(message);
 					}
 				}
@@ -200,14 +222,21 @@ var ChOpper = (function ChOpperView(app) { //view
 		printHost : function (c) {
 			$("#" + c.id).remove();
 			var lastmsg = c.messages[c.messages.length - 1];
-			if (c.newmsg == 0) {
-				var html = $("<div class='contact' id='" + c.id + "'><img src='" + c.img + "' alt='profilpicture'><div class='contact-preview'><div class='contact-text'><h1 class='font-name'>" + c.name + "</h1><p class='font-preview'>" + lastmsg.text + "</p></div></div><div class='contact-time'><p>" + lastmsg.time + "</p></div></div>");
-			}
-			else {
-				var html = $("<div class='contact new-message-contact' id='" + c.id + "'><img src='" + c.img + "' alt='profilpicture'><div class='contact-preview'><div class='contact-text'><h1 class='font-name'>" + c.name + "</h1><p class='font-preview'>" + lastmsg.text + "</p></div></div><div class='contact-time'><p>" + lastmsg.time + "</p><div class='new-message' id='nm" + c.id + "'><p>" + c.newmsg + "</p></div></div></div>");
+			if (typeof lastmsg == "undefined") {
+				if (c.newmsg == 0) {
+					var html = $("<div class='contact' id='" + c.id + "'><img src='" + c.img + "' alt='profilpicture'><div class='contact-preview'><div class='contact-text'><h1 class='font-name'>" + c.name + "</h1></div></div><div class='contact-time'></div></div>");
+				} else {
+					var html = $("<div class='contact new-message-contact' id='" + c.id + "'><img src='" + c.img + "' alt='profilpicture'><div class='contact-preview'><div class='contact-text'><h1 class='font-name'>" + c.name + "</h1></div></div><div class='contact-time'><div class='new-message' id='nm" + c.id + "'><p>" + c.newmsg + "</p></div></div></div>");
+				}
+			} else {
+				if (c.newmsg == 0) {
+					var html = $("<div class='contact' id='" + c.id + "'><img src='" + c.img + "' alt='profilpicture'><div class='contact-preview'><div class='contact-text'><h1 class='font-name'>" + c.name + "</h1><p class='font-preview'>" + lastmsg.text + "</p></div></div><div class='contact-time'><p>" + lastmsg.time + "</p></div></div>");
+				} else {
+					var html = $("<div class='contact new-message-contact' id='" + c.id + "'><img src='" + c.img + "' alt='profilpicture'><div class='contact-preview'><div class='contact-text'><h1 class='font-name'>" + c.name + "</h1><p class='font-preview'>" + lastmsg.text + "</p></div></div><div class='contact-time'><p>" + lastmsg.time + "</p><div class='new-message' id='nm" + c.id + "'><p>" + c.newmsg + "</p></div></div></div>");
+				}
 			}
 			var that = c;
-			$(".contact-list").prepend(html);
+			$(".host-list").prepend(html);
 			ChOpper.Ctrl.addClick(html, that);
 		} ,
 		printChat : function (cg) {
@@ -338,7 +367,11 @@ var ChOpper = (function ChOpperView(app) { //view
 				for (var id in contactList) {
 					//console.log("contact "+id);
 					//console.log(contactList[id]);
-					ChOpper.View.printContact(contactList[id]);
+					if (contactList[id].ima == "host") {
+						ChOpper.View.printHost(contactList[id]);
+					} else {
+						ChOpper.View.printContact(contactList[id]);
+					}
 					currentChat = contactList[id];
 				}
 				first = false;
@@ -351,7 +384,11 @@ var ChOpper = (function ChOpperView(app) { //view
 				first = false;
 			} else {
 				console.log("current contact"+currentChat);
-				ChOpper.View.printContact(currentChat);
+				if (currentChat.ima == "host") {
+					ChOpper.View.printHost(currentChat);
+				} else {
+					ChOpper.View.printContact(currentChat);
+				}
 				console.log("current room"+currentChat);
 				ChOpper.View.printRoom(currentChat);
 			}
@@ -503,11 +540,14 @@ Hub,Host,running
 					break;
 				case 'login': // Log in to update the user list
 					//{"type":"login","id":xxx,"name":"xxx","ima":"client|host","email":"","ip":"","time":"xxx"}
+					var contact = new appContacts(data.id, data.name, data.ima, data.img, data.online);
 					if (data['ima'] == 'admin' && (document.getElementById('email').value == data['email'] || document.getElementById('email').value == data['name'])) {
+						$("#profile-image").attr('src', data['img']);
+						//contactList[data['id']].img = data['img'];
 						console.log("getting clients list");
 						ws.send('{"type":"clients"}');
 					} else {
-						var contact = new appContacts(data.id, data.name, data.ima, data.img, data.online);
+						//var contact = new appContacts(data.id, data.name, data.ima, data.img, data.online);
 					}
 					ChOpper.View.printMessage(data['name']+' Logged in');
 					if(contactList[data.id] == currentChat) {

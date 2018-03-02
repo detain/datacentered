@@ -24,13 +24,15 @@ $gateway->pingInterval = 60; // Heartbeat interval
 $gateway->pingNotResponseLimit = 2;
 $gateway->pingData = '{"type":"ping"}'; // heartbeat data
 $gateway->registerAddress = '127.0.0.1:1236'; // Service registration address
+//$gateway->maxSendBufferSize = 102400000;
 //$gateway->onWorkerStart = function($worker) {};
 $gateway->onConnect = function($connection) { // When the client is connected, set the connection onWebSocketConnect, that is, when the websocket handshake callback
-	$connection->onWebSocketConnect = function($connection , $http_header) {
+	//$connection->maxSendBufferSize = 102400000;
+	//$connection->onWebSocketConnect = function($connection , $http_header) {
 		//if (!preg_match('/\.interserver\.net(:[0-9]+)*/m', $_SERVER['HTTP_ORIGIN'])) // Here you can determine whether the source of the connection is legal, illegal to turn off the connection.  $_SERVER['HTTP_ORIGIN'] Identifies which site's web-initiated websocket link
 			//$connection->close();
 		// onWebSocketConnect Inside $_GET $_SERVER is available  var_dump($_GET, $_SERVER);
-	};
+	//};
 };
 
 // If it is not started in the root directory, run the runAll method
