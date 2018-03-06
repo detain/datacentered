@@ -26,8 +26,8 @@ class Events {
 	public static $running = [];
 
 	public static function onWorkerStart($worker) {
-		$worker->maxSendBufferSize = 102400000;
-		$worker->sendToGatewayBufferSize = 102400000;
+		//$worker->maxSendBufferSize = 102400000;
+		//$worker->sendToGatewayBufferSize = 102400000;
 		global $global;
 		$global = new GlobalDataClient('127.0.0.1:2207');	 // initialize the GlobalData client
 		$hosts = [];
