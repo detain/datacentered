@@ -55,7 +55,7 @@ class Events {
 		if ($worker->id === 0) {
 			Timer::add(3600, ['Events', 'hyperv_update_list_timer']);
 			Timer::add(60, ['Events', 'hyperv_queue_timer']);
-			//Timer::add(60, ['Events', 'vps_queue_timer']);
+			Timer::add(60, ['Events', 'vps_queue_timer']);
 			/*
 			// Save the process handle, close the handle when the process is closed
 			self::$process_handle = popen('vmstat -n 1', 'r');
@@ -495,11 +495,20 @@ class Events {
 					if (sizeof($queues) > 0) {
 						foreach ($queues as $server_id => $rows) {
 							$server_data = $global->hosts[$server_id];
+							echo 'Wanted To Process Queues For Server '.$server_id.PHP_EOL;
+							continue;
 							$var = 'vps_host_'.$server_id;
 							if (!isset($global->$var))
 								$global->$var = 0;
 							if ($global->cas($var, 0, 1)) {
-								vps_queue_handler($service_master, 'serverlist');
+								$task_connection = new AsyncTcpConnection('Text://127.0.0.1:2208');
+								$task_connection->send(json_encode(['function' => 'vps_queue_task', 'args' => ['name' => $_SESSION['name'], 'content' => $message_data['content']]]));
+								$task_connection->onMessage = function($task_connection, $task_result) use ($message_data) {
+									echo "Bandwidth Update for ".$_SESSION['name']." content: ".json_encode($message_data['content'])." returned:".var_export($task_result,TRUE).PHP_EOL;
+									$task_connection->close();
+								};
+								$task_connection->connect();
+								//vps_queue_handler($service_master, 'serverlist');
 								$global->$var = 0;
 							}
 						}
