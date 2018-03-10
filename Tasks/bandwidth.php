@@ -1,8 +1,6 @@
 <?php
 
 function bandwidth($args) {
-	if (ini_get('default_socket_timeout') < 1200 && ini_get('default_socket_timeout') > 1)
-		ini_set('default_socket_timeout', 1200);
 	$dir = __DIR__.'/../../../../logs/rrd/'.$args['name'];
 	if (!file_exists($dir))
 		@mkdir($dir, 0777, TRUE);
@@ -24,5 +22,6 @@ function bandwidth($args) {
 		}
 		$updater = new \RRDUpdater($dir.'/'.$ip.'.rrd');
 		$updater->update(['in' => $data['in'],'out' => $data['out']]);
+		echo 'Updated '.$dir.'/'.$ip.'.rrd File'.PHP_EOL;
 	}
 }

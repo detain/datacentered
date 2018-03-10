@@ -3,6 +3,9 @@ use \Workerman\Worker;
 use \GatewayWorker\Lib\Gateway;
 require_once __DIR__.'/../../../../vendor/workerman/globaldata/src/Client.php';
 
+if (ini_get('default_socket_timeout') < 1200 && ini_get('default_socket_timeout') > 1)
+	ini_set('default_socket_timeout', 1200);
+
 $task_worker = new Worker('Text://127.0.0.1:2208');		// task worker, using the Text protocol
 $task_worker->count = 5; 								// number of task processes can be opened more than needed
 $task_worker->name = 'TaskWorker';

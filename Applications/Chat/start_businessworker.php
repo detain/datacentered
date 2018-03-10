@@ -7,6 +7,9 @@ use \Workerman\Connection\TcpConnection;
 use \Workerman\Autoloader;
 use \GlobalData\Client as GlobalDataClient;
 
+if (ini_get('default_socket_timeout') < 1200 && ini_get('default_socket_timeout') > 1)
+	ini_set('default_socket_timeout', 1200);
+
 $worker = new BusinessWorker(); // bussinessWorker process
 $worker->name = 'ChatBusinessWorker'; // worker name
 $worker->count = 4; // bussinessWorker number of processes

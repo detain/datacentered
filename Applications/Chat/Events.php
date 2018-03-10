@@ -268,8 +268,10 @@ class Events {
 				}
 				return;
 			case 'bandwidth': // from host
-				if (!is_array($message_data['content']))
+				if (!is_array($message_data['content'])) {
 					echo "error with bandwidth content " . var_export($message_data['content'], true).PHP_EOL;
+					return;
+				}
 				$task_connection = new AsyncTcpConnection('Text://127.0.0.1:2208');
 				$task_connection->send(json_encode([
 					'function' => 'bandwidth',
