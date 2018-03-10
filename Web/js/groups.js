@@ -336,6 +336,7 @@ var ChOpper = (function ChOpperView(app) { //view
 		},
 		growRoomList : function () {
 			$('.chat-left').addClass('active');
+			$('.icons-left').addClass('active');
 			/*
 			$('.chat-center').css({
 			  marginLeft: $(".chat-left").outerWidth() + "px"
@@ -347,9 +348,11 @@ var ChOpper = (function ChOpperView(app) { //view
 		},
 		shrinkRoomList : function () {
 			$('.chat-left').removeClass('active');
+			$('.icons-left').removeClass('active');
 		},
 		growContactList : function () {
 			$('.chat-right').addClass('active');
+			$('.icons-right').addClass('active');
 			/*
 			$('.chat-center').css({
 			  marginLeft: $(".chat-left").outerWidth() + "px"
@@ -361,6 +364,7 @@ var ChOpper = (function ChOpperView(app) { //view
 		},
 		shrinkContactList : function () {
 			$('.chat-right').removeClass('active');
+			$('.icons-right').removeClass('active');
 		},
 		collapseContactList : function() {
 			$('.contact-list-title i').removeClass('fa-compress').addClass('fa-expand');
@@ -432,6 +436,9 @@ var ChOpper = (function ChOpperCtrl(app) { //controller
 		$("#login-submit").on('click', function() {
 			$("#loginModal").modal('hide');
 			app.Ctrl.connect();
+		});
+		$("#login-submit").on('shown', function() {
+			$("#email").focus();
 		});
 		app.Model.start();
 	});

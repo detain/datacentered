@@ -84,15 +84,20 @@ body {
 	margin-top: 0px;
 	margin-bottom: 0px;
 }
+.logo,
 .profile {
 	width: 100%;
 	height: 60px;
 	background: #eeeeee;
-	border-right: 1px solid #dbdbdb;
 	display: flex;
 	justify-content: space-between;
 }
-
+.logo i {
+	width: 40px;
+	height: 40px;
+	margin: 10px 20px 10px 10px;
+	border-radius: 50%;
+}
 .profile img {
 	width: 40px;
 	height: 40px;
@@ -100,11 +105,13 @@ body {
 	border-radius: 50%;
 }
 
-.profile .img {
-	width: 40px;
-	height: 40px;
-}
 
+.icons.icons-left,
+.icons.icons-right,
+.icons.icons-left i,
+.icons.icons-right i {
+	margin: 0px;
+}
 .icons {
 	color: #777777;
 	display: flex;
@@ -229,6 +236,16 @@ body {
 	background: transparent;  /* optional: just make scrollbar invisible */
 }
 
+.chat-left .icons,
+.chat-right .icons {
+	display: none;
+}
+
+.chat-left.active .icons,
+.chat-right.active .icons {
+	display: inherit;
+}
+
 .chat-left.active .contact img,
 .chat-left.active .active-contact img,
 .chat-left.active .new-message-contact img {
@@ -347,22 +364,30 @@ body {
 	padding-top: 10px;
 	white-space: nowrap;
 }
-.chat-left #shrink-left-list,
+.icons-left #shrink-left-list,
 .chat-left .img-text,
-.chat-right #shrink-right-list {
+.icons-right #shrink-right-list {
+	-webkit-transition: width .3s ease-in-out;
+	transition: width .3s ease-in-out;
 	display: none;
 }
 .chat-left #grow-left-list,
-.chat-right #grow-right-list {
+.icons-right #grow-right-list {
+	-webkit-transition: width .3s ease-in-out;
+	transition: width .3s ease-in-out;
 	display: inherit;
 }
-.chat-left.active #shrink-left-list,
+.icons-left.active #shrink-left-list,
 .chat-left.active .img-text,
-.chat-right.active #shrink-right-list {
+.icons-right.active #shrink-right-list {
+	-webkit-transition: width .3s ease-in-out;
+	transition: width .3s ease-in-out;
 	display: inherit;
 }
-.chat-left.active #grow-left-list,
-.chat-right.active #grow-right-list {
+.icons-left.active #grow-left-list,
+.icons-right.active #grow-right-list {
+	-webkit-transition: width .3s ease-in-out;
+	transition: width .3s ease-in-out;
 	display: none;
 }
 

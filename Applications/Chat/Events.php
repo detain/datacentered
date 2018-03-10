@@ -30,8 +30,7 @@ class Events {
 		//$worker->sendToGatewayBufferSize = 102400000;
 		global $global;
 		$global = new GlobalDataClient('127.0.0.1:2207');	 // initialize the GlobalData client
-		$hosts = [];
-		$global->hosts = $hosts;
+		$global->hosts = [];
 		$db_config = include __DIR__.'/../../../../include/config/config.db.php';
 		$loop = Worker::getEventLoop();
 		self::$db = new \React\MySQL\Connection($loop, [
@@ -50,6 +49,7 @@ class Events {
 				error_log('Got an error '.$e.' while connecting to DB');
 			} else {
 				//echo "SQL connect success\n";
+				self::$db->query('SET NAMES utf8mb4 COLLATE utf8mb4_unicode_ci, COLLATION_CONNECTION = utf8mb4_unicode_ci, COLLATION_DATABASE = utf8mb4_unicode_ci');
 			}
 		});
 		if ($worker->id === 0) {
@@ -270,27 +270,17 @@ class Events {
 			case 'bandwidth': // from host
 				if (!is_array($message_data['content']))
 					echo "error with bandwidth content " . var_export($message_data['content'], true).PHP_EOL;
-				foreach ($message_data['content'] as $ip => $data) {
-					$rrdFile = __DIR__.'/../../../../logs/rrd/'.$_SESSION['name'].'/'.$ip.'.rrd';
-					if (!file_exists($rrdFile)) {
-						@mkdir(__DIR__.'/../../../../logs/rrd/'.$_SESSION['name'], 0777, TRUE);
-						$rrd = new RRDCreator($rrdFile, 'now', 60);
-						$rrd->addDataSource('in:ABSOLUTE:60:U:U');
-						$rrd->addDataSource('out:ABSOLUTE:60:U:U');
-						$rrd->addArchive('AVERAGE:0.5:1:10080');
-						$rrd->addArchive('MIN:0.5:1:10080');
-						$rrd->addArchive('MAX:0.5:1:10080');
-						$rrd->addArchive('AVERAGE:0.5:60:8760');
-						$rrd->addArchive('MIN:0.5:60:8760');
-						$rrd->addArchive('MAX:0.5:60:8760');
-						$rrd->addArchive('AVERAGE:0.5:1440:3650');
-						$rrd->addArchive('MIN:0.5:1440:3650');
-						$rrd->addArchive('MAX:0.5:1440:3650');
-						$rrd->save();
-					}
-					$updater = new RRDUpdater($rrdFile);
-					$updater->update(['in' => $data['in'],'out' => $data['out']]);
-				}
+				$task_connection = new AsyncTcpConnection('Text://127.0.0.1:2208');
+				$task_connection->send(json_encode([
+					'function' => 'bandwidth',
+					'args' => [
+						'name' => $_SESSION['name'],
+						'content' => $message_data['content']]]));
+				$task_connection->onMessage = function($task_connection, $task_result) use ($task_connection) {
+					 //var_dump($task_result);
+					 $task_connection->close();
+				};
+				$task_connection->connect();
 				return;
 			case 'login': // from client or host
 				$ima = isset($message_data['ima']) && in_array($message_data['ima'], ['host', 'admin']) ? $message_data['ima'] : 'admin';
@@ -343,7 +333,7 @@ class Events {
 										'type' => 'login',
 										'id' => $uid,
 										'ip' => $results[0]['vps_ip'],
-										'type' => $results[0]['vps_type'],
+										'img' => $results[0]['vps_type'],
 										'name' => $results[0]['vps_name'],
 										'ima' => $ima,
 										'online' => time(),
