@@ -142,10 +142,16 @@ var ChOpper = (function ChOpperModel (app) { //model
 		},
 		writeMessage : function() {
 			var contact = contactList[myChatId];
+			var input = document.getElementById("textarea");
+			//var to_client_id = $("#client_list option:selected").attr("value");
+			//var to_client_name = $("#client_list option:selected").text();
+			var is_type = 'client';
+			ws.send('{"type":"say","to":"'+myChatId+'","is":"'+is_type+'","content":"'+$(".input-message").val().replace(/"/g, '\\"').replace(/\n/g,'\\n').replace(/\r/g, '\\r')+'"}');
 			var msg = new appMessages($(".input-message").val(),contact.name,new Date().getHours() + ":" + new Date().getMinutes(),true,false,contact.img);
 			ChOpper.View.printMessage(msg);
 			currentChat.addMessage(msg);
 			$(".input-message").val("");
+			$(".input-message").focus();
 			$("#" + currentChat.id).addClass("active-contact");
 			subject.notifyObservers();
 		},
@@ -438,7 +444,7 @@ var ChOpper = (function ChOpperCtrl(app) { //controller
 			app.Ctrl.connect();
 		});
 		$("#login-submit").on('shown', function() {
-			$("#email").focus();
+			document.getElementById('email').focus();
 		});
 		app.Model.start();
 	});
@@ -465,7 +471,8 @@ var ChOpper = (function ChOpperCtrl(app) { //controller
 					var input = document.getElementById("textarea");
 					var to_client_id = $("#client_list option:selected").attr("value");
 					var to_client_name = $("#client_list option:selected").text();
-					ws.send('{"type":"say","to_client_id":"'+to_client_id+'","to_client_name":"'+to_client_name+'","content":"'+input.value.replace(/"/g, '\\"').replace(/\n/g,'\\n').replace(/\r/g, '\\r')+'"}');
+					var is_type = 'client';
+					ws.send('{"type":"say","to":"'+to_client_id+'","is":"'+is_type+'","content":"'+input.value.replace(/"/g, '\\"').replace(/\n/g,'\\n').replace(/\r/g, '\\r')+'"}');
 					input.value = "";
 					input.focus();
 				});
@@ -605,7 +612,7 @@ Hub,Host,running
 					} else {
 						//var contact = new appContacts(data.id, data.name, data.ima, data.img, data.online);
 					}
-					var msg = new appMessages(data.name+' Logged in', data.name, new Date().getHours() + ":" + new Date().getMinutes(), true, false, data.img);
+					var msg = new appMessages(data.name+' Logged In', data.name, new Date().getHours() + ":" + new Date().getMinutes(), true, false, data.img);
 					ChOpper.View.printMessage(msg);
 					if(contactList[data.id] == currentChat) {
 
@@ -618,9 +625,33 @@ Hub,Host,running
 					//roomList[0].addMessage(message);
 					console.log(data.name+" login successful");
 					break;
+				// User exits to update user list
+				case 'logout':
+					//{"type":"logout","id":"xxx","time":"xxx"}
+					var contact = contactList[data.id];
+					var msg = new appMessages(contact.name+' Logged Out', contact.name, data.time, true, false, contact.img);
+					ChOpper.View.printMessage(msg);
+					if(contactList[data.id] == currentChat) {
+						//ChOpper.View.printContact(contactList[data.id]);
+					} else {
+						contactList[data.id].newmsg ++;
+						//ChOpper.View.printContact(contactList[data.id]);
+					}
+					delete contactList[data.id];
+					flush_room_list();
+					flush_client_list();
+					break;
 				case 'say': // speaking
-					//{"type":"say","from_id":xxx,"to_client_id":"all/client_id","content":"xxx","time":"xxx"}
-					say(data['from_id'], data['from_name'], data['content'], data.time);
+					//{"type":"say","from":xxx,"to":"xxx","is":"client","content":"xxx","time":"xxx"}
+					var contact = contactList[data.from]
+					var msg = new appMessages(data.content, contact.name, data.time, true, false, contact.img);
+					ChOpper.View.printMessage(msg);
+					if(contactList[data.from] == currentChat) {
+						//ChOpper.View.printContact(contactList[data.from]);
+					} else {
+						contactList[data.from].newmsg ++;
+						//ChOpper.View.printContact(contactList[data.from]);
+					}
 					break;
 				case 'log':
 					console.log(data['content'])
@@ -631,14 +662,6 @@ Hub,Host,running
 					break;
 				case 'vmstat':
 					receiveStats(data['content']);
-					break;
-				// User exits to update user list
-				case 'logout':
-					//{"type":"logout","client_id":xxx,"time":"xxx"}
-					say(data['from_id'], data['from_name'], data['from_name']+' Quit', data.time);
-					delete contactList[data['from_id']];
-					flush_room_list();
-					flush_client_list();
 					break;
 				default:
 					console.log("unknown message");

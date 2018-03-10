@@ -15,7 +15,7 @@ use GatewayWorker\Lib\Gateway;
 use Workerman\Connection\AsyncTcpConnection;
 use Workerman\Connection\TcpConnection;
 use Workerman\Lib\Timer;
-use GlobalData\Client as GlobalDataClient;
+
 require_once __DIR__.'/Process.php';
 
 class Events {
@@ -28,8 +28,11 @@ class Events {
 	public static function onWorkerStart($worker) {
 		//$worker->maxSendBufferSize = 102400000;
 		//$worker->sendToGatewayBufferSize = 102400000;
+		/**
+		 * @var GlobalData\Client
+		 */
 		global $global;
-		$global = new GlobalDataClient('127.0.0.1:2207');	 // initialize the GlobalData client
+		$global = new GlobalData\Client('127.0.0.1:2207');	 // initialize the GlobalData client
 		$global->hosts = [];
 		$db_config = include __DIR__.'/../../../../include/config/config.db.php';
 		$loop = Worker::getEventLoop();
@@ -92,6 +95,9 @@ class Events {
 	 * @param mixed $message
 	 */
 	public static function onMessage($client_id, $message) {
+		/**
+		 * @var GlobalData\Client
+		 */
 		global $global;
 		//echo "client:{$_SERVER['REMOTE_ADDR']}:{$_SERVER['REMOTE_PORT']} gateway:{$_SERVER['GATEWAY_ADDR']}:{$_SERVER['GATEWAY_PORT']} client_id:{$client_id} session:".json_encode($_SESSION)." onMessage:".serialize($message)."\n"; // debug
 		$message_data = json_decode($message, true); // Client is passed json data
@@ -219,8 +225,7 @@ class Events {
 					if ($message_data['is'] == 'room') {
 						$new_message = [
 							'type' => 'say',
-							'from_id' => $_SESSION['uid'],
-							'from_name' => $_SESSION['name'],
+							'from' => $_SESSION['uid'],
 							'is' => $message_data['is'],
 							'to' => $message_data['to'],
 							'content' => nl2br(htmlspecialchars($message_data['content'])),
@@ -238,8 +243,7 @@ class Events {
 					}
 					$new_message = [
 						'type' => 'say',
-						'from_id' => $_SESSION['uid'],
-						'from_name' => $_SESSION['name'],
+						'from' => $_SESSION['uid'],
 						'is' => $message_data['is'],
 						'to' => $message_data['to'],
 						'content' => nl2br(htmlspecialchars($message_data['content'])),
@@ -278,6 +282,9 @@ class Events {
 							];
 							return Gateway::sendToCurrentClient(json_encode($new_message));
 						}
+						/**
+						 * @var GlobalData\Client
+						 */
 						global $global;
 						$uid = 'vps'.$row['vps_id'];
 						$_SESSION['uid'] = $uid;
@@ -379,22 +386,38 @@ class Events {
 	 * @param integer $client_id client id
 	 */
 	public static function onClose($client_id) {
+		/**
+		 * @var GlobalData\Client
+		 */
+		global $global;
 		echo "client:{$_SERVER['REMOTE_ADDR']}:{$_SERVER['REMOTE_PORT']} gateway:{$_SERVER['GATEWAY_ADDR']}:{$_SERVER['GATEWAY_PORT']} client_id:{$client_id} onClose:''\n"; // debug
-		/*
-		if (isset($_SESSION['room_id'])) { // Remove from the client's list of rooms
-			$room_id = $_SESSION['room_id'];
-			$new_message = [
-				'type' => 'logout',
-				'from_client_id' => $client_id,
-				'from_client_name' => $_SESSION['client_name'],
-				'time' => date('Y-m-d H:i:s')
-			];
-			Gateway::sendToGroup($room_id, json_encode($new_message));
+		if (isset($_SESSION['uid'])) {
+			if (isset($global->rooms) && sizeof($global->rooms) > 0) {
+				$new_message = [
+					'type' => 'logout',
+					'id' => $_SESSION['uid'],
+					'time' => date('Y-m-d H:i:s')
+				];
+				$rooms = $global->rooms;
+				$updated = false;
+				foreach ($rooms as $idx => $room) {
+					if (($key = array_search($_SESSION['uid'], $room['members'])) !== false) {
+						$updated = true;
+						unset($room['members'][$key]);
+						Gateway::sendToGroup($room['id'], json_encode($new_message));
+						$rooms[$idx] = $room;
+					}
+				}
+				if ($updated === TRUE)
+					$global->rooms = $rooms;
+			}
 		}
-		*/
 	}
 
 	public static function vps_queue_timer() {
+		/**
+		 * @var GlobalData\Client
+		 */
 		global $global;
 		/**
 		 * @var \React\MySQL\Connection
