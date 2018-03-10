@@ -273,14 +273,10 @@ class Events {
 					return;
 				}
 				$task_connection = new AsyncTcpConnection('Text://127.0.0.1:2208');
-				$task_connection->send(json_encode([
-					'function' => 'bandwidth',
-					'args' => [
-						'name' => $_SESSION['name'],
-						'content' => $message_data['content']]]));
-				$task_connection->onMessage = function($task_connection, $task_result) use ($task_connection) {
-					 //var_dump($task_result);
-					 $task_connection->close();
+				$task_connection->send(json_encode(['function' => 'bandwidth', 'args' => ['name' => $_SESSION['name'], 'content' => $message_data['content']]]));
+				$task_connection->onMessage = function($task_connection, $task_result) use ($message_data) {
+					echo "Bandwidth Update for ".$_SESSION['name']." content: ".json_encode($message_data['content'])." returned:".var_export($task_result,TRUE).PHP_EOL;
+					$task_connection->close();
 				};
 				$task_connection->connect();
 				return;
