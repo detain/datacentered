@@ -508,7 +508,6 @@ class Events {
 									$task_connection->close();
 								};
 								$task_connection->connect();
-								//vps_queue_handler($service_master, 'serverlist');
 								$global->$var = 0;
 							}
 						}
