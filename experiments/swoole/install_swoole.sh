@@ -14,7 +14,7 @@ else
  cd swoole-*; 
 fi && \
 phpize && \
-./configure --with-php-config=/usr/bin/php-config --enable-swoole --enable-openssl --with-openssl-dir=/usr --enable-http2 $(if [ $(php -v|head -n 1|cut -d " " -f2|cut -d\. -f1-2|sed s#"\."#""#g) -ge 55 ]; then echo --enable-coroutine; fi) && \
+./configure --with-php-config=/usr/bin/env php-config --enable-swoole --enable-openssl --with-openssl-dir=/usr --enable-http2 $(if [ $(php -v|head -n 1|cut -d " " -f2|cut -d\. -f1-2|sed s#"\."#""#g) -ge 55 ]; then echo --enable-coroutine; fi) && \
 make && \
 make install && \
 echo "extension=swoole.so" > $(php -i|grep "dir for additional .ini files"|sed s#"^[^/]*"#""#g)/swoole.ini
