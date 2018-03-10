@@ -1,7 +1,7 @@
 <?php
 
 function bandwidth($args) {
-	$dir = __DIR__.'/../../../../logs/rrd/'.$args['name'];
+	$dir = __DIR__.'/../../../logs/rrd/'.$args['name'];
 	if (!file_exists($dir))
 		@mkdir($dir, 0777, TRUE);
 	foreach ($args['content'] as $ip => $data) {
@@ -22,7 +22,7 @@ function bandwidth($args) {
 		}
 		$updater = new RRDUpdater($dir.'/'.$ip.'.rrd');
 		$updater->update(['in' => $data['in'],'out' => $data['out']]);
-		echo 'Updated '.$dir.'/'.$ip.'.rrd File'.PHP_EOL;
+		//echo 'Updated '.$dir.'/'.$ip.'.rrd File'.PHP_EOL;
 	}
 	return true;
 }

@@ -33,25 +33,7 @@ class Events {
 		$global->hosts = [];
 		$db_config = include __DIR__.'/../../../../include/config/config.db.php';
 		$loop = Worker::getEventLoop();
-		self::$db = new \React\MySQL\Connection($loop, [
-			'host'   => $db_config['db_host'],
-			'dbname' => $db_config['db_name'],
-			'user'   => $db_config['db_user'],
-			'passwd' => $db_config['db_pass'],
-		]);
-		self::$db->on('error', function($e){
-			echo 'ERROR:'.$e.PHP_EOL;
-			error_log('Got an error '.$e.' while connecting to DB');
-		});
-		self::$db->connect(function ($e) {
-			if($e) {
-				echo 'ERROR:'.$e.PHP_EOL;
-				error_log('Got an error '.$e.' while connecting to DB');
-			} else {
-				//echo "SQL connect success\n";
-				self::$db->query('SET NAMES utf8mb4 COLLATE utf8mb4_unicode_ci, COLLATION_CONNECTION = utf8mb4_unicode_ci, COLLATION_DATABASE = utf8mb4_unicode_ci');
-			}
-		});
+		self::$db = new \Workerman\MySQL\Connection($db_config['db_host'], $db_config['db_port'], $db_config['db_user'], $db_config['db_pass'], $db_config['db_name'], 'utf8mb4');
 		if ($worker->id === 0) {
 			Timer::add(3600, ['Events', 'hyperv_update_list_timer']);
 			Timer::add(60, ['Events', 'hyperv_queue_timer']);
@@ -115,7 +97,6 @@ class Events {
 		$message_data = json_decode($message, true); // Client is passed json data
 		if (!$message_data)
 			return ;
-		$connection = Events::$db;
 		switch ($message_data['type']) { // Depending on the type of business
 			case 'self-update':
 				if ($_SESSION['login'] == TRUE && $_SESSION['ima'] == 'admin') {
@@ -275,7 +256,7 @@ class Events {
 				$task_connection = new AsyncTcpConnection('Text://127.0.0.1:2208');
 				$task_connection->send(json_encode(['function' => 'bandwidth', 'args' => ['name' => $_SESSION['name'], 'content' => $message_data['content']]]));
 				$task_connection->onMessage = function($task_connection, $task_result) use ($message_data) {
-					echo "Bandwidth Update for ".$_SESSION['name']." content: ".json_encode($message_data['content'])." returned:".var_export($task_result,TRUE).PHP_EOL;
+					//echo "Bandwidth Update for ".$_SESSION['name']." content: ".json_encode($message_data['content'])." returned:".var_export($task_result,TRUE).PHP_EOL;
 					$task_connection->close();
 				};
 				$task_connection->connect();
@@ -285,133 +266,96 @@ class Events {
 				//echo "client:{$_SERVER['REMOTE_ADDR']}:{$_SERVER['REMOTE_PORT']} gateway:{$_SERVER['GATEWAY_ADDR']}:{$_SERVER['GATEWAY_PORT']} client_id:{$client_id} session:".json_encode($_SESSION)." onMessage:".serialize($message)."\n"; // debug
 				switch ($ima) {
 					case 'host':
-						$connection->query('select * from vps_masters where vps_ip = ?', function ($command, $conn) use ($client_id, $ima) {
-							global $global;
-							if ($command->hasError()) { //test whether the query was executed successfully
-								//error
-								$error = $command->getError();// get the error object, instance of Exception.
-								$msg = 'Got an error '.$error->getMessage().' while connecting to DB';
-								echo $msg.PHP_EOL;
-								error_log('vps', 'error', $msg, __LINE__, __FILE__);
-								$new_message = [ // Send the error response
-									'type' => 'error',
-									'content' => $msg,
-								];
-								Gateway::sendToCurrentClient(json_encode($new_message));
-							} else {
-								$results = $command->resultRows; //get the results
-								if (sizeof($results) == 0) {
-									//error
-									$msg = 'This System '.$_SERVER['REMOTE_ADDR'].' does not appear to match up with one of our hosts.';
-									echo $msg.PHP_EOL;
-									error_log($msg);
-									$new_message = [ // Send the error response
-										'type' => 'error',
-										'content' => $msg,
-									];
-									Gateway::sendToCurrentClient(json_encode($new_message));
-								} else {
-									$uid = 'vps'.$results[0]['vps_id'];
-									$_SESSION['uid'] = $uid;
-									$_SESSION['module'] = 'vps';
-									$_SESSION['name'] = $results[0]['vps_name'];
-									$_SESSION['ima'] = $ima;
-									$_SESSION['ip'] = $results[0]['vps_ip'];
-									$_SESSION['type'] = $results[0]['vps_type'];
-									$_SESSION['online'] = date('Y-m-d H:i:s');
-									$_SESSION['login'] = true;
-									$hosts = $global->hosts;
-									$hosts[$results[0]['vps_id']] = $results[0];
-									$global->hosts = $hosts;
-									Gateway::setSession($client_id, $_SESSION);
-									Gateway::bindUid($client_id, $uid);
-									Gateway::joinGroup($client_id, $ima.'s');
-									echo "{$results[0]['vps_name']} has been successfully logged in from {$_SERVER['REMOTE_ADDR']}\n";
-									$new_message = [ // Send the error response
-										'type' => 'login',
-										'id' => $uid,
-										'ip' => $results[0]['vps_ip'],
-										'img' => $results[0]['vps_type'],
-										'name' => $results[0]['vps_name'],
-										'ima' => $ima,
-										'online' => time(),
-									];
-									Gateway::sendToGroup('admins', json_encode($new_message));
-								}
-							}
-							//$loop->stop(); //stop the main loop.
-						}, [$_SERVER['REMOTE_ADDR']]);
+						$row = self::$db->select('*')->from('vps_masters')->where('vps_ip= :vps_ip')->bindValues(array('vps_ip'=>$_SERVER['REMOTE_ADDR']))->row();
+						if ($row === FALSE) {
+							//error
+							$msg = 'This System '.$_SERVER['REMOTE_ADDR'].' does not appear to match up with one of our hosts.';
+							echo $msg.PHP_EOL;
+							error_log($msg);
+							$new_message = [ // Send the error response
+								'type' => 'error',
+								'content' => $msg,
+							];
+							return Gateway::sendToCurrentClient(json_encode($new_message));
+						}
+						global $global;
+						$uid = 'vps'.$row['vps_id'];
+						$_SESSION['uid'] = $uid;
+						$_SESSION['module'] = 'vps';
+						$_SESSION['name'] = $row['vps_name'];
+						$_SESSION['ima'] = $ima;
+						$_SESSION['ip'] = $row['vps_ip'];
+						$_SESSION['type'] = $row['vps_type'];
+						$_SESSION['online'] = date('Y-m-d H:i:s');
+						$_SESSION['login'] = true;
+						$hosts = $global->hosts;
+						$hosts[$row['vps_id']] = $row;
+						$global->hosts = $hosts;
+						Gateway::setSession($client_id, $_SESSION);
+						Gateway::bindUid($client_id, $uid);
+						Gateway::joinGroup($client_id, $ima.'s');
+						echo "{$row['vps_name']} has been successfully logged in from {$_SERVER['REMOTE_ADDR']}\n";
+						$new_message = [ // Send the error response
+							'type' => 'login',
+							'id' => $uid,
+							'ip' => $row['vps_ip'],
+							'img' => $row['vps_type'],
+							'name' => $row['vps_name'],
+							'ima' => $ima,
+							'online' => time(),
+						];
+						return Gateway::sendToGroup('admins', json_encode($new_message));
 						break;
 					case 'admin':
-						$connection->query('select accounts.*, account_value as picture from accounts left join accounts_ext on accounts.account_id=accounts_ext.account_id and account_key="picture" where account_ima="admin" and account_lid = ? and account_passwd = ?', function ($command, $conn) use ($client_id, $ima) {
-							global $global;
-							if ($command->hasError()) { //test whether the query was executed successfully
-								//error
-								$error = $command->getError();// get the error object, instance of Exception.
-								$msg = 'Got an error '.$error->getMessage().' while connecting to DB';
-								echo $msg.PHP_EOL;
-								error_log($msg);
-								$new_message = [ // Send the error response
-									'type' => 'error',
-									'content' => $msg,
-								];
-								Gateway::sendToCurrentClient(json_encode($new_message));
-							} else {
-								$results = $command->resultRows; //get the results
-								if (sizeof($results) == 0) {
-									//error
-									$msg = 'Invalid Credentials Specified For User '.$mesage_data['username'];
-									echo $msg.PHP_EOL;
-									error_log($msg);
-									$new_message = [ // Send the error response
-										'type' => 'error',
-										'content' => $msg,
-									];
-									Gateway::sendToCurrentClient(json_encode($new_message));
-								} else {
-									$uid = $results[0]['account_id'];
-									$_SESSION['uid'] = $uid;
-									$_SESSION['name'] = $results[0]['account_lid'];
-									$_SESSION['ima'] = $ima;
-									$_SESSION['online'] = date('Y-m-d H:i:s');
-									$_SESSION['img'] = is_null($results[0]['picture']) ? 'https://secure.gravatar.com/avatar/'.md5(strtolower(trim($results[0]['account_lid']))).'?s=80&d=identicon&r=x' : $results[0]['picture'];
-									$_SESSION['login'] = true;
-									Gateway::setSession($client_id, $_SESSION);
-									Gateway::bindUid($client_id, $uid);
-									Gateway::joinGroup($client_id, $ima.'s');
-									if (!isset($global->rooms)) {
-										$rooms = [];
-										$room = [
-											'id' => 'room_'.(sizeof($rooms) + 1),
-											'name' => 'General Chat',
-											'img' => 'https://upload.wikimedia.org/wikipedia/commons/thumb/a/a6/Rubik%27s_cube.svg/220px-Rubik%27s_cube.svg.png',
-											'members' => [],
-											'messages' => [],
-										];
-										$rooms[] = $room;
-										$global->rooms = $rooms;
-									}
-									$rooms = $global->rooms;
-									if (!in_array($uid, $rooms[0]['members']))
-										$rooms[0]['members'][] = $uid;
-									$global->rooms = $rooms;
-									echo "{$results[0]['account_lid']} has been successfully logged in from {$_SERVER['REMOTE_ADDR']}\n";
-									$new_message = [ // Send the error response
-										'type' => 'login',
-										'id' => $uid,
-										'email' => $results[0]['account_lid'],
-										'name' => $results[0]['account_name'],
-										'ima' => $ima,
-										'online' => time(),
-										'img' => is_null($results[0]['picture']) ? 'https://secure.gravatar.com/avatar/'.md5(strtolower(trim($results[0]['account_lid']))).'?s=80&d=identicon&r=x' : $results[0]['picture'],
-									];
-									Gateway::sendToGroup('admins', json_encode($new_message));
-									//echo "Sending Clients List ".json_encode($new_message, JSON_PRETTY_PRINT).PHP_EOL;
-									//Gateway::sendToCurrentClient(json_encode($new_message));
-								}
-							}
-							//$loop->stop(); //stop the main loop.
-						}, $message_data['username'], md5($message_data['password']));
+						$results = self::$db->query('select accounts.*, account_value from accounts left join accounts_ext on accounts.account_id=accounts_ext.account_id and accounts_ext.account_key="picture" where account_ima="admin" and account_lid="'.$message_data['username'].'" and account_passwd="'.md5($message_data['password']).'"');
+						if ($results[0] === FALSE) {
+							//error
+							$msg = 'Invalid Credentials Specified For User '.$mesage_data['username'];
+							echo $msg.PHP_EOL;
+							error_log($msg);
+							$new_message = [ // Send the error response
+								'type' => 'error',
+								'content' => $msg,
+							];
+							return Gateway::sendToCurrentClient(json_encode($new_message));
+						}
+						$uid = $results[0]['account_id'];
+						$_SESSION['uid'] = $uid;
+						$_SESSION['name'] = $results[0]['account_lid'];
+						$_SESSION['ima'] = $ima;
+						$_SESSION['online'] = date('Y-m-d H:i:s');
+						$_SESSION['img'] = is_null($results[0]['account_value']) ? 'https://secure.gravatar.com/avatar/'.md5(strtolower(trim($results[0]['account_lid']))).'?s=80&d=identicon&r=x' : $results[0]['account_value'];
+						$_SESSION['login'] = true;
+						Gateway::setSession($client_id, $_SESSION);
+						Gateway::bindUid($client_id, $uid);
+						Gateway::joinGroup($client_id, $ima.'s');
+						if (!isset($global->rooms)) {
+							$rooms = [];
+							$room = [
+								'id' => 'room_'.(sizeof($rooms) + 1),
+								'name' => 'General Chat',
+								'img' => 'https://upload.wikimedia.org/wikipedia/commons/thumb/a/a6/Rubik%27s_cube.svg/220px-Rubik%27s_cube.svg.png',
+								'members' => [],
+								'messages' => [],
+							];
+							$rooms[] = $room;
+							$global->rooms = $rooms;
+						}
+						$rooms = $global->rooms;
+						if (!in_array($uid, $rooms[0]['members']))
+							$rooms[0]['members'][] = $uid;
+						$global->rooms = $rooms;
+						echo "{$results[0]['account_lid']} has been successfully logged in from {$_SERVER['REMOTE_ADDR']}\n";
+						$new_message = [ // Send the error response
+							'type' => 'login',
+							'id' => $uid,
+							'email' => $results[0]['account_lid'],
+							'name' => $results[0]['account_name'],
+							'ima' => $ima,
+							'online' => time(),
+							'img' => is_null($results[0]['account_value']) ? 'https://secure.gravatar.com/avatar/'.md5(strtolower(trim($results[0]['account_lid']))).'?s=80&d=identicon&r=x' : $results[0]['account_value'],
+						];
+						return Gateway::sendToGroup('admins', json_encode($new_message));
 						break;
 					case 'client':
 					case 'guest':
@@ -451,70 +395,55 @@ class Events {
 	}
 
 	public static function vps_queue_timer() {
+		global $global;
 		/**
 		 * @var \React\MySQL\Connection
 		 */
-		$conn = Events::$db;
-		$conn->query('select * from queue_log left join vps on vps_id=history_type where history_section="vpsqueue"', function ($command, $conn) {
-			global $global;
-			if ($command->hasError()) { //test whether the query was executed successfully
-				$error = $command->getError();// get the error object, instance of Exception.
-				$msg = 'Got an error '.$error->getMessage().' while connecting to DB';
-				echo $msg.PHP_EOL;
-				error_log('vps', 'error', $msg, __LINE__, __FILE__);
-				$new_message = [ // Send the error response
-					'type' => 'error',
-					'content' => $msg,
-				];
-				Gateway::sendToCurrentClient(json_encode($new_message));
-			} else {
-				$results = $command->resultRows; //get the results
-				if (sizeof($results) > 0) {
-					$queues = [];
-					foreach ($results as $row) {
-						if (is_numeric($row['history_type'])) {
-							if (is_null($row['vps_id'])) {
-								// no vps id in db matching, delete
-							} else {
-								$id = $row['vps_server'];
-								if (in_array($id, array_keys($global->hosts))) {
-									if (!in_array($id, array_keys($queues)))
-										$queues[$id] = [];
-									$queues[$id][] = $row;
-								}
-							}
-						} else {
-							$id = str_replace('vps', '', $row['history_type']);
-							if (in_array($id, array_keys($global->hosts))) {
-								if (!in_array($id, array_keys($queues)))
-									$queues[$id] = [];
-								$queues[$id][] = $row;
-							}
+		$results = self::$db->select('*')->from('queue_log')->leftJoin('vps', 'vps_id=history_type')->where('history_section="vpsqueue"')->query();
+		if (is_array($results) && sizeof($results) > 0) {
+			$queues = [];
+			foreach ($results as $results[0]) {
+				if (is_numeric($results[0]['history_type'])) {
+					if (is_null($results[0]['vps_id'])) {
+						// no vps id in db matching, delete
+					} else {
+						$id = $results[0]['vps_server'];
+						if (in_array($id, array_keys($global->hosts))) {
+							if (!in_array($id, array_keys($queues)))
+								$queues[$id] = [];
+							$queues[$id][] = $results[0];
 						}
 					}
-					if (sizeof($queues) > 0) {
-						foreach ($queues as $server_id => $rows) {
-							$server_data = $global->hosts[$server_id];
-							echo 'Wanted To Process Queues For Server '.$server_id.PHP_EOL;
-							continue;
-							$var = 'vps_host_'.$server_id;
-							if (!isset($global->$var))
-								$global->$var = 0;
-							if ($global->cas($var, 0, 1)) {
-								$task_connection = new AsyncTcpConnection('Text://127.0.0.1:2208');
-								$task_connection->send(json_encode(['function' => 'vps_queue_task', 'args' => ['name' => $_SESSION['name'], 'content' => $message_data['content']]]));
-								$task_connection->onMessage = function($task_connection, $task_result) use ($message_data) {
-									echo "Bandwidth Update for ".$_SESSION['name']." content: ".json_encode($message_data['content'])." returned:".var_export($task_result,TRUE).PHP_EOL;
-									$task_connection->close();
-								};
-								$task_connection->connect();
-								$global->$var = 0;
-							}
-						}
+				} else {
+					$id = str_replace('vps', '', $row['history_type']);
+					if (in_array($id, array_keys($global->hosts))) {
+						if (!in_array($id, array_keys($queues)))
+							$queues[$id] = [];
+						$queues[$id][] = $row;
 					}
 				}
 			}
-		});
+			if (sizeof($queues) > 0) {
+				foreach ($queues as $server_id => $rows) {
+					$server_data = $global->hosts[$server_id];
+					echo 'Wanted To Process Queues For Server '.$server_id.PHP_EOL;
+					continue;
+					$var = 'vps_host_'.$server_id;
+					if (!isset($global->$var))
+						$global->$var = 0;
+					if ($global->cas($var, 0, 1)) {
+						$task_connection = new AsyncTcpConnection('Text://127.0.0.1:2208');
+						$task_connection->send(json_encode(['function' => 'vps_queue_task', 'args' => ['name' => $_SESSION['name'], 'content' => $message_data['content']]]));
+						$task_connection->onMessage = function($task_connection, $task_result) use ($message_data) {
+							//echo "Bandwidth Update for ".$_SESSION['name']." content: ".json_encode($message_data['content'])." returned:".var_export($task_result,TRUE).PHP_EOL;
+							$task_connection->close();
+						};
+						$task_connection->connect();
+						$global->$var = 0;
+					}
+				}
+			}
+		}
 	}
 
 	public static function hyperv_update_list_timer() {
@@ -524,13 +453,13 @@ class Events {
 			'time' => date('Y-m-d H:i:s'),
 		];
 		Gateway::sendToAll(json_encode($new_message));*/
-		$task_connection = new AsyncTcpConnection('Text://127.0.0.1:2208');								// Asynchronous link with the remote task service
-		$task_connection->send(json_encode(['function' => 'async_hyperv_get_list', 'args' => []]));		// send data
-		$task_connection->onMessage = function($task_connection, $task_result) use ($task_connection) {	// get the result asynchronously
+		$task_connection = new AsyncTcpConnection('Text://127.0.0.1:2208');
+		$task_connection->send(json_encode(['function' => 'async_hyperv_get_list', 'args' => []]));
+		$task_connection->onMessage = function($task_connection, $task_result) use ($task_connection) {
 			 //var_dump($task_result);
-			 $task_connection->close();																	// remember to turn off the asynchronous link after getting the result
+			 $task_connection->close();
 		};
-		$task_connection->connect();																	// execute async link
+		$task_connection->connect();
 	}
 
 	public static function hyperv_queue_timer() {
@@ -540,13 +469,13 @@ class Events {
 			'time' => date('Y-m-d H:i:s'),
 		];
 		Gateway::sendToAll(json_encode($new_message));*/
-		$task_connection = new AsyncTcpConnection('Text://127.0.0.1:2208');								// Asynchronous link with the remote task service
-		$task_connection->send(json_encode(['function' => 'sync_hyperv_queue', 'args' => []]));			// send data
-		$task_connection->onMessage = function($task_connection, $task_result) use ($task_connection) {	// get the result asynchronously
+		$task_connection = new AsyncTcpConnection('Text://127.0.0.1:2208');
+		$task_connection->send(json_encode(['function' => 'sync_hyperv_queue', 'args' => []]));
+		$task_connection->onMessage = function($task_connection, $task_result) use ($task_connection) {
 			 //var_dump($task_result);
-			 $task_connection->close();																	// remember to turn off the asynchronous link after getting the result
+			 $task_connection->close();
 		};
-		$task_connection->connect();																	// execute async link
+		$task_connection->connect();
 	}
 
 	/**
