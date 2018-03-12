@@ -438,11 +438,11 @@ class Events {
 						}
 					}
 				} else {
-					$id = str_replace('vps', '', $row['history_type']);
+					$id = str_replace('vps', '', $results[0]['history_type']);
 					if (in_array($id, array_keys($global->hosts))) {
 						if (!in_array($id, array_keys($queues)))
 							$queues[$id] = [];
-						$queues[$id][] = $row;
+						$queues[$id][] = $results[0];
 					}
 				}
 			}
