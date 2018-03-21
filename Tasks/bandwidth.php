@@ -1,18 +1,15 @@
 <?php
 
 function bandwidth($args) {
-	$client = new \InfluxDB\Client('68.168.221.7', 8086, 'myadmin', 'MYp4ssw0rd');
-	$database = $client->selectDB('myadmin');
 	/*
 	$dir = __DIR__.'/../../../logs/rrd/'.$args['name'];
 	if (!file_exists($dir))
 		@mkdir($dir, 0777, TRUE);
 	*/
 	$points = [];
-	$time = time();
 	foreach ($args['content'] as $ip => $data) {
-		$points[] = new \InfluxDB\Point('bandwidth_in', $data['in'], ['ip' => $ip],[],$time);
-		$points[] = new \InfluxDB\Point('bandwidth_out', $data['out'], ['ip' => $ip],[],$time);
+		$points[] = new \InfluxDB\Point('bandwidth_in', $data['in'], ['ip' => $ip]);
+		$points[] = new \InfluxDB\Point('bandwidth_out', $data['out'], ['ip' => $ip]);
 		/*
 		if (!file_exists($dir.'/'.$ip.'.rrd')) {
 			$rrd = new RRDCreator($dir.'/'.$ip.'.rrd', 'now', 60);
@@ -34,7 +31,8 @@ function bandwidth($args) {
 		//echo 'Updated '.$dir.'/'.$ip.'.rrd File'.PHP_EOL;
 		*/
 	}
-	// Points will require second precision
+	$client = new \InfluxDB\Client('68.168.221.7', 8086, 'myadmin', 'MYp4ssw0rd');
+	$database = $client->selectDB('myadmin');
 	$newPoints = $database->writePoints($points, \InfluxDB\Database::PRECISION_SECONDS);
 	return true;
 }
