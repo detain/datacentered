@@ -8,8 +8,11 @@ function bandwidth($args) {
 	*/
 	$points = [];
 	foreach ($args['content'] as $ip => $data) {
-		$points[] = new \InfluxDB\Point('bandwidth_in', $data['in'], ['ip' => $ip]);
-		$points[] = new \InfluxDB\Point('bandwidth_out', $data['out'], ['ip' => $ip]);
+		if (!isset($data['vps'])) {
+			echo "Missing VPS for ip $ip\n";
+		}
+		$points[] = new \InfluxDB\Point('bandwidth', $data['in'], ['type' => 'in', 'vps' => $data['vps'], 'ip' => $ip]);
+		$points[] = new \InfluxDB\Point('bandwidth', $data['out'], ['type' => 'out', 'vps' => $data['vps'], 'ip' => $ip]);
 		/*
 		if (!file_exists($dir.'/'.$ip.'.rrd')) {
 			$rrd = new RRDCreator($dir.'/'.$ip.'.rrd', 'now', 60);
