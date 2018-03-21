@@ -11,8 +11,10 @@ function bandwidth($args) {
 		if (!isset($data['vps'])) {
 			echo "Missing VPS for ip $ip\n";
 		}
+		/*
 		$points[] = new \InfluxDB\Point('bandwidth', $data['in'], ['type' => 'in', 'vps' => $data['vps'], 'ip' => $ip]);
 		$points[] = new \InfluxDB\Point('bandwidth', $data['out'], ['type' => 'out', 'vps' => $data['vps'], 'ip' => $ip]);
+		*/
 		/*
 		if (!file_exists($dir.'/'.$ip.'.rrd')) {
 			$rrd = new RRDCreator($dir.'/'.$ip.'.rrd', 'now', 60);
@@ -34,8 +36,10 @@ function bandwidth($args) {
 		//echo 'Updated '.$dir.'/'.$ip.'.rrd File'.PHP_EOL;
 		*/
 	}
+	/*
 	$client = new \InfluxDB\Client('68.168.221.7', 8086, 'myadmin', 'MYp4ssw0rd');
 	$database = $client->selectDB('myadmin');
 	$newPoints = $database->writePoints($points, \InfluxDB\Database::PRECISION_SECONDS);
+	*/
 	return true;
 }
