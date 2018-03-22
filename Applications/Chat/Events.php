@@ -262,6 +262,7 @@ class Events {
 					'function' => 'bandwidth',
 					'args' => [
 						'name' => $_SESSION['name'],
+						'uid' => $_SESSION['uid'],
 						'content' => $message_data['content']
 					]
 				]));
