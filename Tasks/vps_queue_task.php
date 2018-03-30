@@ -27,16 +27,20 @@ function vps_queue_task($args) {
 			$global->$var = 0;
 		if (sizeof($service_master['newvps']) > 0 || sizeof($service_master['queue']) > 0) {
 			if ($global->cas($var, 0, 1)) {
+				$output = '';
 				function_requirements('vps_queue_handler');
 				if (sizeof($service_master['newvps']) > 0) {
 					echo "[".date('Y-m-d H:i:s')."] Processing New VPS for {$service_master['vps_name']}\n";
-					vps_queue_handler($service_master, 'getnewvps', $service_master['newvps']);
+					$output .= vps_queue_handler($service_master, 'getnewvps', $service_master['newvps']);
 				}
 				if (sizeof($service_master['queue']) > 0) {
 					echo "[".date('Y-m-d H:i:s')."] Processing VPS Queue for {$service_master['vps_name']}\n";
-					vps_queue_handler($service_master, 'getqueue', $service_master['queue']);
+					$output .= vps_queue_handler($service_master, 'getqueue', $service_master['queue']);
 				}
-				vps_queue_handler($service_master, 'serverlist');
+				$output .= vps_queue_handler($service_master, 'serverlist');
+				if (trim($output) != '') {
+
+				}
 				$global->$var = 0;
 			}
 		}
