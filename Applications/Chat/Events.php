@@ -157,6 +157,7 @@ class Events {
 				}
 				return;
 			case 'run': // from client
+				echo "Got Run Command ".json_encode($message_data).PHP_EOL;
 				if ($_SESSION['login'] == TRUE && $_SESSION['ima'] == 'admin') {
 					//self::run_command($results[0]['vps_id'], 'ls /');
 					//echo 'Results:'.var_export($results,true).PHP_EOL;
@@ -181,10 +182,12 @@ class Events {
 				}
 				return;
 			case 'running': // from host or client
+				echo "Got Running Command ".json_encode($message_data).PHP_EOL;
 				$json = [
 				];
 				return;
 			case 'ran': // from host
+				echo "Got Ran Command ".json_encode($message_data).PHP_EOL;
 				// indicates both completion of a run process and its final exit code or terminal signal
 				// response(s) from a run command
 				/* $message_data = [
