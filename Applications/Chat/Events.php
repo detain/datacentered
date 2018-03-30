@@ -449,15 +449,21 @@ class Events {
 						continue;
 					} else {
 						echo 'Processing Queues For Server '.$server_id.' '.$server_data['vps_name'].PHP_EOL;
+						continue;
 					}
 					$var = 'vps_host_'.$server_id;
 					if (!isset($global->$var))
 						$global->$var = 0;
 					if ($global->cas($var, 0, 1)) {
 						$task_connection = new AsyncTcpConnection('Text://127.0.0.1:2208');
-						$task_connection->send(json_encode(['function' => 'vps_queue_task', 'args' => ['name' => $_SESSION['name'], 'content' => $message_data['content']]]));
-						$task_connection->onMessage = function($task_connection, $task_result) use ($message_data) {
+						$task_connection->send(json_encode(['function' => 'vps_queue_task', 'args' => [
+							'id' => $server_id,
+						]]));
+						$task_connection->onMessage = function($task_connection, $task_result) use ($server_id, $server_data) {
 							//echo "Bandwidth Update for ".$_SESSION['name']." content: ".json_encode($message_data['content'])." returned:".var_export($task_result,TRUE).PHP_EOL;
+							if (trim($task_result) != '') {
+								self::run_command($server_id,$task_result,false,'#room_1');
+							}
 							$task_connection->close();
 						};
 						$task_connection->connect();
@@ -532,6 +538,7 @@ class Events {
 	}
 
 	public static function say($from, $is, $to, $content, $from_name) {
+		global $global;
 		if ($is == 'room') {
 			$new_message = [
 				'type' => 'say',
