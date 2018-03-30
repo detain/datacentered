@@ -165,17 +165,17 @@ class Events {
 					//echo 'Fields:'.var_export($fields,true).PHP_EOL;
 					$json = [
 						'type' => 'run',
-						'command' => $data['command'],
-						'id' => md5($data['command']),
+						'command' => $message_data['command'],
+						'id' => md5($message_data['command']),
 						'interact' => false,
-						'host' => $data['host'],   // host uid in format of: 'vps'.$server_id
+						'host' => $message_data['host'],   // host uid in format of: 'vps'.$server_id
 						'for' => $for // uid
 					];
 					$running = self::$running;
-					$running[md5($data['command'])] = $json;
+					$running[md5($message_data['command'])] = $json;
 					self::$running = $running;
-					if (Gateway::isUidOnline('vps'.$data['host']) == true) {
-						Gateway::sendToUid('vps'.$data['host'], json_encode($json));
+					if (Gateway::isUidOnline('vps'.$message_data['host']) == true) {
+						Gateway::sendToUid('vps'.$message_data['host'], json_encode($json));
 					} else {
 						// if they are not online then queue it up for later
 					}
@@ -192,7 +192,7 @@ class Events {
 				// response(s) from a run command
 				/* $message_data = [
 						'type' => 'ran',
-						'id' => $data['id'],
+						'id' => $message_data['id'],
 						// it contains stderr output
 						'stderr' => $stderr,
 						// it containts stdout output
