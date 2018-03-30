@@ -198,7 +198,22 @@ class Events {
 						'code' => $exitCode,
 						'term' => $termSignal,
 				]; */
-				return;
+				$id = $message_data['id'];
+				$running = self::$running;
+				$run = $running[$id];
+				$is = substr($run['for'], 0, 1) == '#' ? 'room' : 'client';
+				unset($running[$id]);
+				self::$running = $running;
+				$message = 'Finished Running'.PHP_EOL;
+				if (isset($message_data['stdout']) && trim($message_data['stdout']) != '')
+					$message .= PHP_EOL.'StdOut:'.$message_data['stdout'];
+				if (isset($message_data['stderr']) && trim($message_data['stderr']) != '')
+					$message .= PHP_EOL.'StdErr:'.$message_data['stderr'];
+				if ($message_data['term'] === NULL)
+					$message .= PHP_EOL.'Exited With Error Code '.$message_data['code'];
+				else
+					$message .= PHP_EOL.'Terminated With Signal '.$message_data['term'];
+				return self::say($_SESSION['uid'], $is, $run['for'], $message, $_SESSION['name']);
 			case 'pong': // from client or host
 				if(empty($_SESSION['login'])) {
 					$msg = 'You have not successfully authenticated within the allowed time, goodbye.';
@@ -222,34 +237,7 @@ class Events {
 						throw new \Exception("\$message_data['is'] not set. client_ip:{$_SERVER['REMOTE_ADDR']}");
 					if (!isset($message_data['content'])) // illegal request
 						throw new \Exception("\$message_data['content'] not set. client_ip:{$_SERVER['REMOTE_ADDR']}");
-					if ($message_data['is'] == 'room') {
-						$new_message = [
-							'type' => 'say',
-							'from' => $_SESSION['uid'],
-							'is' => $message_data['is'],
-							'to' => $message_data['to'],
-							'content' => nl2br(htmlspecialchars($message_data['content'])),
-							'time' => date('Y-m-d H:i:s'),
-						];
-						$rooms = $global->rooms;
-						$rooms[0]['messages'][] = [
-							'from_id' => $_SESSION['uid'],
-							'from_name' => $_SESSION['name'],
-							'content' => nl2br(htmlspecialchars($message_data['content'])),
-							'time' => date('Y-m-d H:i:s'),
-						];
-						$global->rooms = $rooms;
-						return Gateway::sendToGroup($message_data['to'], json_encode($new_message));
-					}
-					$new_message = [
-						'type' => 'say',
-						'from' => $_SESSION['uid'],
-						'is' => $message_data['is'],
-						'to' => $message_data['to'],
-						'content' => nl2br(htmlspecialchars($message_data['content'])),
-						'time' => date('Y-m-d H:i:s'),
-					];
-					return Gateway::sendToUid($message_data['to'], json_encode($new_message));
+					return self::say($_SESSION['uid'], $message_data['is'], $message_data['to'], $message_data['content'], $_SESSION['name']);
 				}
 				return;
 			case 'bandwidth': // from host
@@ -456,8 +444,12 @@ class Events {
 			if (sizeof($queues) > 0) {
 				foreach ($queues as $server_id => $rows) {
 					$server_data = $global->hosts[$server_id];
-					echo 'Wanted To Process Queues For Server '.$server_id.PHP_EOL;
-					continue;
+					if ($server_id != 467) {
+						echo 'Wanted To Process Queues For Server '.$server_id.' '.$server_data['vps_name'].PHP_EOL;
+						continue;
+					} else {
+						echo 'Processing Queues For Server '.$server_id.' '.$server_data['vps_name'].PHP_EOL;
+					}
 					$var = 'vps_host_'.$server_id;
 					if (!isset($global->$var))
 						$global->$var = 0;
@@ -538,4 +530,37 @@ class Events {
 			// if they are not online then queue it up for later
 		}
 	}
+
+	public static function say($from, $is, $to, $content, $from_name) {
+		if ($is == 'room') {
+			$new_message = [
+				'type' => 'say',
+				'from' => $from,
+				'is' => $is,
+				'to' => $to,
+				'content' => nl2br(htmlspecialchars($content)),
+				'time' => date('Y-m-d H:i:s'),
+			];
+			$rooms = $global->rooms;
+			$rooms[0]['messages'][] = [
+				'from_id' => $from,
+				'from_name' => $from_name,
+				'content' => nl2br(htmlspecialchars($content)),
+				'time' => date('Y-m-d H:i:s'),
+			];
+			$global->rooms = $rooms;
+			return Gateway::sendToGroup($to, json_encode($new_message));
+		} else {
+			$new_message = [
+				'type' => 'say',
+				'from' => $from,
+				'is' => $is,
+				'to' => $to,
+				'content' => nl2br(htmlspecialchars($content)),
+				'time' => date('Y-m-d H:i:s'),
+			];
+			return Gateway::sendToUid($to, json_encode($new_message));
+		}
+	}
+
 }
