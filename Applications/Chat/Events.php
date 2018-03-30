@@ -169,7 +169,7 @@ class Events {
 						'id' => md5($message_data['command']),
 						'interact' => false,
 						'host' => $message_data['host'],   // host uid in format of: 'vps'.$server_id
-						'for' => $for // uid
+						'for' => $_SESSION['uid'] // uid
 					];
 					$running = self::$running;
 					$running[md5($message_data['command'])] = $json;
