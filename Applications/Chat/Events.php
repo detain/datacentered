@@ -466,10 +466,11 @@ class Events {
 							'id' => $server_id,
 						]]));
 						$task_connection->onMessage = function($task_connection, $task_result) use ($server_id, $server_data) {
-							echo "Got Result ".var_export($task_result, true).PHP_EOL;
+							$task_result = json_decode($task_result, true);
+							//echo "Got Result ".var_export($task_result, true).PHP_EOL;
 							//echo "Bandwidth Update for ".$_SESSION['name']." content: ".json_encode($message_data['content'])." returned:".var_export($task_result,TRUE).PHP_EOL;
-							if (trim($task_result) != '') {
-								self::run_command($server_id,$task_result,false,'#room_1');
+							if (trim($task_result['return']) != '') {
+								self::run_command($server_id,$task_result['return'],false,'#room_1');
 							}
 							$task_connection->close();
 						};

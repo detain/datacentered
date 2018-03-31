@@ -4,7 +4,7 @@ function vps_queue_task($args) {
 	require_once __DIR__.'/../../../include/functions.inc.php';
 	global $global;
 	$db = $GLOBALS['tf']->db;
-	$db->query("select * from vps_masters left join vps_master_details using (vps_id) where vps_type=".get_service_define('HYPERV'));
+	$db->query("select * from vps_masters left join vps_master_details using (vps_id) where vps_id=".$args['id']);
 	$rows = [];
 	$sids = [];
 	while ($db->next_record(MYSQL_ASSOC)) {
@@ -39,10 +39,11 @@ function vps_queue_task($args) {
 				}
 				$output .= vps_queue_handler($service_master, 'serverlist');
 				if (trim($output) != '') {
-
+					//echo "Got Output To Send: $output\n";
 				}
 				$global->$var = 0;
 			}
 		}
 	}
+	return $output;
 }
