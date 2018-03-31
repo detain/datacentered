@@ -28,8 +28,12 @@ $task_worker->onMessage = function($connection, $task_data) {
 	global $functions;
 	$task_data = json_decode($task_data, true);			// Suppose you send json data
 	//echo "Starting Task {$task_data['function']}\n";
+	$return = false;
 	if (isset($task_data['function']) && in_array($task_data['function'], $functions)) {
-		$return = isset($task_data['args']) ? call_user_func($task_data['function'], $task_data['args']) : call_user_func($task_data['function']);
+		if (isset($task_data['args']))
+			$return = call_user_func($task_data['function'], $task_data['args']);
+		else
+			$return = call_user_func($task_data['function']);
 	}
 	//echo "Ending Task {$task_data['function']}\n";
 	$connection->send(json_encode($return));			// send the result
