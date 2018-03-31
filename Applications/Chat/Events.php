@@ -32,12 +32,22 @@ class Events {
 		 */
 		global $global;
 		$global = new GlobalData\Client('127.0.0.1:2207');	 // initialize the GlobalData client
-		$global->hosts = [];
 		$db_config = include __DIR__.'/../../../../include/config/config.db.php';
 		$loop = Worker::getEventLoop();
 		self::$db = new \Workerman\MySQL\Connection($db_config['db_host'], $db_config['db_port'], $db_config['db_user'], $db_config['db_pass'], $db_config['db_name'], 'utf8mb4');
 		if ($worker->id === 0) {
 			$global->running = [];
+			$global->hosts = [];
+			$global->rooms = [
+				[
+					'id' => 'room_1',
+					'name' => 'General Chat',
+					'img' => 'https://upload.wikimedia.org/wikipedia/commons/thumb/a/a6/Rubik%27s_cube.svg/220px-Rubik%27s_cube.svg.png',
+					'members' => [],
+					'messages' => [],
+				]
+			];
+
 			Timer::add(3600, ['Events', 'hyperv_update_list_timer']);
 			Timer::add(60, ['Events', 'hyperv_queue_timer']);
 			Timer::add(60, ['Events', 'vps_queue_timer']);
@@ -103,284 +113,11 @@ class Events {
 		$message_data = json_decode($message, true); // Client is passed json data
 		if (!$message_data)
 			return ;
-		switch ($message_data['type']) { // Depending on the type of business
-			case 'self-update':
-				if ($_SESSION['login'] == TRUE && $_SESSION['ima'] == 'admin') {
-					Gateway::sendToGroup('hosts', $message);
-				}
-				return;
-			case 'clients': // from client
-				if ($_SESSION['login'] == TRUE && $_SESSION['ima'] == 'admin') {
-					$sessions = Gateway::getAllClientSessions();
-					$clients = [];
-					foreach ($sessions as $session_id => $session_data) {
-						if (isset($session_data['uid'])) {
-							$client = [
-								'id' => $session_data['uid'],
-								'name' => $session_data['name'],
-								'ima' => $session_data['ima'],
-								'online' => $session_data['online'],
-								'messages' => [],
-							];
-							if ($session_data['ima'] == 'host') {
-								$client['type'] = $session_data['type'];
-							} else
-								$client['img'] = $session_data['img'];
-							$clients[] = $client;
-						}
-					}
-					$rooms = $global->rooms;
-					foreach ($rooms as $room) {
-						$members = [];
-						foreach ($room['members'] as $member)
-							$members[] = ['contact' => $member];
-						$room['members'] = $members;
-						$clients[] = $room;
-					}
-					$new_message = [ // Send the error response
-						'type' => 'clients',
-						'content' => $clients,
-					];
-					echo "Loaded Clients, Request Length:".strlen(json_encode($new_message)).PHP_EOL;
-					Gateway::sendToCurrentClient(json_encode($new_message));
-				}
-				return;
-			case 'phptty_run': // from client
-				if ($_SESSION['login'] == TRUE && $_SESSION['ima'] == 'admin') {
-					self::$process_pipes = Process::run($client_id, 'htop');
-				}
-				return;
-			case 'phptty': // from client
-				if ($_SESSION['login'] == TRUE && $_SESSION['ima'] == 'admin') {
-					//if(ALLOW_CLIENT_INPUT)
-					fwrite(self::$process_pipes->pipes[0], $message_data['content']);
-				}
-				return;
-			case 'run': // from client
-				echo "Got Run Command ".json_encode($message_data).PHP_EOL;
-				if ($_SESSION['login'] == TRUE) {
-					if ($_SESSION['ima'] == 'admin') {
-						self::run_command($message_data['host'], $message_data['command'], false, $_SESSION['uid']);
-						return;
-					} else {
-
-					}
-				}
-				echo "But not running it\n";
-				return;
-			case 'running': // from host or client
-				//echo "Got Running Command ".json_encode($message_data).PHP_EOL;
-				if ($_SESSION['login'] == TRUE) {
-					if ($_SESSION['ima'] == 'admin') {
-						// stdin to send along
-						$json = [
-						];
-					} else {
-						// stdout or stderr to display
-						$id = $message_data['id'];
-						$running = $global->running;
-						//print_r($running);
-						$run = $running[$id];
-						$message = '';
-						if (isset($message_data['stdout']) && trim($message_data['stdout']) != '')
-							$message .= PHP_EOL.'StdOut:'.$message_data['stdout'];
-						if (isset($message_data['stderr']) && trim($message_data['stderr']) != '')
-							$message .= PHP_EOL.'StdErr:'.$message_data['stderr'];
-						return self::say($_SESSION['uid'], substr($run['for'], 0, 1) == '#' ? 'room' : 'client', $run['for'], $message, $_SESSION['name']);
-					}
-				}
-				return;
-			case 'ran': // from host
-				//echo "Got Ran Command ".json_encode($message_data).PHP_EOL;
-				// indicates both completion of a run process and its final exit code or terminal signal
-				// response(s) from a run command
-				/* $message_data = [
-						'type' => 'ran',
-						'id' => $message_data['id'],
-						// it contains stderr output
-						'stderr' => $stderr,
-						// it containts stdout output
-						'stdout' => $stdout,
-						// it finished, if term === null then it exited with 'code', otehrwise terminated with signal 'term'
-						'code' => $exitCode,
-						'term' => $termSignal,
-				]; */
-				$id = $message_data['id'];
-				$running = $global->running;
-				$run = $running[$id];
-				$is = substr($run['for'], 0, 1) == '#' ? 'room' : 'client';
-				unset($running[$id]);
-				$global->running = $running;
-				$message = 'Finished Running'.PHP_EOL;
-				if (isset($message_data['stdout']) && trim($message_data['stdout']) != '')
-					$message .= PHP_EOL.'StdOut:'.$message_data['stdout'];
-				if (isset($message_data['stderr']) && trim($message_data['stderr']) != '')
-					$message .= PHP_EOL.'StdErr:'.$message_data['stderr'];
-				if ($message_data['term'] === NULL)
-					$message .= PHP_EOL.'Exited With Error Code '.$message_data['code'];
-				else
-					$message .= PHP_EOL.'Terminated With Signal '.$message_data['term'];
-				return self::say($_SESSION['uid'], $is, $run['for'], $message, $_SESSION['name']);
-			case 'pong': // from client or host
-				if(empty($_SESSION['login'])) {
-					$msg = 'You have not successfully authenticated within the allowed time, goodbye.';
-					echo $msg.PHP_EOL;
-					//error_log($msg);
-					error_log($msg);
-					$new_message = [ // Send the error response
-						'type' => 'error',
-						'content' => $msg,
-					];
-					Gateway::sendToCurrentClient(json_encode($new_message));
-					Gateway::closeClient($client_id);
-				}
-				return;
-			case 'say': // from client
-				if ($_SESSION['login'] == TRUE) {
-					// client speaks message: {type:say, is: client|room, to:xx, content:xx}
-					if (!isset($message_data['to'])) // illegal request
-						throw new \Exception("\$message_data['to'] not set. client_ip:{$_SERVER['REMOTE_ADDR']}");
-					if (!isset($message_data['is'])) // illegal request
-						throw new \Exception("\$message_data['is'] not set. client_ip:{$_SERVER['REMOTE_ADDR']}");
-					if (!isset($message_data['content'])) // illegal request
-						throw new \Exception("\$message_data['content'] not set. client_ip:{$_SERVER['REMOTE_ADDR']}");
-					return self::say($_SESSION['uid'], $message_data['is'], $message_data['to'], $message_data['content'], $_SESSION['name']);
-				}
-				return;
-			case 'bandwidth': // from host
-				if (!is_array($message_data['content'])) {
-					echo "error with bandwidth content " . var_export($message_data['content'], true).PHP_EOL;
-					return;
-				}
-				$task_connection = new AsyncTcpConnection('Text://127.0.0.1:2208');
-				$task_connection->send(json_encode([
-					'function' => 'bandwidth',
-					'args' => [
-						'name' => $_SESSION['name'],
-						'uid' => $_SESSION['uid'],
-						'content' => $message_data['content']
-					]
-				]));
-				$task_connection->onMessage = function($task_connection, $task_result) use ($message_data) {
-					//echo "Bandwidth Update for ".$_SESSION['name']." content: ".json_encode($message_data['content'])." returned:".var_export($task_result,TRUE).PHP_EOL;
-					$task_connection->close();
-				};
-				$task_connection->connect();
-				return;
-			case 'login': // from client or host
-				$ima = isset($message_data['ima']) && in_array($message_data['ima'], ['host', 'admin']) ? $message_data['ima'] : 'admin';
-				//echo "client:{$_SERVER['REMOTE_ADDR']}:{$_SERVER['REMOTE_PORT']} gateway:{$_SERVER['GATEWAY_ADDR']}:{$_SERVER['GATEWAY_PORT']} client_id:{$client_id} session:".json_encode($_SESSION)." onMessage:".serialize($message)."\n"; // debug
-				switch ($ima) {
-					case 'host':
-						$row = self::$db->select('*')->from('vps_masters')->where('vps_ip= :vps_ip')->bindValues(array('vps_ip'=>$_SERVER['REMOTE_ADDR']))->row();
-						if ($row === FALSE) {
-							//error
-							$msg = 'This System '.$_SERVER['REMOTE_ADDR'].' does not appear to match up with one of our hosts.';
-							echo $msg.PHP_EOL;
-							error_log($msg);
-							$new_message = [ // Send the error response
-								'type' => 'error',
-								'content' => $msg,
-							];
-							return Gateway::sendToCurrentClient(json_encode($new_message));
-						}
-						/**
-						 * @var GlobalData\Client
-						 */
-						global $global;
-						$uid = 'vps'.$row['vps_id'];
-						$_SESSION['uid'] = $uid;
-						$_SESSION['module'] = 'vps';
-						$_SESSION['name'] = $row['vps_name'];
-						$_SESSION['ima'] = $ima;
-						$_SESSION['ip'] = $row['vps_ip'];
-						$_SESSION['type'] = $row['vps_type'];
-						$_SESSION['online'] = date('Y-m-d H:i:s');
-						$_SESSION['login'] = true;
-						$hosts = $global->hosts;
-						$hosts[$row['vps_id']] = $row;
-						$global->hosts = $hosts;
-						Gateway::setSession($client_id, $_SESSION);
-						Gateway::bindUid($client_id, $uid);
-						Gateway::joinGroup($client_id, $ima.'s');
-						echo "{$row['vps_name']} has been successfully logged in from {$_SERVER['REMOTE_ADDR']}\n";
-						$new_message = [ // Send the error response
-							'type' => 'login',
-							'id' => $uid,
-							'ip' => $row['vps_ip'],
-							'img' => $row['vps_type'],
-							'name' => $row['vps_name'],
-							'ima' => $ima,
-							'online' => time(),
-						];
-						return Gateway::sendToGroup('admins', json_encode($new_message));
-						break;
-					case 'admin':
-						$results = self::$db->query('select accounts.*, account_value from accounts left join accounts_ext on accounts.account_id=accounts_ext.account_id and accounts_ext.account_key="picture" where account_ima="admin" and account_lid="'.$message_data['username'].'" and account_passwd="'.md5($message_data['password']).'"');
-						if ($results[0] === FALSE) {
-							//error
-							$msg = 'Invalid Credentials Specified For User '.$mesage_data['username'];
-							echo $msg.PHP_EOL;
-							error_log($msg);
-							$new_message = [ // Send the error response
-								'type' => 'error',
-								'content' => $msg,
-							];
-							return Gateway::sendToCurrentClient(json_encode($new_message));
-						}
-						$uid = $results[0]['account_id'];
-						$_SESSION['uid'] = $uid;
-						$_SESSION['name'] = $results[0]['account_lid'];
-						$_SESSION['ima'] = $ima;
-						$_SESSION['online'] = date('Y-m-d H:i:s');
-						$_SESSION['img'] = is_null($results[0]['account_value']) ? 'https://secure.gravatar.com/avatar/'.md5(strtolower(trim($results[0]['account_lid']))).'?s=80&d=identicon&r=x' : $results[0]['account_value'];
-						$_SESSION['login'] = true;
-						Gateway::setSession($client_id, $_SESSION);
-						Gateway::bindUid($client_id, $uid);
-						Gateway::joinGroup($client_id, $ima.'s');
-						if (!isset($global->rooms)) {
-							$rooms = [];
-							$room = [
-								'id' => 'room_'.(sizeof($rooms) + 1),
-								'name' => 'General Chat',
-								'img' => 'https://upload.wikimedia.org/wikipedia/commons/thumb/a/a6/Rubik%27s_cube.svg/220px-Rubik%27s_cube.svg.png',
-								'members' => [],
-								'messages' => [],
-							];
-							$rooms[] = $room;
-							$global->rooms = $rooms;
-						}
-						$rooms = $global->rooms;
-						if (!in_array($uid, $rooms[0]['members']))
-							$rooms[0]['members'][] = $uid;
-						$global->rooms = $rooms;
-						echo "{$results[0]['account_lid']} has been successfully logged in from {$_SERVER['REMOTE_ADDR']}\n";
-						$new_message = [ // Send the error response
-							'type' => 'login',
-							'id' => $uid,
-							'email' => $results[0]['account_lid'],
-							'name' => $results[0]['account_name'],
-							'ima' => $ima,
-							'online' => time(),
-							'img' => is_null($results[0]['account_value']) ? 'https://secure.gravatar.com/avatar/'.md5(strtolower(trim($results[0]['account_lid']))).'?s=80&d=identicon&r=x' : $results[0]['account_value'],
-						];
-						return Gateway::sendToGroup('admins', json_encode($new_message));
-						break;
-					case 'client':
-					case 'guest':
-					default:
-						$msg = 'Invalid Login Type '.$ima.'. Check back later for "client" and "guest" support to be added in addition to the "host" and "admin" types.';
-						echo $msg.PHP_EOL;
-						error_log($msg);
-						$new_message = [ // Send the error response
-							'type' => 'error',
-							'content' => $msg,
-						];
-						Gateway::sendToCurrentClient(json_encode($new_message));
-						break;
-				}
-				return;
-		}
+		$method = 'msg'.str_replace(' ','',ucwords(str_replace(['-','_'],[' ',' '],$message_data['type'])));
+		if (method_exists('Events', $method))
+			call_user_func(['Events', $method], $client_id, $message_data);
+		else
+			echo "Wanted to call method {$method} but it doesnt exist\n";
 	}
 
 	/**
@@ -470,7 +207,7 @@ class Events {
 							//echo "Got Result ".var_export($task_result, true).PHP_EOL;
 							//echo "Bandwidth Update for ".$_SESSION['name']." content: ".json_encode($message_data['content'])." returned:".var_export($task_result,TRUE).PHP_EOL;
 							if (trim($task_result['return']) != '') {
-								self::run_command($server_id,$task_result['return'],false,'#room_1');
+								self::run_command($server_id,$task_result['return'],false,'room_1');
 							}
 							$task_connection->close();
 						};
@@ -582,4 +319,361 @@ class Events {
 		}
 	}
 
+	/**
+	 * handler for when receiving a self-update message.
+	 *
+	 * @param int $client_id
+	 * @param array $message_data
+	 */
+	public static function msgSelfUpdate($client_id, $message_data) {
+		if ($_SESSION['login'] == TRUE && $_SESSION['ima'] == 'admin') {
+			Gateway::sendToGroup('hosts', $message);
+		}
+		return;
+	}
+
+	/**
+	 * handler for when receiving a bandwidth message.
+	 *
+	 * @param int $client_id
+	 * @param array $message_data
+	 */
+	public static function msgBandwidth($client_id, $message_data) {
+		if (!is_array($message_data['content'])) {
+			echo "error with bandwidth content " . var_export($message_data['content'], true).PHP_EOL;
+			return;
+		}
+		$task_connection = new AsyncTcpConnection('Text://127.0.0.1:2208');
+		$task_connection->send(json_encode([
+			'function' => 'bandwidth',
+			'args' => [
+				'name' => $_SESSION['name'],
+				'uid' => $_SESSION['uid'],
+				'content' => $message_data['content']
+			]
+		]));
+		$task_connection->onMessage = function($task_connection, $task_result) use ($message_data) {
+			//echo "Bandwidth Update for ".$_SESSION['name']." content: ".json_encode($message_data['content'])." returned:".var_export($task_result,TRUE).PHP_EOL;
+			$task_connection->close();
+		};
+		$task_connection->connect();
+		return;
+	}
+
+	/**
+	 * handler for when receiving a clients message.
+	 *
+	 * @param int $client_id
+	 * @param array $message_data
+	 */
+	public static function msgClients($client_id, $message_data) {
+		if ($_SESSION['login'] == TRUE && $_SESSION['ima'] == 'admin') {
+			$sessions = Gateway::getAllClientSessions();
+			$clients = [];
+			foreach ($sessions as $session_id => $session_data) {
+				if (isset($session_data['uid'])) {
+					$client = [
+						'id' => $session_data['uid'],
+						'name' => $session_data['name'],
+						'ima' => $session_data['ima'],
+						'online' => $session_data['online'],
+						'messages' => [],
+					];
+					if ($session_data['ima'] == 'host') {
+						$client['type'] = $session_data['type'];
+					} else
+						$client['img'] = $session_data['img'];
+					$clients[] = $client;
+				}
+			}
+			$rooms = $global->rooms;
+			foreach ($rooms as $room) {
+				$members = [];
+				foreach ($room['members'] as $member)
+					$members[] = ['contact' => $member];
+				$room['members'] = $members;
+				$clients[] = $room;
+			}
+			$new_message = [ // Send the error response
+				'type' => 'clients',
+				'content' => $clients,
+			];
+			echo "Loaded Clients, Request Length:".strlen(json_encode($new_message)).PHP_EOL;
+			Gateway::sendToCurrentClient(json_encode($new_message));
+		}
+		return;
+	}
+
+	/**
+	 * handler for when receiving a say message.
+	 *
+	 * @param int $client_id
+	 * @param array $message_data
+	 */
+	public static function msgSay($client_id, $message_data) {
+		if ($_SESSION['login'] == TRUE) {
+			// client speaks message: {type:say, is: client|room, to:xx, content:xx}
+			if (!isset($message_data['to'])) // illegal request
+				throw new \Exception("\$message_data['to'] not set. client_ip:{$_SERVER['REMOTE_ADDR']}");
+			if (!isset($message_data['is'])) // illegal request
+				throw new \Exception("\$message_data['is'] not set. client_ip:{$_SERVER['REMOTE_ADDR']}");
+			if (!isset($message_data['content'])) // illegal request
+				throw new \Exception("\$message_data['content'] not set. client_ip:{$_SERVER['REMOTE_ADDR']}");
+			return self::say($_SESSION['uid'], $message_data['is'], $message_data['to'], $message_data['content'], $_SESSION['name']);
+		}
+		return;
+	}
+
+	/**
+	 * handler for when receiving a phptty_run message.
+	 *
+	 * @param int $client_id
+	 * @param array $message_data
+	 */
+	public static function msgPhpttyRun($client_id, $message_data) {
+		if ($_SESSION['login'] == TRUE && $_SESSION['ima'] == 'admin') {
+			self::$process_pipes = Process::run($client_id, 'htop');
+		}
+		return;
+	}
+
+	/**
+	 * handler for when receiving a phptty_run message.
+	 *
+	 * @param int $client_id
+	 * @param array $message_data
+	 */
+	public static function msgPhptty($client_id, $message_data) {
+		if ($_SESSION['login'] == TRUE && $_SESSION['ima'] == 'admin') {
+			//if(ALLOW_CLIENT_INPUT)
+			fwrite(self::$process_pipes->pipes[0], $message_data['content']);
+		}
+		return;
+	}
+
+
+
+	/**
+	 * handler for when receiving a pong message.
+	 *
+	 * @param int $client_id
+	 * @param array $message_data
+	 */
+	public static function msgPong($client_id, $message_data) {
+		if(empty($_SESSION['login'])) {
+			$msg = 'You have not successfully authenticated within the allowed time, goodbye.';
+			echo $msg.PHP_EOL;
+			//error_log($msg);
+			error_log($msg);
+			$new_message = [ // Send the error response
+				'type' => 'error',
+				'content' => $msg,
+			];
+			Gateway::sendToCurrentClient(json_encode($new_message));
+			Gateway::closeClient($client_id);
+		}
+		return;
+	}
+
+	/**
+	 * handler for when receiving a run message.
+	 *
+	 * @param int $client_id
+	 * @param array $message_data
+	 */
+	public static function msgRun($client_id, $message_data) {
+		echo "Got Run Command ".json_encode($message_data).PHP_EOL;
+		if ($_SESSION['login'] == TRUE) {
+			if ($_SESSION['ima'] == 'admin') {
+				self::run_command($message_data['host'], $message_data['command'], false, $_SESSION['uid']);
+				return;
+			} else {
+
+			}
+		}
+		echo "But not running it\n";
+		return;
+	}
+
+	/**
+	 * handler for when receiving a running message.
+	 *
+	 * @param int $client_id
+	 * @param array $message_data
+	 */
+	public static function msgRunning($client_id, $message_data) {
+		//echo "Got Running Command ".json_encode($message_data).PHP_EOL;
+		if ($_SESSION['login'] == TRUE) {
+			if ($_SESSION['ima'] == 'admin') {
+				// stdin to send along
+				$json = [
+				];
+			} else {
+				// stdout or stderr to display
+				$id = $message_data['id'];
+				$running = $global->running;
+				//print_r($running);
+				$run = $running[$id];
+				$message = '';
+				if (isset($message_data['stdout']) && trim($message_data['stdout']) != '')
+					$message .= PHP_EOL.'StdOut:'.$message_data['stdout'];
+				if (isset($message_data['stderr']) && trim($message_data['stderr']) != '')
+					$message .= PHP_EOL.'StdErr:'.$message_data['stderr'];
+				return self::say($_SESSION['uid'], substr($run['for'], 0, 1) == '#' ? 'room' : 'client', $run['for'], $message, $_SESSION['name']);
+			}
+		}
+		return;
+	}
+
+	/**
+	 * handler for when receiving a ran message.
+	 *
+	 * @param int $client_id
+	 * @param array $message_data
+	 */
+	public static function msgRan($client_id, $message_data) {
+		//echo "Got Ran Command ".json_encode($message_data).PHP_EOL;
+		// indicates both completion of a run process and its final exit code or terminal signal
+		// response(s) from a run command
+		/* $message_data = [
+				'type' => 'ran',
+				'id' => $message_data['id'],
+				// it contains stderr output
+				'stderr' => $stderr,
+				// it containts stdout output
+				'stdout' => $stdout,
+				// it finished, if term === null then it exited with 'code', otehrwise terminated with signal 'term'
+				'code' => $exitCode,
+				'term' => $termSignal,
+		]; */
+		$id = $message_data['id'];
+		$running = $global->running;
+		$run = $running[$id];
+		$is = substr($run['for'], 0, 1) == '#' ? 'room' : 'client';
+		unset($running[$id]);
+		$global->running = $running;
+		$message = 'Finished Running'.PHP_EOL;
+		if (isset($message_data['stdout']) && trim($message_data['stdout']) != '')
+			$message .= PHP_EOL.'StdOut:'.$message_data['stdout'];
+		if (isset($message_data['stderr']) && trim($message_data['stderr']) != '')
+			$message .= PHP_EOL.'StdErr:'.$message_data['stderr'];
+		if ($message_data['term'] === NULL)
+			$message .= PHP_EOL.'Exited With Error Code '.$message_data['code'];
+		else
+			$message .= PHP_EOL.'Terminated With Signal '.$message_data['term'];
+		return self::say($_SESSION['uid'], $is, $run['for'], $message, $_SESSION['name']);
+	}
+
+	/**
+	 * handler for when receiving a login message.
+	 *
+	 * @param int $client_id
+	 * @param array $message_data
+	 */
+	public static function msgLogin($client_id, $message_data) {
+		$ima = isset($message_data['ima']) && in_array($message_data['ima'], ['host', 'admin']) ? $message_data['ima'] : 'admin';
+		//echo "client:{$_SERVER['REMOTE_ADDR']}:{$_SERVER['REMOTE_PORT']} gateway:{$_SERVER['GATEWAY_ADDR']}:{$_SERVER['GATEWAY_PORT']} client_id:{$client_id} session:".json_encode($_SESSION)." onMessage:".serialize($message)."\n"; // debug
+		switch ($ima) {
+			case 'host':
+				$row = self::$db->select('*')->from('vps_masters')->where('vps_ip= :vps_ip')->bindValues(array('vps_ip'=>$_SERVER['REMOTE_ADDR']))->row();
+				if ($row === FALSE) {
+					//error
+					$msg = 'This System '.$_SERVER['REMOTE_ADDR'].' does not appear to match up with one of our hosts.';
+					echo $msg.PHP_EOL;
+					error_log($msg);
+					$new_message = [ // Send the error response
+						'type' => 'error',
+						'content' => $msg,
+					];
+					return Gateway::sendToCurrentClient(json_encode($new_message));
+				}
+				/**
+				 * @var GlobalData\Client
+				 */
+				global $global;
+				$uid = 'vps'.$row['vps_id'];
+				$_SESSION['uid'] = $uid;
+				$_SESSION['module'] = 'vps';
+				$_SESSION['name'] = $row['vps_name'];
+				$_SESSION['ima'] = $ima;
+				$_SESSION['ip'] = $row['vps_ip'];
+				$_SESSION['type'] = $row['vps_type'];
+				$_SESSION['online'] = date('Y-m-d H:i:s');
+				$_SESSION['login'] = true;
+				$hosts = $global->hosts;
+				$hosts[$row['vps_id']] = $row;
+				$global->hosts = $hosts;
+				Gateway::setSession($client_id, $_SESSION);
+				Gateway::bindUid($client_id, $uid);
+				Gateway::joinGroup($client_id, $ima.'s');
+				echo "{$row['vps_name']} has been successfully logged in from {$_SERVER['REMOTE_ADDR']}\n";
+				$new_message = [ // Send the error response
+					'type' => 'login',
+					'id' => $uid,
+					'ip' => $row['vps_ip'],
+					'img' => $row['vps_type'],
+					'name' => $row['vps_name'],
+					'ima' => $ima,
+					'online' => time(),
+				];
+				return Gateway::sendToGroup('admins', json_encode($new_message));
+				break;
+			case 'admin':
+				$results = self::$db->query('select accounts.*, account_value from accounts left join accounts_ext on accounts.account_id=accounts_ext.account_id and accounts_ext.account_key="picture" where account_ima="admin" and account_lid="'.$message_data['username'].'" and account_passwd="'.md5($message_data['password']).'"');
+				if ($results[0] === FALSE) {
+					//error
+					$msg = 'Invalid Credentials Specified For User '.$mesage_data['username'];
+					echo $msg.PHP_EOL;
+					error_log($msg);
+					$new_message = [ // Send the error response
+						'type' => 'error',
+						'content' => $msg,
+					];
+					return Gateway::sendToCurrentClient(json_encode($new_message));
+				}
+				$uid = $results[0]['account_id'];
+				$_SESSION['uid'] = $uid;
+				$_SESSION['name'] = $results[0]['account_lid'];
+				$_SESSION['ima'] = $ima;
+				$_SESSION['online'] = date('Y-m-d H:i:s');
+				$_SESSION['img'] = is_null($results[0]['account_value']) ? 'https://secure.gravatar.com/avatar/'.md5(strtolower(trim($results[0]['account_lid']))).'?s=80&d=identicon&r=x' : $results[0]['account_value'];
+				$_SESSION['login'] = true;
+				Gateway::setSession($client_id, $_SESSION);
+				Gateway::bindUid($client_id, $uid);
+				Gateway::joinGroup($client_id, $ima.'s');
+				$rooms = $global->rooms;
+				if (!in_array($uid, $rooms[0]['members']))
+					$rooms[0]['members'][] = $uid;
+				$global->rooms = $rooms;
+				echo "{$results[0]['account_lid']} has been successfully logged in from {$_SERVER['REMOTE_ADDR']}\n";
+				$new_message = [ // Send the error response
+					'type' => 'login',
+					'id' => $uid,
+					'email' => $results[0]['account_lid'],
+					'name' => $results[0]['account_name'],
+					'ima' => $ima,
+					'online' => time(),
+					'img' => is_null($results[0]['account_value']) ? 'https://secure.gravatar.com/avatar/'.md5(strtolower(trim($results[0]['account_lid']))).'?s=80&d=identicon&r=x' : $results[0]['account_value'],
+				];
+				return Gateway::sendToGroup('admins', json_encode($new_message));
+				break;
+			case 'client':
+			case 'guest':
+			default:
+				$msg = 'Invalid Login Type '.$ima.'. Check back later for "client" and "guest" support to be added in addition to the "host" and "admin" types.';
+				echo $msg.PHP_EOL;
+				error_log($msg);
+				$new_message = [ // Send the error response
+					'type' => 'error',
+					'content' => $msg,
+				];
+				Gateway::sendToCurrentClient(json_encode($new_message));
+				break;
+		}
+		return;
+
+	}
+
 }
+
+
