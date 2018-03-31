@@ -456,7 +456,6 @@ class Events {
 						continue;
 					} else {
 						echo 'Processing Queues For Server '.$server_id.' '.$server_data['vps_name'].PHP_EOL;
-						continue;
 					}
 					$var = 'vps_host_'.$server_id;
 					if (!isset($global->$var))
@@ -467,6 +466,7 @@ class Events {
 							'id' => $server_id,
 						]]));
 						$task_connection->onMessage = function($task_connection, $task_result) use ($server_id, $server_data) {
+							echo "Got Result ".var_export($task_result, true).PHP_EOL;
 							//echo "Bandwidth Update for ".$_SESSION['name']." content: ".json_encode($message_data['content'])." returned:".var_export($task_result,TRUE).PHP_EOL;
 							if (trim($task_result) != '') {
 								self::run_command($server_id,$task_result,false,'#room_1');
@@ -525,6 +525,8 @@ class Events {
 	public static function run_command($host, $cmd, $interact = false, $for = null) {
 		global $global;
 		// we need to store the command locally so we can easily react proeprly if we get a response
+		if (substr($host, 0, 3) == 'vps' && is_numeric(substr($host, 3)))
+			$host = substr($host, 3);
 		$uid = 'vps'.$host;
 		$run_id = md5($cmd);
 		$json = [
