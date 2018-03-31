@@ -24,6 +24,11 @@ class Events {
 	public static $process_pipes = null;
 	public static $db = null;
 
+	/**
+	 * when the workerman thread starts
+	 *
+	 * @param Workerman\Worker $worker
+	 */
 	public static function onWorkerStart($worker) {
 		//$worker->maxSendBufferSize = 102400000;
 		//$worker->sendToGatewayBufferSize = 102400000;
@@ -89,6 +94,11 @@ class Events {
 		}
 	}
 
+	/**
+	 * when the workerman process shuts down / closes
+	 *
+	 * @param Workerman\Worker $worker
+	 */
 	public static function onWorkerStop($worker) {
 		if ($worker->id == 0) {
 			/*@shell_exec('killall vmstat');
@@ -96,13 +106,18 @@ class Events {
 		}
 	}
 
+	/**
+	 * when a client connects
+	 *
+	 * @param int $client_id
+	 */
 	public static function onConnect($client_id) {
 	}
 
 	/**
 	 * When there is news
 	 * @param int $client_id
-	 * @param mixed $message
+	 * @param string $message
 	 */
 	public static function onMessage($client_id, $message) {
 		/**
@@ -122,6 +137,7 @@ class Events {
 
 	/**
 	 * When the client is disconnected
+	 *
 	 * @param integer $client_id client id
 	 */
 	public static function onClose($client_id) {
@@ -153,6 +169,10 @@ class Events {
 		}
 	}
 
+	/**
+	 * timer function to check for vps queue items
+	 *
+	 */
 	public static function vps_queue_timer() {
 		/**
 		 * @var GlobalData\Client
@@ -219,6 +239,10 @@ class Events {
 		}
 	}
 
+	/**
+	 * function called at intervals to udpate vps list
+	 *
+	 */
 	public static function hyperv_update_list_timer() {
 		/*$new_message = [
 			'type' => 'log',
@@ -235,6 +259,10 @@ class Events {
 		$task_connection->connect();
 	}
 
+	/**
+	 * hyperv specific queue timer check
+	 *
+	 */
 	public static function hyperv_queue_timer() {
 		/*$new_message = [
 			'type' => 'log',
