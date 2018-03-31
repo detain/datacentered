@@ -23,7 +23,6 @@ class Events {
 	public static $process_handle = null;
 	public static $process_pipes = null;
 	public static $db = null;
-	public static $running = [];
 
 	public static function onWorkerStart($worker) {
 		//$worker->maxSendBufferSize = 102400000;
@@ -38,6 +37,7 @@ class Events {
 		$loop = Worker::getEventLoop();
 		self::$db = new \Workerman\MySQL\Connection($db_config['db_host'], $db_config['db_port'], $db_config['db_user'], $db_config['db_pass'], $db_config['db_name'], 'utf8mb4');
 		if ($worker->id === 0) {
+			$global->running = [];
 			Timer::add(3600, ['Events', 'hyperv_update_list_timer']);
 			Timer::add(60, ['Events', 'hyperv_queue_timer']);
 			Timer::add(60, ['Events', 'vps_queue_timer']);
@@ -160,14 +160,16 @@ class Events {
 				echo "Got Run Command ".json_encode($message_data).PHP_EOL;
 				if ($_SESSION['login'] == TRUE) {
 					if ($_SESSION['ima'] == 'admin') {
-						return self::run_command($message_data['host'], $message_data['command'], false, $_SESSION['uid']);
+						self::run_command($message_data['host'], $message_data['command'], false, $_SESSION['uid']);
+						return;
 					} else {
 
 					}
 				}
+				echo "But not running it\n";
 				return;
 			case 'running': // from host or client
-				echo "Got Running Command ".json_encode($message_data).PHP_EOL;
+				//echo "Got Running Command ".json_encode($message_data).PHP_EOL;
 				if ($_SESSION['login'] == TRUE) {
 					if ($_SESSION['ima'] == 'admin') {
 						// stdin to send along
@@ -176,7 +178,8 @@ class Events {
 					} else {
 						// stdout or stderr to display
 						$id = $message_data['id'];
-						$running = self::$running;
+						$running = $global->running;
+						//print_r($running);
 						$run = $running[$id];
 						$message = '';
 						if (isset($message_data['stdout']) && trim($message_data['stdout']) != '')
@@ -188,7 +191,7 @@ class Events {
 				}
 				return;
 			case 'ran': // from host
-				echo "Got Ran Command ".json_encode($message_data).PHP_EOL;
+				//echo "Got Ran Command ".json_encode($message_data).PHP_EOL;
 				// indicates both completion of a run process and its final exit code or terminal signal
 				// response(s) from a run command
 				/* $message_data = [
@@ -203,11 +206,11 @@ class Events {
 						'term' => $termSignal,
 				]; */
 				$id = $message_data['id'];
-				$running = self::$running;
+				$running = $global->running;
 				$run = $running[$id];
 				$is = substr($run['for'], 0, 1) == '#' ? 'room' : 'client';
 				unset($running[$id]);
-				self::$running = $running;
+				$global->running = $running;
 				$message = 'Finished Running'.PHP_EOL;
 				if (isset($message_data['stdout']) && trim($message_data['stdout']) != '')
 					$message .= PHP_EOL.'StdOut:'.$message_data['stdout'];
@@ -520,6 +523,7 @@ class Events {
 	 * @return void
 	 */
 	public static function run_command($host, $cmd, $interact = false, $for = null) {
+		global $global;
 		// we need to store the command locally so we can easily react proeprly if we get a response
 		$uid = 'vps'.$host;
 		$run_id = md5($cmd);
@@ -531,9 +535,9 @@ class Events {
 			'host' => $uid,
 			'for' => $for
 		];
-		$running = self::$running;
+		$running = $global->running;
 		$running[$run_id] = $json;
-		self::$running = $running;
+		$global->running = $running;
 		if (Gateway::isUidOnline($uid) == true) {
 			Gateway::sendToUid($uid, json_encode($json));
 		} else {
@@ -543,6 +547,7 @@ class Events {
 
 	public static function say($from, $is, $to, $content, $from_name) {
 		global $global;
+		echo "Saying $content from $from to $to is $is name $from_name\n";
 		if ($is == 'room') {
 			$new_message = [
 				'type' => 'say',
