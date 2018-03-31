@@ -158,33 +158,34 @@ class Events {
 				return;
 			case 'run': // from client
 				echo "Got Run Command ".json_encode($message_data).PHP_EOL;
-				if ($_SESSION['login'] == TRUE && $_SESSION['ima'] == 'admin') {
-					//self::run_command($results[0]['vps_id'], 'ls /');
-					//echo 'Results:'.var_export($results,true).PHP_EOL;
-					//$fields  = $command->resultFields; // get table fields
-					//echo 'Fields:'.var_export($fields,true).PHP_EOL;
-					$json = [
-						'type' => 'run',
-						'command' => $message_data['command'],
-						'id' => md5($message_data['command']),
-						'interact' => false,
-						'host' => $message_data['host'],   // host uid in format of: 'vps'.$server_id
-						'for' => $_SESSION['uid'] // uid
-					];
-					$running = self::$running;
-					$running[md5($message_data['command'])] = $json;
-					self::$running = $running;
-					if (Gateway::isUidOnline('vps'.$message_data['host']) == true) {
-						Gateway::sendToUid('vps'.$message_data['host'], json_encode($json));
+				if ($_SESSION['login'] == TRUE) {
+					if ($_SESSION['ima'] == 'admin') {
+						return self::run_command($message_data['host'], $message_data['command'], false, $_SESSION['uid']);
 					} else {
-						// if they are not online then queue it up for later
+
 					}
 				}
 				return;
 			case 'running': // from host or client
 				echo "Got Running Command ".json_encode($message_data).PHP_EOL;
-				$json = [
-				];
+				if ($_SESSION['login'] == TRUE) {
+					if ($_SESSION['ima'] == 'admin') {
+						// stdin to send along
+						$json = [
+						];
+					} else {
+						// stdout or stderr to display
+						$id = $message_data['id'];
+						$running = self::$running;
+						$run = $running[$id];
+						$message = '';
+						if (isset($message_data['stdout']) && trim($message_data['stdout']) != '')
+							$message .= PHP_EOL.'StdOut:'.$message_data['stdout'];
+						if (isset($message_data['stderr']) && trim($message_data['stderr']) != '')
+							$message .= PHP_EOL.'StdErr:'.$message_data['stderr'];
+						return self::say($_SESSION['uid'], substr($run['for'], 0, 1) == '#' ? 'room' : 'client', $run['for'], $message, $_SESSION['name']);
+					}
+				}
 				return;
 			case 'ran': // from host
 				echo "Got Ran Command ".json_encode($message_data).PHP_EOL;
