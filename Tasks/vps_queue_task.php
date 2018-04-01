@@ -7,6 +7,7 @@ function vps_queue_task($args) {
 	$db->query("select * from vps_masters left join vps_master_details using (vps_id) where vps_id=".$args['id']);
 	$rows = [];
 	$sids = [];
+	$output = '';
 	while ($db->next_record(MYSQL_ASSOC)) {
 		$db->Record['newvps'] = [];
 		$db->Record['queue'] = [];
@@ -27,7 +28,6 @@ function vps_queue_task($args) {
 			$global->$var = 0;
 		if (sizeof($service_master['newvps']) > 0 || sizeof($service_master['queue']) > 0) {
 			if ($global->cas($var, 0, 1)) {
-				$output = '';
 				function_requirements('vps_queue_handler');
 				if (sizeof($service_master['newvps']) > 0) {
 					echo "[".date('Y-m-d H:i:s')."] Processing New VPS for {$service_master['vps_name']}\n";
