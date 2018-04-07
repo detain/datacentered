@@ -21,6 +21,7 @@
 		"workerman/gateway-worker" : "*",
 		"react/http-client": "*",
 		"react/child-process": "*",
+		"react/event-loop": "0.4.3",
 		"workerman/workerman": "*",
 		"workerman/globaldata": "*"
 	},
