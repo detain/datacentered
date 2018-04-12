@@ -22,6 +22,7 @@
 		"react/http-client": "*",
 		"react/child-process": "*",
 		"react/event-loop": "0.4.3",
+		"danielstjules/php-pretty-datetime": "*",
 		"workerman/workerman": "*",
 		"workerman/globaldata": "*"
 	},
