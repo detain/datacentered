@@ -11,11 +11,12 @@ $task_worker->count = 5; 								// number of task processes can be opened more 
 $task_worker->name = 'TaskWorker';
 $task_worker->onWorkerStart = function($worker) {
 	global $global, $functions, $worker_db, $influx_client, $influx_database;
+	include_once __DIR__.'/../../../../include/config/config.settings.php';
 	$db_config = include __DIR__.'/../../../../include/config/config.db.php';
 	$loop = Worker::getEventLoop();
 	$worker_db = new \Workerman\MySQL\Connection($db_config['db_host'], $db_config['db_port'], $db_config['db_user'], $db_config['db_pass'], $db_config['db_name'], 'utf8mb4');
-	$influx_client = new \InfluxDB\Client('68.168.221.7', 8086, 'myadmin', 'MYp4ssw0rd');
-	$influx_database = $influx_client->selectDB('myadmin');
+	$influx_client = new \InfluxDB\Client(INFLUX_HOST, INFLUX_PORT, INFLUX_USER, INFLUX_PASS);
+	$influx_database = $influx_client->selectDB(INFLUX_DB);
 	$global = new \GlobalData\Client('127.0.0.1:2207');
 	$functions = [];
 	foreach (glob(__DIR__.'/../../Tasks/*.php') as $file) {
