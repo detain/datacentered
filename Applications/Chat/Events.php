@@ -395,6 +395,7 @@ class Events {
 	 * @param array $message_data
 	 */
 	public static function msgClients($client_id, $message_data) {
+		global $global;
 		if ($_SESSION['login'] == TRUE && $_SESSION['ima'] == 'admin') {
 			$sessions = Gateway::getAllClientSessions();
 			$clients = [];
@@ -530,6 +531,7 @@ class Events {
 	 * @param array $message_data
 	 */
 	public static function msgRunning($client_id, $message_data) {
+		global $global;
 		//echo "Got Running Command ".json_encode($message_data).PHP_EOL;
 		if ($_SESSION['login'] == TRUE) {
 			if ($_SESSION['ima'] == 'admin') {
@@ -560,6 +562,7 @@ class Events {
 	 * @param array $message_data
 	 */
 	public static function msgRan($client_id, $message_data) {
+		global $global;
 		//echo "Got Ran Command ".json_encode($message_data).PHP_EOL;
 		// indicates both completion of a run process and its final exit code or terminal signal
 		// response(s) from a run command
@@ -599,6 +602,7 @@ class Events {
 	 * @param array $message_data
 	 */
 	public static function msgLogin($client_id, $message_data) {
+		global $global;
 		$ima = isset($message_data['ima']) && in_array($message_data['ima'], ['host', 'admin']) ? $message_data['ima'] : 'admin';
 		//echo "client:{$_SERVER['REMOTE_ADDR']}:{$_SERVER['REMOTE_PORT']} gateway:{$_SERVER['GATEWAY_ADDR']}:{$_SERVER['GATEWAY_PORT']} client_id:{$client_id} session:".json_encode($_SESSION)." onMessage:".serialize($message)."\n"; // debug
 		switch ($ima) {
