@@ -7,6 +7,7 @@
 		"administration",
 		"vps"
 	],
+	"minimum-stability": "dev",
 	"license": "LGPL-2.1-or-later",
 	"authors": [
 		{
@@ -21,7 +22,7 @@
 		"workerman/gateway-worker" : "*",
 		"react/http-client": "*",
 		"react/child-process": "*",
-		"react/event-loop": "0.4.3",
+		"react/event-loop": "*",
 		"danielstjules/php-pretty-datetime": "*",
 		"workerman/workerman": "*",
 		"workerman/globaldata": "*"
