@@ -651,7 +651,10 @@ class Events {
 				return Gateway::sendToGroup('admins', json_encode($new_message));
 				break;
 			case 'admin':
-				$results = self::$db->query('select accounts.*, account_value from accounts left join accounts_ext on accounts.account_id=accounts_ext.account_id and accounts_ext.account_key="picture" where account_ima="admin" and account_lid="'.$message_data['username'].'" and account_passwd="'.md5($message_data['password']).'"');
+				if (isset($message_data['session_id']))
+					$results = self::$db->query('select accounts.*, account_value from sessions left join accounts on session_owner=accounts.account_id left join accounts_ext on accounts.account_id=accounts_ext.account_id and accounts_ext.account_key="picture" where account_ima="admin" and account_lid="'.$message_data['username'].'" and session_id="'.$message_data['session_id']).'"');
+				else
+					$results = self::$db->query('select accounts.*, account_value from accounts left join accounts_ext on accounts.account_id=accounts_ext.account_id and accounts_ext.account_key="picture" where account_ima="admin" and account_lid="'.$message_data['username'].'" and account_passwd="'.md5($message_data['password']).'"');
 				if ($results[0] === FALSE) {
 					//error
 					$msg = 'Invalid Credentials Specified For User '.$mesage_data['username'];
