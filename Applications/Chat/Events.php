@@ -288,20 +288,20 @@ class Events {
 		if (substr($host, 0, 3) == 'vps' && is_numeric(substr($host, 3)))
 			$host = substr($host, 3);
 		$uid = 'vps'.$host;
-		$run_id = md5($cmd);
-		$json = [
-			'type' => 'run',
-			'command' => $cmd,
-			'id' => $run_id,
-			'interact' => false,
-			'host' => $uid,
-			'for' => $for
-		];
-		do {
-			$old_value = $new_value = $global->running;
-			$new_value[$run_id] = $json;
-		} while(!$global->cas('running', $old_value, $new_value));
 		if (Gateway::isUidOnline($uid) == true) {
+			$run_id = md5($cmd);
+			$json = [
+				'type' => 'run',
+				'command' => $cmd,
+				'id' => $run_id,
+				'interact' => false,
+				'host' => $uid,
+				'for' => $for
+			];
+			do {
+				$old_value = $new_value = $global->running;
+				$new_value[$run_id] = $json;
+			} while(!$global->cas('running', $old_value, $new_value));
 			Gateway::sendToUid($uid, json_encode($json));
 			echo "Sending ".json_encode($json)." to {$uid}\n";
 		} else {
@@ -503,14 +503,15 @@ class Events {
 		echo "Got Running Command ".json_encode($message_data).PHP_EOL;
 		if ($_SESSION['login'] == TRUE) {
 			if ($_SESSION['ima'] == 'admin') {
-				// stdin to send along
-				$json = [
-				];
+				// stdin to send to host/process
+				$id = $message_data['id'];
+				$running = $global->running;
+				$run = $running[$id];
+				return Gateway::sendToUid($run['host'], json_encode($message_data));
 			} else {
 				// stdout or stderr to display
 				$id = $message_data['id'];
 				$running = $global->running;
-				//print_r($running);
 				$run = $running[$id];
 				/*
 				$message = '';
