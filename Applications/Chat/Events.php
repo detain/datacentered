@@ -56,41 +56,6 @@ class Events {
 			Timer::add(3600, ['Events', 'hyperv_update_list_timer']);
 			Timer::add(60, ['Events', 'hyperv_queue_timer']);
 			Timer::add(60, ['Events', 'vps_queue_timer']);
-			/*
-			// Save the process handle, close the handle when the process is closed
-			self::$process_handle = popen('vmstat -n 1', 'r');
-			if (self::$process_handle) {
-				$process_connection = new TcpConnection(self::$process_handle);
-				$process_connection->onMessage = function($process_connection, $data) use ($worker) {
-					$msg = [
-						'type' => 'vmstat',
-						'content' => [
-							'r' => 0,
-							'b' => 0,
-							'swpd' => 0,
-							'free' => 0,
-							'buff' => 0,
-							'cache' => 0,
-							'si' => 0,
-							'so' => 0,
-							'bi' => 0,
-							'bo' => 0,
-							'in' => 0,
-							'cs' => 0,
-							'us' => 0,
-							'sy' => 0,
-							'id' => 0,
-							'wa' => 0,
-							'st' => 0
-						]
-					];
-					list($msg['content']['r'], $msg['content']['b'], $msg['content']['swpd'], $msg['content']['free'], $msg['content']['buff'], $msg['content']['cache'], $msg['content']['si'], $msg['content']['so'], $msg['content']['bi'], $msg['content']['bo'], $msg['content']['in'], $msg['content']['cs'], $msg['content']['us'], $msg['content']['sy'], $msg['content']['id'], $msg['content']['wa'], $msg['content']['st']) = preg_split('/ +/', trim($data));
-					if (is_numeric($msg['content']['r']))
-						Gateway::sendToGroup('vmstat', json_encode($msg));
-				};
-			} else {
-			   echo "vmstat 1 fail\n";
-			}*/
 		}
 	}
 
