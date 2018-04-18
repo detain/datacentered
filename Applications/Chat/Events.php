@@ -275,9 +275,10 @@ class Events {
 			'host' => $uid,
 			'for' => $for
 		];
-		$running = $global->running;
-		$running[$run_id] = $json;
-		$global->running = $running;
+		do {
+			$old_value = $new_value = $global->running;
+			$new_value[$run_id] = $json;
+		} while(!$global->cas('running', $old_value, $new_value));
 		if (Gateway::isUidOnline($uid) == true) {
 			Gateway::sendToUid($uid, json_encode($json));
 			echo "Sending ".json_encode($json)." to {$uid}\n";
