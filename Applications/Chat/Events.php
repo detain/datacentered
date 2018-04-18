@@ -131,12 +131,34 @@ class Events {
 				if ($updated === TRUE)
 					$global->rooms = $rooms;
 			}
-			if (isset($_SESSION['ima']) && $_SESSION['ima'] == 'host') {
-				$id = str_replace('vps','', $_SESSION['uid']);
-				do {
-					$old_value = $new_value = $global->hosts;
-					unset($new_value[$id]);
-				} while(!$global->cas('hosts', $old_value, $new_value));
+			if (isset($_SESSION['ima'])) {
+				if ($_SESSION['ima'] == 'host') {
+					$id = str_replace('vps','', $_SESSION['uid']);
+					do {
+						$old_value = $new_value = $global->hosts;
+						unset($new_value[$id]);
+					} while(!$global->cas('hosts', $old_value, $new_value));
+				} else {
+					// Send command to stop running any processes that were running and directed at this user
+					$running = $global->running;
+					if (sizeof($running) > 0) {
+						$remove = false;
+						foreach ($running as $run) {
+							if ($run['for'] == $_SESSION['uid']) {
+								$remove = true;
+								Gateway::sendToUid($run['host'], json_encode(['type' => 'stop_run', 'id' => $run['id']]));
+							}
+						}
+						/* if ($remove === TRUE) {
+							do {
+								$old_value = $new_value = $global->running;
+								foreach ($new_value as $idx => $run)
+									if ($run['for'] == $_SESSION['uid'])
+										unset($new_values[$idx]);
+							} while(!$global->cas('running', $old_value, $new_value));
+						} */
+					}
+				}
 			}
 		}
 	}
@@ -290,7 +312,7 @@ class Events {
 
 	public static function say($from, $is, $to, $content, $from_name) {
 		global $global;
-		echo "Saying $content from $from to $to is $is name $from_name\n";
+		echo "Saying {$content} from {$from} to {$to} is {$is} name {$from_name}\n";
 		if ($is == 'room') {
 			$new_message = [
 				'type' => 'say',
@@ -429,35 +451,6 @@ class Events {
 	}
 
 	/**
-	 * handler for when receiving a phptty_run message.
-	 *
-	 * @param int $client_id
-	 * @param array $message_data
-	 */
-	public static function msgPhpttyRun($client_id, $message_data) {
-		if ($_SESSION['login'] == TRUE && $_SESSION['ima'] == 'admin') {
-			self::$process_pipes = Process::run($client_id, 'htop');
-		}
-		return;
-	}
-
-	/**
-	 * handler for when receiving a phptty_run message.
-	 *
-	 * @param int $client_id
-	 * @param array $message_data
-	 */
-	public static function msgPhptty($client_id, $message_data) {
-		if ($_SESSION['login'] == TRUE && $_SESSION['ima'] == 'admin') {
-			//if(ALLOW_CLIENT_INPUT)
-			fwrite(self::$process_pipes->pipes[0], $message_data['content']);
-		}
-		return;
-	}
-
-
-
-	/**
 	 * handler for when receiving a pong message.
 	 *
 	 * @param int $client_id
@@ -490,8 +483,7 @@ class Events {
 		if ($_SESSION['login'] == TRUE) {
 			if ($_SESSION['ima'] == 'admin') {
 				echo "running command {$message_data['command']}\n";
-				self::run_command($message_data['host'], $message_data['command'], false, $_SESSION['uid']);
-				return;
+				return self::run_command($message_data['host'], $message_data['command'], false, $_SESSION['uid']);
 			} else {
 				echo "ima: {$_SESSION['ima']}\n";
 			}
