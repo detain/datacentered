@@ -502,34 +502,18 @@ class Events {
 		global $global;
 		echo "Got Running Command ".json_encode($message_data).PHP_EOL;
 		if ($_SESSION['login'] == TRUE) {
+			$id = $message_data['id'];
+			$running = $global->running;
+			$run = $running[$id];
 			if ($_SESSION['ima'] == 'admin') {
 				// stdin to send to host/process
-				$id = $message_data['id'];
-				$running = $global->running;
-				$run = $running[$id];
 				return Gateway::sendToUid($run['host'], json_encode($message_data));
 			} else {
 				// stdout or stderr to display
-				$id = $message_data['id'];
-				$running = $global->running;
-				$run = $running[$id];
-				/*
-				$message = '';
-				if (isset($message_data['stdout']) && trim($message_data['stdout']) != '')
-					$new_message['stdout'] = $message_data['stdout'];
-				if (isset($message_data['stderr']) && trim($message_data['stderr']) != '')
-					$new_message['stderr'] = $message_data['stderr'];
-				$new_message = [
-					'type' => 'running',
-					'from' => $_SESSION['uid'],
-					'to' => $run['for'],
-					'time' => date('Y-m-d H:i:s'),
-				];*/
 				if (substr($run['for'], 0, 1) == '#')
 					return Gateway::sendToGroup($run['for'], json_encode($message_data));
 				else
 					return Gateway::sendToUid($run['for'], json_encode($message_data));
-				//return self::say($_SESSION['uid'], substr($run['for'], 0, 1) == '#' ? 'room' : 'client', $run['for'], $message, $_SESSION['name']);
 			}
 		}
 		return;
@@ -546,17 +530,6 @@ class Events {
 		//echo "Got Ran Command ".json_encode($message_data).PHP_EOL;
 		// indicates both completion of a run process and its final exit code or terminal signal
 		// response(s) from a run command
-		/* $message_data = [
-				'type' => 'ran',
-				'id' => $message_data['id'],
-				// it contains stderr output
-				'stderr' => $stderr,
-				// it containts stdout output
-				'stdout' => $stdout,
-				// it finished, if term === null then it exited with 'code', otehrwise terminated with signal 'term'
-				'code' => $exitCode,
-				'term' => $termSignal,
-		]; */
 		$id = $message_data['id'];
 		$running = $global->running;
 		$run = $running[$id];
