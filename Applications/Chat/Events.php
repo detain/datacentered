@@ -315,7 +315,9 @@ class Events {
 		$global->running = $running;
 		if (Gateway::isUidOnline($uid) == true) {
 			Gateway::sendToUid($uid, json_encode($json));
+			echo "Sending ".json_encode($json)." to {$uid}\n";
 		} else {
+			echo "{$uid} is not online, cant send\n";
 			// if they are not online then queue it up for later
 		}
 	}
@@ -521,10 +523,11 @@ class Events {
 		echo "Got Run Command ".json_encode($message_data).PHP_EOL;
 		if ($_SESSION['login'] == TRUE) {
 			if ($_SESSION['ima'] == 'admin') {
+				echo "running command {$message_data['command']}\n";
 				self::run_command($message_data['host'], $message_data['command'], false, $_SESSION['uid']);
 				return;
 			} else {
-
+				echo "ima: {$_SESSION['ima']}\n";
 			}
 		}
 		echo "But not running it\n";
@@ -539,7 +542,7 @@ class Events {
 	 */
 	public static function msgRunning($client_id, $message_data) {
 		global $global;
-		//echo "Got Running Command ".json_encode($message_data).PHP_EOL;
+		echo "Got Running Command ".json_encode($message_data).PHP_EOL;
 		if ($_SESSION['login'] == TRUE) {
 			if ($_SESSION['ima'] == 'admin') {
 				// stdin to send along
@@ -551,12 +554,23 @@ class Events {
 				$running = $global->running;
 				//print_r($running);
 				$run = $running[$id];
+				/*
 				$message = '';
 				if (isset($message_data['stdout']) && trim($message_data['stdout']) != '')
-					$message .= PHP_EOL.'StdOut:'.$message_data['stdout'];
+					$new_message['stdout'] = $message_data['stdout'];
 				if (isset($message_data['stderr']) && trim($message_data['stderr']) != '')
-					$message .= PHP_EOL.'StdErr:'.$message_data['stderr'];
-				return self::say($_SESSION['uid'], substr($run['for'], 0, 1) == '#' ? 'room' : 'client', $run['for'], $message, $_SESSION['name']);
+					$new_message['stderr'] = $message_data['stderr'];
+				$new_message = [
+					'type' => 'running',
+					'from' => $_SESSION['uid'],
+					'to' => $run['for'],
+					'time' => date('Y-m-d H:i:s'),
+				];*/
+				if (substr($run['for'], 0, 1) == '#')
+					return Gateway::sendToGroup($run['for'], json_encode($message_data));
+				else
+					return Gateway::sendToUid($run['for'], json_encode($message_data));
+				//return self::say($_SESSION['uid'], substr($run['for'], 0, 1) == '#' ? 'room' : 'client', $run['for'], $message, $_SESSION['name']);
 			}
 		}
 		return;
