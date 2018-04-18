@@ -166,6 +166,13 @@ class Events {
 				if ($updated === TRUE)
 					$global->rooms = $rooms;
 			}
+			if (isset($_SESSION['ima']) && $_SESSION['ima'] == 'host') {
+				$id = str_replace('vps','', $_SESSION['uid']);
+				do {
+					$old_value = $new_value = $global->hosts;
+					unset($new_value[$id]);
+				} while(!$global->cas('hosts', $old_value, $new_value));
+			}
 		}
 	}
 
@@ -632,9 +639,10 @@ class Events {
 				$_SESSION['type'] = $row['vps_type'];
 				$_SESSION['online'] = date('Y-m-d H:i:s');
 				$_SESSION['login'] = true;
-				$hosts = $global->hosts;
-				$hosts[$row['vps_id']] = $row;
-				$global->hosts = $hosts;
+				do {
+					$old_value = $new_value = $global->hosts;
+					$new_value[$row['vps_id']] = $row;
+				} while(!$global->cas('hosts', $old_value, $new_value));
 				Gateway::setSession($client_id, $_SESSION);
 				Gateway::bindUid($client_id, $uid);
 				Gateway::joinGroup($client_id, $ima.'s');
@@ -652,7 +660,7 @@ class Events {
 				break;
 			case 'admin':
 				if (isset($message_data['session_id']))
-					$results = self::$db->query('select accounts.*, account_value from sessions left join accounts on session_owner=accounts.account_id left join accounts_ext on accounts.account_id=accounts_ext.account_id and accounts_ext.account_key="picture" where account_ima="admin" and account_lid="'.$message_data['username'].'" and session_id="'.$message_data['session_id']).'"');
+					$results = self::$db->query('select accounts.*, account_value from sessions left join accounts on session_owner=accounts.account_id left join accounts_ext on accounts.account_id=accounts_ext.account_id and accounts_ext.account_key="picture" where account_ima="admin" and account_lid="'.$message_data['username'].'" and session_id="'.$message_data['session_id'].'"');
 				else
 					$results = self::$db->query('select accounts.*, account_value from accounts left join accounts_ext on accounts.account_id=accounts_ext.account_id and accounts_ext.account_key="picture" where account_ima="admin" and account_lid="'.$message_data['username'].'" and account_passwd="'.md5($message_data['password']).'"');
 				if ($results[0] === FALSE) {
