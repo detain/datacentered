@@ -845,12 +845,12 @@
             "source": {
                 "type": "git",
                 "url": "https://github.com/walkor/Workerman.git",
-                "reference": "46a77574a5ca39def6dec51ddf350cf50daab309"
+                "reference": "7932b3008d55f7b249f03162f9c99dbcfa06938d"
             },
             "dist": {
                 "type": "zip",
-                "url": "https://api.github.com/repos/walkor/Workerman/zipball/46a77574a5ca39def6dec51ddf350cf50daab309",
-                "reference": "46a77574a5ca39def6dec51ddf350cf50daab309",
+                "url": "https://api.github.com/repos/walkor/Workerman/zipball/7932b3008d55f7b249f03162f9c99dbcfa06938d",
+                "reference": "7932b3008d55f7b249f03162f9c99dbcfa06938d",
                 "shasum": ""
             },
             "require": {
@@ -883,7 +883,7 @@
                 "asynchronous",
                 "event-loop"
             ],
-            "time": "2018-04-11T11:25:52+00:00"
+            "time": "2018-04-12T05:31:24+00:00"
         }
     ],
     "packages-dev": [
@@ -1571,19 +1571,19 @@
             "source": {
                 "type": "git",
                 "url": "https://github.com/phpspec/prophecy.git",
-                "reference": "dfd6be44111a7c41c2e884a336cc4f461b3b2401"
+                "reference": "33a7e3c4fda54e912ff6338c48823bd5c0f0b712"
             },
             "dist": {
                 "type": "zip",
-                "url": "https://api.github.com/repos/phpspec/prophecy/zipball/dfd6be44111a7c41c2e884a336cc4f461b3b2401",
-                "reference": "dfd6be44111a7c41c2e884a336cc4f461b3b2401",
+                "url": "https://api.github.com/repos/phpspec/prophecy/zipball/33a7e3c4fda54e912ff6338c48823bd5c0f0b712",
+                "reference": "33a7e3c4fda54e912ff6338c48823bd5c0f0b712",
                 "shasum": ""
             },
             "require": {
                 "doctrine/instantiator": "^1.0.2",
                 "php": "^5.3|^7.0",
                 "phpdocumentor/reflection-docblock": "^2.0|^3.0.2|^4.0",
-                "sebastian/comparator": "^1.1|^2.0",
+                "sebastian/comparator": "^1.1|^2.0|^3.0",
                 "sebastian/recursion-context": "^1.0|^2.0|^3.0"
             },
             "require-dev": {
@@ -1626,7 +1626,7 @@
                 "spy",
                 "stub"
             ],
-            "time": "2018-02-19T10:16:54+00:00"
+            "time": "2018-04-18T13:57:24+00:00"
         },
         {
             "name": "phpunit/php-code-coverage",
@@ -3207,12 +3207,12 @@
             "source": {
                 "type": "git",
                 "url": "https://github.com/webmozart/assert.git",
-                "reference": "0df1908962e7a3071564e857d86874dad1ef204a"
+                "reference": "20565957b3c4e389de9ef0d6a337a32321f8e47c"
             },
             "dist": {
                 "type": "zip",
-                "url": "https://api.github.com/repos/webmozart/assert/zipball/0df1908962e7a3071564e857d86874dad1ef204a",
-                "reference": "0df1908962e7a3071564e857d86874dad1ef204a",
+                "url": "https://api.github.com/repos/webmozart/assert/zipball/20565957b3c4e389de9ef0d6a337a32321f8e47c",
+                "reference": "20565957b3c4e389de9ef0d6a337a32321f8e47c",
                 "shasum": ""
             },
             "require": {
@@ -3249,7 +3249,7 @@
                 "check",
                 "validate"
             ],
-            "time": "2018-01-29T19:49:41+00:00"
+            "time": "2018-04-18T14:24:51+00:00"
         }
     ],
     "aliases": [],
