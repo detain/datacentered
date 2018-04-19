@@ -282,7 +282,7 @@ class Events {
 	 * @param mixed $for null for nobody, or a uid or reserved word to indicate how the response if any should be handled
 	 * @return void
 	 */
-	public static function run_command($host, $cmd, $interact = false, $for = null) {
+	public static function run_command($host, $cmd, $interact = false, $for = null, $rows = 80, $cols = 24) {
 		global $global;
 		// we need to store the command locally so we can easily react proeprly if we get a response
 		if (substr($host, 0, 3) == 'vps' && is_numeric(substr($host, 3)))
@@ -294,8 +294,10 @@ class Events {
 				'type' => 'run',
 				'command' => $cmd,
 				'id' => $run_id,
-				'interact' => false,
+				'interact' => $interact,
 				'host' => $uid,
+				'rows' => $rows,
+				'cols' => $cols,
 				'for' => $for
 			];
 			do {
@@ -483,7 +485,7 @@ class Events {
 		if ($_SESSION['login'] == TRUE) {
 			if ($_SESSION['ima'] == 'admin') {
 				echo "running command {$message_data['command']}\n";
-				return self::run_command($message_data['host'], $message_data['command'], false, $_SESSION['uid']);
+				return self::run_command($message_data['host'], $message_data['command'], isset($message_data['interact']) ? $message_data['interact'] : false, $_SESSION['uid'], isset($message_data['rows']) ? $message_data['rows'] : 80, isset($message_data['cols']) ? $message_data['cols'] : 24);
 			} else {
 				echo "ima: {$_SESSION['ima']}\n";
 			}
