@@ -352,7 +352,7 @@ class Events {
 	 */
 	public static function msgSelfUpdate($client_id, $message_data) {
 		if ($_SESSION['login'] == TRUE && $_SESSION['ima'] == 'admin') {
-			Gateway::sendToGroup('hosts', $message);
+			Gateway::sendToGroup('hosts', json_encode($message_data));
 		}
 		return;
 	}
