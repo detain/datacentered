@@ -551,6 +551,21 @@ class Events {
 	}
 
 	/**
+	 * handler for when receiving a running message.
+	 *
+	 * @param int $client_id
+	 * @param array $message_data
+	 */
+	public static function msgPhpsysinfoOut($client_id, $message_data) {
+		echo "Got phpsysinfo output ".json_encode($message_data).PHP_EOL;
+		if ($_SESSION['login'] == TRUE) {
+			return Gateway::sendToUid($message_data['for'], json_encode($message_data));
+		}
+		return;
+	}
+
+
+	/**
 	 * handler for when receiving a login message.
 	 *
 	 * @param int $client_id
