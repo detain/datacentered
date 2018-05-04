@@ -368,12 +368,12 @@
             "source": {
                 "type": "git",
                 "url": "https://github.com/reactphp/promise.git",
-                "reference": "da1605010d71dd775858954481ecfafd25ab3f98"
+                "reference": "24cd9e84035e63b6ebeb4a922b0dcaf2fe1ad811"
             },
             "dist": {
                 "type": "zip",
-                "url": "https://api.github.com/repos/reactphp/promise/zipball/da1605010d71dd775858954481ecfafd25ab3f98",
-                "reference": "da1605010d71dd775858954481ecfafd25ab3f98",
+                "url": "https://api.github.com/repos/reactphp/promise/zipball/24cd9e84035e63b6ebeb4a922b0dcaf2fe1ad811",
+                "reference": "24cd9e84035e63b6ebeb4a922b0dcaf2fe1ad811",
                 "shasum": ""
             },
             "require": {
@@ -406,7 +406,7 @@
                 "promise",
                 "promises"
             ],
-            "time": "2018-04-26T10:53:12+00:00"
+            "time": "2018-05-03T18:02:02+00:00"
         },
         {
             "name": "react/promise-timer",
