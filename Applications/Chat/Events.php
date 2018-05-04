@@ -551,34 +551,26 @@ class Events {
 	}
 
 	/**
-	 * handler for initializing phpsysinfo
+	 * handler for phpsysinfo proxying betweeen the client and host
 	 *
 	 * @param int $client_id
 	 * @param array $message_data
 	 */
 	public static function msgPhpsysinfo($client_id, $message_data) {
-		echo "Got phpsysinfo init message ".json_encode($message_data).PHP_EOL;
 		if ($_SESSION['login'] == TRUE) {
-			return Gateway::sendToUid($message_data['for'], json_encode($message_data));
+			if ($_SESSION['ima'] == 'admin') {
+				echo "Got phpsysinfo init message ".json_encode($message_data).PHP_EOL;
+				$message_data['for'] = $_SESSION['uid']; // add the client 'for' field from session uid
+				// stdin to send to host/process
+				return Gateway::sendToUid($message_data['host'], json_encode($message_data));
+			} else {
+				echo "Got phpsysinfo response ".json_encode($message_data).PHP_EOL;
+				$message_data['host'] = str_replace('vps','',$_SESSION['uid']); // add the remote servers 'host' field from session uid
+				return Gateway::sendToUid($message_data['for'], json_encode($message_data));
+			}
 		}
 		return;
 	}
-
-
-	/**
-	 * handler for when receiving information from the host from a phpsysinfo request
-	 *
-	 * @param int $client_id
-	 * @param array $message_data
-	 */
-	public static function msgPhpsysinfoOut($client_id, $message_data) {
-		echo "Got phpsysinfo output ".json_encode($message_data).PHP_EOL;
-		if ($_SESSION['login'] == TRUE) {
-			return Gateway::sendToUid($message_data['for'], json_encode($message_data));
-		}
-		return;
-	}
-
 
 	/**
 	 * handler for when receiving a login message.
