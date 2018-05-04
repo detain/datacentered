@@ -566,7 +566,7 @@ class Events {
 			} else {
 				echo "Got phpsysinfo response ".json_encode($message_data).PHP_EOL;
 				$message_data['host'] = str_replace('vps','',$_SESSION['uid']); // add the remote servers 'host' field from session uid
-				return Gateway::sendToUid($message_data['for'], json_encode($message_data));
+				return Gateway::sendToUid('vps'..$message_data['for'], json_encode($message_data));
 			}
 		}
 		return;
