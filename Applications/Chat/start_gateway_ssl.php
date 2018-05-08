@@ -9,8 +9,18 @@ require __DIR__.'/Events.php';
 if (ini_get('default_socket_timeout') < 1200 && ini_get('default_socket_timeout') > 1)
 	ini_set('default_socket_timeout', 1200);
 
-$gateway = new Gateway("Websocket://0.0.0.0:7271");
+$context = [																						// Certificate is best to apply for a certificate
+	'ssl' => [																						// use the absolute/full paths
+		'local_cert' => '/home/my/files/apache_setup/interserver.net.crt',							// can also be a crt file
+		'local_pk' => '/home/my/files/apache_setup/interserver.net.key',
+		'cafile' => '/home/my/files/apache_setup/AlphaSSL.root.crt',
+		'verify_peer' => false,
+		'verify_peer_name' => false,
+	]
+];
+$gateway = new Gateway("Websocket://0.0.0.0:7272", $context);
 $gateway->name = 'ChatGateway';
+$gateway->transport = 'ssl';
 $gateway->count = 4; // Set the number of processes, the number of gateway process recommendations and cpu the same
 $gateway->lanIp = '127.0.0.1'; // When distributed deployment set to intranet ip (non 127.0.0.1)
 $gateway->startPort = 2300; // Internal communication start port. If $ gateway-> count = 4, the starting port is 2300. 2300 2301 2302 2303 4 ports are generally used as the internal communication port
