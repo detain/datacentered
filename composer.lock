@@ -368,12 +368,12 @@
             "source": {
                 "type": "git",
                 "url": "https://github.com/reactphp/promise.git",
-                "reference": "24cd9e84035e63b6ebeb4a922b0dcaf2fe1ad811"
+                "reference": "308b9165ccfc65c01002b5a678297161786cae4a"
             },
             "dist": {
                 "type": "zip",
-                "url": "https://api.github.com/repos/reactphp/promise/zipball/24cd9e84035e63b6ebeb4a922b0dcaf2fe1ad811",
-                "reference": "24cd9e84035e63b6ebeb4a922b0dcaf2fe1ad811",
+                "url": "https://api.github.com/repos/reactphp/promise/zipball/308b9165ccfc65c01002b5a678297161786cae4a",
+                "reference": "308b9165ccfc65c01002b5a678297161786cae4a",
                 "shasum": ""
             },
             "require": {
@@ -406,7 +406,7 @@
                 "promise",
                 "promises"
             ],
-            "time": "2018-05-03T18:02:02+00:00"
+            "time": "2018-05-07T08:34:03+00:00"
         },
         {
             "name": "react/promise-timer",
@@ -1346,7 +1346,7 @@
             ],
             "authors": [
                 {
-                    "name": "Padraic Brady",
+                    "name": "Pádraic Brady",
                     "email": "padraic.brady@gmail.com",
                     "homepage": "http://blog.astrumfutura.com"
                 },
