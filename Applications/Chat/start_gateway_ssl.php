@@ -4,7 +4,7 @@ use \Workerman\Worker;
 use \GatewayWorker\Gateway;
 use \Workerman\Autoloader;
 
-require __DIR__.'/Events.php';
+//require __DIR__.'/Events.php';
 
 if (ini_get('default_socket_timeout') < 1200 && ini_get('default_socket_timeout') > 1)
 	ini_set('default_socket_timeout', 1200);
