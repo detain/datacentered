@@ -40,8 +40,7 @@ class Events {
 		$db_config = include __DIR__.'/../../../../include/config/config.db.php';
 		$loop = Worker::getEventLoop();
 		self::$db = new \Workerman\MySQL\Connection($db_config['db_host'], $db_config['db_port'], $db_config['db_user'], $db_config['db_pass'], $db_config['db_name'], 'utf8mb4');
-		if ($worker->id === 0) {
-			$global->running = [];
+		if ($global->add('running', [])) {
 			$global->hosts = [];
 			$global->rooms = [
 				[
@@ -52,7 +51,6 @@ class Events {
 					'messages' => [],
 				]
 			];
-
 			Timer::add(3600, ['Events', 'hyperv_update_list_timer']);
 			Timer::add(60, ['Events', 'hyperv_queue_timer']);
 			Timer::add(60, ['Events', 'vps_queue_timer']);

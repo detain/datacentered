@@ -18,19 +18,19 @@ $context = [																						// Certificate is best to apply for a certific
 		'verify_peer_name' => false,
 	]
 ];
-$gateway = new Gateway("Websocket://0.0.0.0:7272", $context);
-$gateway->name = 'ChatGateway';
-$gateway->transport = 'ssl';
-$gateway->count = 4; // Set the number of processes, the number of gateway process recommendations and cpu the same
-$gateway->lanIp = '127.0.0.1'; // When distributed deployment set to intranet ip (non 127.0.0.1)
-$gateway->startPort = 2300; // Internal communication start port. If $ gateway-> count = 4, the starting port is 2300. 2300 2301 2302 2303 4 ports are generally used as the internal communication port
-$gateway->pingInterval = 60; // Heartbeat interval
-$gateway->pingNotResponseLimit = 2;
-$gateway->pingData = '{"type":"ping"}'; // heartbeat data
-$gateway->registerAddress = '127.0.0.1:1236'; // Service registration address
+$gateway_ssl = new Gateway("Websocket://0.0.0.0:7272", $context);
+$gateway_ssl->name = 'ChatGateway';
+$gateway_ssl->transport = 'ssl';
+$gateway_ssl->count = 4; // Set the number of processes, the number of gateway process recommendations and cpu the same
+$gateway_ssl->lanIp = '127.0.0.1'; // When distributed deployment set to intranet ip (non 127.0.0.1)
+$gateway_ssl->startPort = 2400; // Internal communication start port. If $ gateway-> count = 4, the starting port is 2300. 2300 2301 2302 2303 4 ports are generally used as the internal communication port
+$gateway_ssl->pingInterval = 60; // Heartbeat interval
+$gateway_ssl->pingNotResponseLimit = 2;
+$gateway_ssl->pingData = '{"type":"ping"}'; // heartbeat data
+$gateway_ssl->registerAddress = '127.0.0.1:1236'; // Service registration address
 //$gateway->maxSendBufferSize = 102400000;
 //$gateway->onWorkerStart = function($worker) {};
-$gateway->onConnect = function($connection) { // When the client is connected, set the connection onWebSocketConnect, that is, when the websocket handshake callback
+$gateway_ssl->onConnect = function($connection) { // When the client is connected, set the connection onWebSocketConnect, that is, when the websocket handshake callback
 	//$connection->maxSendBufferSize = 102400000;
 	//$connection->onWebSocketConnect = function($connection , $http_header) {
 		//if (!preg_match('/\.interserver\.net(:[0-9]+)*/m', $_SERVER['HTTP_ORIGIN'])) // Here you can determine whether the source of the connection is legal, illegal to turn off the connection.  $_SERVER['HTTP_ORIGIN'] Identifies which site's web-initiated websocket link
