@@ -560,11 +560,11 @@ class Events {
 				echo "Got phpsysinfo init message ".json_encode($message_data).PHP_EOL;
 				$message_data['for'] = $_SESSION['uid']; // add the client 'for' field from session uid
 				// stdin to send to host/process
-				return Gateway::sendToUid($message_data['host'], json_encode($message_data));
+				return Gateway::sendToUid('vps'.$message_data['host'], json_encode($message_data));
 			} else {
 				echo "Got phpsysinfo response ".json_encode($message_data).PHP_EOL;
 				$message_data['host'] = str_replace('vps','',$_SESSION['uid']); // add the remote servers 'host' field from session uid
-				return Gateway::sendToUid('vps'.$message_data['for'], json_encode($message_data));
+				return Gateway::sendToUid($message_data['for'], json_encode($message_data));
 			}
 		}
 		return;
