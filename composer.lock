@@ -846,12 +846,12 @@
             "source": {
                 "type": "git",
                 "url": "https://github.com/walkor/Workerman.git",
-                "reference": "a282de9e7fcfaf604cb18f892aa5aa20c3eb1267"
+                "reference": "231e6a540732d021dc88c4723069bad44bda516b"
             },
             "dist": {
                 "type": "zip",
-                "url": "https://api.github.com/repos/walkor/Workerman/zipball/a282de9e7fcfaf604cb18f892aa5aa20c3eb1267",
-                "reference": "a282de9e7fcfaf604cb18f892aa5aa20c3eb1267",
+                "url": "https://api.github.com/repos/walkor/Workerman/zipball/231e6a540732d021dc88c4723069bad44bda516b",
+                "reference": "231e6a540732d021dc88c4723069bad44bda516b",
                 "shasum": ""
             },
             "require": {
@@ -884,7 +884,7 @@
                 "asynchronous",
                 "event-loop"
             ],
-            "time": "2018-05-07T09:49:21+00:00"
+            "time": "2018-05-10T11:04:23+00:00"
         }
     ],
     "packages-dev": [
@@ -2779,12 +2779,12 @@
             "source": {
                 "type": "git",
                 "url": "https://github.com/symfony/debug.git",
-                "reference": "63299f103feb0922e93d4186dac77f291c6d8833"
+                "reference": "b28fd73fefbac341f673f5efd707d539d6a19f68"
             },
             "dist": {
                 "type": "zip",
-                "url": "https://api.github.com/repos/symfony/debug/zipball/63299f103feb0922e93d4186dac77f291c6d8833",
-                "reference": "63299f103feb0922e93d4186dac77f291c6d8833",
+                "url": "https://api.github.com/repos/symfony/debug/zipball/b28fd73fefbac341f673f5efd707d539d6a19f68",
+                "reference": "b28fd73fefbac341f673f5efd707d539d6a19f68",
                 "shasum": ""
             },
             "require": {
@@ -2827,7 +2827,7 @@
             ],
             "description": "Symfony Debug Component",
             "homepage": "https://symfony.com",
-            "time": "2018-05-16T08:49:21+00:00"
+            "time": "2018-05-16T14:03:39+00:00"
         },
         {
             "name": "symfony/event-dispatcher",
