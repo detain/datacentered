@@ -618,6 +618,7 @@ class Events {
 				$new_message = [ // Send the error response
 					'type' => 'login',
 					'id' => $uid,
+					'self' => false,
 					'ip' => $row['vps_ip'],
 					'img' => $row['vps_type'],
 					'name' => $row['vps_name'],
@@ -651,22 +652,25 @@ class Events {
 				$_SESSION['login'] = true;
 				Gateway::setSession($client_id, $_SESSION);
 				Gateway::bindUid($client_id, $uid);
-				Gateway::joinGroup($client_id, $ima.'s');
+				echo "{$results[0]['account_lid']} has been successfully logged in from {$_SERVER['REMOTE_ADDR']}\n";
 				$rooms = $global->rooms;
 				if (!in_array($uid, $rooms[0]['members']))
 					$rooms[0]['members'][] = $uid;
 				$global->rooms = $rooms;
-				echo "{$results[0]['account_lid']} has been successfully logged in from {$_SERVER['REMOTE_ADDR']}\n";
 				$new_message = [ // Send the error response
 					'type' => 'login',
 					'id' => $uid,
+					'self' => true,
 					'email' => $results[0]['account_lid'],
 					'name' => $results[0]['account_name'],
 					'ima' => $ima,
 					'online' => time(),
 					'img' => is_null($results[0]['account_value']) ? 'https://secure.gravatar.com/avatar/'.md5(strtolower(trim($results[0]['account_lid']))).'?s=80&d=identicon&r=x' : $results[0]['account_value'],
 				];
-				return Gateway::sendToGroup('admins', json_encode($new_message));
+				Gateway::sendToCurrentClient(json_encode($new_message));
+				$new_message['self'] = false;
+				Gateway::sendToGroup('admins', json_encode($new_message));
+				Gateway::joinGroup($client_id, $ima.'s');
 				break;
 			case 'client':
 			case 'guest':
