@@ -16,9 +16,23 @@ $worker->count = 4; // bussinessWorker number of processes
 $worker->registerAddress = '127.0.0.1:1236'; // Service registration address
 //$worker->maxSendBufferSize = 102400000;
 //$worker->sendToGatewayBufferSize = 102400000;
-/*$worker->onConnect = function($connection) { // When the client is connected, set the connection onWebSocketConnect, that is, when the websocket handshake callback
-	$connection->maxSendBufferSize = 102400000;
-*/
+$worker->onConnect = function($connection) { // When the client is connected, set the connection onWebSocketConnect, that is, when the websocket handshake callback
+	$connection->maxSendBufferSize = 100*1024*1024; // Set the current connection application layer send buffer size of the connection to 100mb, will override the default value
+	$connection->maxPackageSize = 100*1024*1024; // Set the current connection application layer received packet size to 100mb (default 10mb)
+};
+$worker->onBufferFull = function($connection)
+{
+	echo "BusinessWorker bufferFull and do not send again\n";
+};
+$worker->onBufferDrain = function($connection)
+{
+	echo "BusinessWorker buffer drain and continue send\n";
+};
+$worker->onError = function($connection, $code, $msg)
+{
+	echo "BusinessWorker error {$code} {$msg}\n";
+};
+
 /*
 $worker->onWorkerStart = function($worker) { Events::setup_timers($worker); }; // start the process, open a vmstat process, and broadcast vmstat process output to all browser clients
 */
