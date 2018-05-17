@@ -422,7 +422,7 @@ class Events {
 			}
 			$new_message = [ // Send the error response
 				'type' => 'clients',
-				'content' => $clients,
+				'content' => base64_encode(gzcompress(json_encode($clients),9)),
 			];
 			echo "Loaded Clients, Request Length:".strlen(json_encode($new_message)).PHP_EOL;
 			Gateway::sendToCurrentClient(json_encode($new_message));
@@ -555,6 +555,7 @@ class Events {
 	 * @param array $message_data
 	 */
 	public static function msgPhpsysinfo($client_id, $message_data) {
+		echo json_encode($message_data).PHP_EOL;
 		if ($_SESSION['login'] == TRUE) {
 			if ($_SESSION['ima'] == 'admin') {
 				echo "Got phpsysinfo init message ".json_encode($message_data).PHP_EOL;

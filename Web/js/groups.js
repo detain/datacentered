@@ -113,7 +113,7 @@ var ChOpper = (function ChOpperModel (app) { //model
 						if (e.type == 1 || e.type == 2 || e.type == 3 || e.type == 4) {
 							img = 'https://my.interserver.net/images/new/vps-kvm.png';
 						} else if (e.type == 5 || e.type == 6) {
-							img = 'https://my.interserver.net/images/new/openvz.png';
+							img = 'https://my.interserver.net/images/new/openvz.jpg';
 						} else if (e.type == 7 || e.type == 8) {
 							img = 'https://my.interserver.net/images/new/vps-xen.png';
 						} else if (e.type == 9) {
@@ -586,7 +586,7 @@ Hub,Host,self-update
 Hub,Host,run
 Hub,Host,running
 */
-			//console.log("got message");
+			//console.log("got message "+e.data);
 			var data = JSON.parse(e.data);
 			switch(data.type){
 				case 'ping': // Server ping client
@@ -595,6 +595,18 @@ Hub,Host,running
 				case 'clients':
 					console.log('processing clients');
 					//console.log(data['content']);
+
+					var strData     = atob(data.content); // Decode base64 (convert ascii to binary)
+					var charData    = strData.split('').map(function(x){return x.charCodeAt(0);}); // Convert binary string to character-number array
+					var binData     = new Uint8Array(charData); // Turn number array into byte-array
+					var gzdata        = pako.inflate(binData); // Pako magic
+					var strData     = String.fromCharCode.apply(null, new Uint16Array(gzdata)); // Convert gunzipped byteArray back to ascii string:
+					if (strData == '')
+						data.content = '';
+					else
+						data.content = JSON.parse(strData);
+					//console.log("got message");
+					//console.log(data.content);
 					app.Model.load(data['content']);
 					break;
 				case 'error':
