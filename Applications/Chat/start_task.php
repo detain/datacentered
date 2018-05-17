@@ -25,6 +25,24 @@ $task_worker->onWorkerStart = function($worker) {
 		require_once $file;
 	}
 };
+
+$task_worker->onConnect = function($connection) { // When the client is connected, set the connection onWebSocketConnect, that is, when the websocket handshake callback
+	$connection->maxSendBufferSize = 100*1024*1024; // Set the current connection application layer send buffer size of the connection to 100mb, will override the default value
+	$connection->maxPackageSize = 100*1024*1024; // Set the current connection application layer received packet size to 100mb (default 10mb)
+};
+$task_worker->onBufferFull = function($connection)
+{
+	echo "TaskWorker bufferFull and do not send again\n";
+};
+$task_worker->onBufferDrain = function($connection)
+{
+	echo "TaskWorker buffer drain and continue send\n";
+};
+$task_worker->onError = function($connection, $code, $msg)
+{
+	echo "TaskWorker error {$code} {$msg}\n";
+};
+
 $task_worker->onMessage = function($connection, $task_data) {
 	global $functions;
 	$task_data = json_decode($task_data, true);			// Suppose you send json data
