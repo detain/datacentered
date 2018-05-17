@@ -5,7 +5,6 @@ use Workerman\Worker;
 use Workerman\Connection\TcpConnection;
 require_once __DIR__ . '/../../vendor/autoload.php';
 
-TcpConnection::$maxPackageSize = 1024*1024*100; // set each received packet is connected up to 100mb (default 10mb)
 TcpConnection::$defaultMaxSendBufferSize = 1024*1024*100; // sets the connections send write buffer size to 10mb (default 1mb)
 
 ini_set('display_errors', 'on');
