@@ -357,6 +357,38 @@ class Events {
 		return;
 	}
 
+
+
+	/**
+	 * handler for when receiving a vps details lsit message
+	 *
+	 * @param int $client_id
+	 * @param array $message_data
+	 */
+	public static function msgVpsList($client_id, $message_data) {
+		if (!is_array($message_data['content'])) {
+			echo "error with vps list content " . var_export($message_data['content'], true).PHP_EOL;
+			return;
+		}
+		echo "got vps list content " . var_export($message_data['content'], true).PHP_EOL;
+		$task_connection = new AsyncTcpConnection('Text://127.0.0.1:2208');
+		$task_connection->send(json_encode([
+			'function' => 'vps_get_list',
+			'args' => [
+				'name' => $_SESSION['name'],
+				'id' => str_replace('vps','',$_SESSION['uid']),
+				'content' => $message_data['content']
+			]
+		]));
+		$task_connection->onMessage = function($task_connection, $task_result) use ($message_data) {
+			//echo "Bandwidth Update for ".$_SESSION['name']." content: ".json_encode($message_data['content'])." returned:".var_export($task_result,TRUE).PHP_EOL;
+			$task_connection->close();
+		};
+		$task_connection->connect();
+		return;
+	}
+
+
 	/**
 	 * handler for when receiving a bandwidth message.
 	 *
