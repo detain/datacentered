@@ -14,13 +14,19 @@ $worker->onWorkerStart = function() { // When the process is started
 			'verify_peer_name' => false,
 		]
 	];
-	$conn = new AsyncTcpConnection('ws://my3.interserver.net:4431', $context); // ssl need access to port 443
+	$conn = new AsyncTcpConnection('ws://my3.interserver.net:7272', $context); // ssl need access to port 443
 	$conn->transport = 'ssl'; // Set to ssl encryption access, making it wss
 	$conn->onConnect = function($conn) { // send hello string after connected
-		$conn->send('hello');
+		$conn->send(json_encode(['type'=>'login','ima'=>'admin','session_id'=>$_SERVER['argv'][2]]));
 	};
 	$conn->onMessage = function($conn, $data) { // When the remote websocket server sends a message
 		echo "recv: {$data}\n";
+		$data = json_decode($data, true);
+		if ($data['type'] == 'login') 
+			$conn->send('{"type":"phpsysinfo","host":"404","params":[]}');
+		else
+			print_r($data);
+
 	};
 	$conn->onError = function($conn, $code, $msg) { // connection error occurs, the general connection remote websocket server failure error
 		echo "error: {$msg}\n";
