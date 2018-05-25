@@ -4,7 +4,7 @@
         "Read more about it at https://getcomposer.org/doc/01-basic-usage.md#composer-lock-the-lock-file",
         "This file is @generated automatically"
     ],
-    "content-hash": "4ebc27a22b3239ee712fdcb1f1df46b7",
+    "content-hash": "f81dd9fdda0841efbcb93424210ff3db",
     "packages": [
         {
             "name": "danielstjules/php-pretty-datetime",
@@ -3319,6 +3319,9 @@
     "minimum-stability": "dev",
     "stability-flags": {
         "roave/security-advisories": 20,
+        "workerman/gateway-worker": 20,
+        "workerman/workerman": 20,
+        "workerman/globaldata": 20,
         "codeclimate/php-test-reporter": 20,
         "codacy/coverage": 20
     },
