@@ -3270,12 +3270,12 @@
             "source": {
                 "type": "git",
                 "url": "https://github.com/webmozart/assert.git",
-                "reference": "23bf61bc8a7cc229d7ce8689b1bf818a9e192cac"
+                "reference": "1fc2d96ee97d5052f44662563587a0213895343d"
             },
             "dist": {
                 "type": "zip",
-                "url": "https://api.github.com/repos/webmozart/assert/zipball/23bf61bc8a7cc229d7ce8689b1bf818a9e192cac",
-                "reference": "23bf61bc8a7cc229d7ce8689b1bf818a9e192cac",
+                "url": "https://api.github.com/repos/webmozart/assert/zipball/1fc2d96ee97d5052f44662563587a0213895343d",
+                "reference": "1fc2d96ee97d5052f44662563587a0213895343d",
                 "shasum": ""
             },
             "require": {
@@ -3312,7 +3312,7 @@
                 "check",
                 "validate"
             ],
-            "time": "2018-04-19T15:46:26+00:00"
+            "time": "2018-05-26T14:16:30+00:00"
         }
     ],
     "aliases": [],
