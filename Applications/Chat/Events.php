@@ -419,6 +419,34 @@ class Events {
         return;
     }
 
+    /**
+     * handler for when receiving a get map message
+     *
+     * @param int $client_id
+     * @param array $message_data
+     */
+    public static function msgGetMap($client_id, $message_data) {
+        //echo "got vps list content " . var_export($message_data['content'], true).PHP_EOL;
+        $task_connection = new AsyncTcpConnection('Text://127.0.0.1:2208');
+        $task_connection->send(json_encode([
+            'function' => 'get_map',
+            'args' => [
+                'name' => $_SESSION['name'],
+                'id' => str_replace('vps','',$_SESSION['uid']),
+            ]
+        ]));
+        $task_connection->onMessage = function($task_connection, $task_result) use ($_SESSION, $message_data) {
+            $task_result = json_decode($task_result, true);
+            Gateway::sendToUid($_SESSION['uid'], json_encode([
+                'function' => 'get_map',
+                'content' => $task_result
+            ]));
+            $task_connection->close();
+        };
+        $task_connection->connect();
+        return;
+    }
+
 
 	/**
 	 * handler for when receiving a bandwidth message.
