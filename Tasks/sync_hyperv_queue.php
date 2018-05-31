@@ -29,11 +29,11 @@ function sync_hyperv_queue($args) {
 			if ($global->cas($var, 0, 1)) {
 				function_requirements('vps_queue_handler');
 				if (sizeof($service_master['newvps']) > 0) {
-					echo "[".date('Y-m-d H:i:s')."] Processing New VPS for {$service_master['vps_name']}\n";
+                    Worker::safeEcho("[".date('Y-m-d H:i:s')."] Processing New VPS for {$service_master['vps_name']}\n");
 					vps_queue_handler($service_master, 'getnewvps', $service_master['newvps']);
 				}
 				if (sizeof($service_master['queue']) > 0) {
-					echo "[".date('Y-m-d H:i:s')."] Processing VPS Queue for {$service_master['vps_name']}\n";
+                    Worker::safeEcho("[".date('Y-m-d H:i:s')."] Processing VPS Queue for {$service_master['vps_name']}\n");
 					vps_queue_handler($service_master, 'getqueue', $service_master['queue']);
 				}
 				vps_queue_handler($service_master, 'serverlist');

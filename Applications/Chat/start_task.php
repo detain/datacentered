@@ -32,15 +32,15 @@ $task_worker->onConnect = function($connection) { // When the client is connecte
 };
 $task_worker->onBufferFull = function($connection)
 {
-	echo "TaskWorker bufferFull and do not send again\n";
+    Worker::safeEcho("TaskWorker bufferFull and do not send again\n");
 };
 $task_worker->onBufferDrain = function($connection)
 {
-	echo "TaskWorker buffer drain and continue send\n";
+    Worker::safeEcho("TaskWorker buffer drain and continue send\n");
 };
 $task_worker->onError = function($connection, $code, $msg)
 {
-	echo "TaskWorker error {$code} {$msg}\n";
+    Worker::safeEcho("TaskWorker error {$code} {$msg}\n");
 };
 
 $task_worker->onMessage = function($connection, $task_data) {

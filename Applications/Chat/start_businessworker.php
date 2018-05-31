@@ -22,15 +22,15 @@ $worker->onConnect = function($connection) { // When the client is connected, se
 };
 $worker->onBufferFull = function($connection)
 {
-	echo "BusinessWorker bufferFull and do not send again\n";
+    Worker::safeEcho("BusinessWorker bufferFull and do not send again\n");
 };
 $worker->onBufferDrain = function($connection)
 {
-	echo "BusinessWorker buffer drain and continue send\n";
+    Worker::safeEcho("BusinessWorker buffer drain and continue send\n");
 };
 $worker->onError = function($connection, $code, $msg)
 {
-	echo "BusinessWorker error {$code} {$msg}\n";
+    Worker::safeEcho("BusinessWorker error {$code} {$msg}\n");
 };
 
 /*

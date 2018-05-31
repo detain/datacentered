@@ -21,15 +21,15 @@ $globaldata_server->onConnect = function($connection) { // When the client is co
 };
 $globaldata_server->onBufferFull = function($connection)
 {
-	echo "GlobalData bufferFull and do not send again\n";
+    Worker::safeEcho("GlobalData bufferFull and do not send again\n");
 };
 $globaldata_server->onBufferDrain = function($connection)
 {
-	echo "GlobalData buffer drain and continue send\n";
+    Worker::safeEcho("GlobalData buffer drain and continue send\n");
 };
 $globaldata_server->onError = function($connection, $code, $msg)
 {
-	echo "GlobalData error {$code} {$msg}\n";
+    Worker::safeEcho("GlobalData error {$code} {$msg}\n");
 };
 
 if(!defined('GLOBAL_START')) // If it is not started in the root directory, run the runAll method

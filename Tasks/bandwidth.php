@@ -6,7 +6,7 @@ function bandwidth($args) {
 	$veids = [];
 	foreach ($args['content'] as $ip => $data) {
 		if (!isset($data['vps']))
-			echo "Missing VPS for ip {$ip}\n";
+            Worker::safeEcho("Missing VPS for ip {$ip}\n");
 		if (!isset($veids[$data['vps']]))
 			$veids[$data['vps']] = $worker_db->select('*')->from('vps')->where('vps_server=:vps_server and (vps_hostname=:hostname or vps_vzid=:vzid)')->bindValues(['vps_server'=>$args['uid'],'hostname'=>$data['vps'],'vzid'=>$data['vps']])->row();
 		$row = $veids[$data['vps']];

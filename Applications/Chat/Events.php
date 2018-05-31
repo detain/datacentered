@@ -95,7 +95,7 @@ class Events {
 		if (method_exists('Events', $method))
 			call_user_func(['Events', $method], $client_id, $message_data);
 		else
-			echo "Wanted to call method {$method} but it doesnt exist\n";
+            Worker::safeEcho("Wanted to call method {$method} but it doesnt exist\n");
 	}
 
 	/**
@@ -303,16 +303,16 @@ class Events {
 				$new_value[$run_id] = $json;
 			} while(!$global->cas('running', $old_value, $new_value));
 			Gateway::sendToUid($uid, json_encode($json));
-			echo "Sending ".json_encode($json)." to {$uid}\n";
+            Worker::safeEcho("Sending ".json_encode($json)." to {$uid}\n");
 		} else {
-			echo "{$uid} is not online, cant send\n";
+            Worker::safeEcho("{$uid} is not online, cant send\n");
 			// if they are not online then queue it up for later
 		}
 	}
 
 	public static function say($from, $is, $to, $content, $from_name) {
 		global $global;
-		echo "Saying {$content} from {$from} to {$to} is {$is} name {$from_name}\n";
+        Worker::safeEcho("Saying {$content} from {$from} to {$to} is {$is} name {$from_name}\n");
 		if ($is == 'room') {
 			$new_message = [
 				'type' => 'say',
@@ -573,13 +573,13 @@ class Events {
 		echo "Got Run Command ".json_encode($message_data).PHP_EOL;
 		if ($_SESSION['login'] == TRUE) {
 			if ($_SESSION['ima'] == 'admin') {
-				echo "running command {$message_data['command']}\n";
+                Worker::safeEcho("running command {$message_data['command']}\n");
 				return self::run_command($message_data['host'], $message_data['command'], isset($message_data['interact']) ? $message_data['interact'] : false, $_SESSION['uid'], isset($message_data['rows']) ? $message_data['rows'] : 80, isset($message_data['cols']) ? $message_data['cols'] : 24);
 			} else {
-				echo "ima: {$_SESSION['ima']}\n";
+                Worker::safeEcho("ima: {$_SESSION['ima']}\n");
 			}
 		}
-		echo "But not running it\n";
+        Worker::safeEcho("But not running it\n");
 		return;
 	}
 
@@ -706,7 +706,7 @@ class Events {
 				Gateway::setSession($client_id, $_SESSION);
 				Gateway::bindUid($client_id, $uid);
 				Gateway::joinGroup($client_id, $ima.'s');
-				echo "{$row['vps_name']} has been successfully logged in from {$_SERVER['REMOTE_ADDR']}\n";
+                Worker::safeEcho("{$row['vps_name']} has been successfully logged in from {$_SERVER['REMOTE_ADDR']}\n");
 				$new_message = [ // Send the error response
 					'type' => 'login',
 					'id' => $uid,
@@ -744,7 +744,7 @@ class Events {
 				$_SESSION['login'] = true;
 				Gateway::setSession($client_id, $_SESSION);
 				Gateway::bindUid($client_id, $uid);
-				echo "{$results[0]['account_lid']} has been successfully logged in from {$_SERVER['REMOTE_ADDR']}\n";
+                Worker::safeEcho("{$results[0]['account_lid']} has been successfully logged in from {$_SERVER['REMOTE_ADDR']}\n");
 				$rooms = $global->rooms;
 				if (!in_array($uid, $rooms[0]['members']))
 					$rooms[0]['members'][] = $uid;

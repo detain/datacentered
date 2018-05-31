@@ -41,15 +41,15 @@ $gateway_ssl->onConnect = function($connection) { // When the client is connecte
 };
 $gateway_ssl->onBufferFull = function($connection)
 {
-	echo "GateWaySSL bufferFull and do not send again\n";
+    Worker::safeEcho("GateWaySSL bufferFull and do not send again\n");
 };
 $gateway_ssl->onBufferDrain = function($connection)
 {
-	echo "GateWaySSL buffer drain and continue send\n";
+    Worker::safeEcho("GateWaySSL buffer drain and continue send\n");
 };
 $gateway_ssl->onError = function($connection, $code, $msg)
 {
-	echo "GateWaySSL error {$code} {$msg}\n";
+    Worker::safeEcho("GateWaySSL error {$code} {$msg}\n");
 };
 
 // If it is not started in the root directory, run the runAll method

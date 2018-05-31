@@ -11,15 +11,15 @@ $register->onConnect = function($connection) { // When the client is connected, 
 };
 $register->onBufferFull = function($connection)
 {
-	echo "Register bufferFull and do not send again\n";
+    Worker::safeEcho("Register bufferFull and do not send again\n");
 };
 $register->onBufferDrain = function($connection)
 {
-	echo "Register buffer drain and continue send\n";
+    Worker::safeEcho("Register buffer drain and continue send\n");
 };
 $register->onError = function($connection, $code, $msg)
 {
-	echo "Register error {$code} {$msg}\n";
+    Worker::safeEcho("Register error {$code} {$msg}\n");
 };
 
 if(!defined('GLOBAL_START')) // If it is not started in the root directory, run the runAll method

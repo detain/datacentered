@@ -30,15 +30,15 @@ $gateway->onConnect = function($connection) { // When the client is connected, s
 };
 $gateway->onBufferFull = function($connection)
 {
-	echo "GateWay bufferFull and do not send again\n";
+    Worker::safeEcho("GateWay bufferFull and do not send again\n");
 };
 $gateway->onBufferDrain = function($connection)
 {
-	echo "GateWay buffer drain and continue send\n";
+    Worker::safeEcho("GateWay buffer drain and continue send\n");
 };
 $gateway->onError = function($connection, $code, $msg)
 {
-	echo "GateWay error {$code} {$msg}\n";
+    Worker::safeEcho("GateWay error {$code} {$msg}\n");
 };
 
 

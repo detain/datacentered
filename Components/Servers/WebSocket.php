@@ -39,16 +39,16 @@ $websocket_worker->onWorkerStop = function($worker) {
 	//echo "WebSocketWorker({$worker->id}) stopping...\n";
 };
 $websocket_worker->onClose = function($connection) {
-	echo "connection closed\n";
+    Worker::safeEcho("connection closed\n");
 };
 $websocket_worker->onBufferFull = function($connection) {
-	echo "bufferFull and do not send again\n";
+    Worker::safeEcho("bufferFull and do not send again\n");
 };
 $websocket_worker->onBufferDrain = function($connection) {
-	echo "buffer drain and continue send\n";
+    Worker::safeEcho("buffer drain and continue send\n");
 };
 $websocket_worker->onError = function($connection, $code, $msg) {
-	echo "error {$code} : {$msg}\n";
+    Worker::safeEcho("error {$code} : {$msg}\n");
 };
 
 return $websocket_worker;
