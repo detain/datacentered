@@ -429,17 +429,20 @@ class Events {
 	 */
 	public static function msgGetMap($client_id, $message_data) {
 		//echo "got vps list content " . var_export($message_data['content'], true).PHP_EOL;
+		Worker::safeEcho(json_encode($_SESSION));
+		$uid = $_SESSION['uid'];
+		$id = str_replace('vps','',$uid);
+		Worker::safeEcho("GetMap event calling get_map task uid $uid id $id");
 		$task_connection = new AsyncTcpConnection('Text://127.0.0.1:2208');
 		$task_connection->send(json_encode([
 			'type' => 'get_map',
 			'args' => [
-				'name' => $_SESSION['name'],
-				'id' => str_replace('vps','',$_SESSION['uid']),
+				'id' => $id
 			]
 		]));
-		$task_connection->onMessage = function($task_connection, $task_result) use ($_SESSION, $message_data) {
+		$task_connection->onMessage = function($task_connection, $task_result) use ($uid, $message_data) {
 			$task_result = json_decode($task_result, true);
-			Gateway::sendToUid($_SESSION['uid'], json_encode([
+			Gateway::sendToUid($uid, json_encode([
 				'type' => 'get_map',
 				'content' => $task_result
 			]));
@@ -719,7 +722,8 @@ class Events {
 					'ima' => $ima,
 					'online' => time(),
 				];
-				return Gateway::sendToGroup('admins', json_encode($new_message));
+				Gateway::sendToGroup('admins', json_encode($new_message));
+				Gateway::sendToClient($client_id, json_encode($new_message));
 				break;
 			case 'admin':
 				if (isset($message_data['session_id']))
