@@ -91,11 +91,13 @@ class Events {
 		$message_data = json_decode($message, true); // Client is passed json data
 		if (!$message_data)
 			return ;
+		if (!isset($message_data['type']))
+			Worker::safeEcho("Got message {$message} but no type passed\n");
 		$method = 'msg'.str_replace(' ','',ucwords(str_replace(['-','_'],[' ',' '],$message_data['type'])));
 		if (method_exists('Events', $method))
 			call_user_func(['Events', $method], $client_id, $message_data);
 		else
-            Worker::safeEcho("Wanted to call method {$method} but it doesnt exist\n");
+			Worker::safeEcho("Wanted to call method {$method} but it doesnt exist\n");
 	}
 
 	/**
@@ -211,7 +213,7 @@ class Events {
 						$global->$var = 0;
 					if ($global->cas($var, 0, 1)) {
 						$task_connection = new AsyncTcpConnection('Text://127.0.0.1:2208');
-						$task_connection->send(json_encode(['function' => 'vps_queue_task', 'args' => [
+						$task_connection->send(json_encode(['type' => 'vps_queue_task', 'args' => [
 							'id' => $server_id,
 						]]));
 						$task_connection->onMessage = function($task_connection, $task_result) use ($server_id, $server_data) {
@@ -243,7 +245,7 @@ class Events {
 		];
 		Gateway::sendToAll(json_encode($new_message));*/
 		$task_connection = new AsyncTcpConnection('Text://127.0.0.1:2208');
-		$task_connection->send(json_encode(['function' => 'async_hyperv_get_list', 'args' => []]));
+		$task_connection->send(json_encode(['type' => 'async_hyperv_get_list', 'args' => []]));
 		$task_connection->onMessage = function($task_connection, $task_result) use ($task_connection) {
 			 //var_dump($task_result);
 			 $task_connection->close();
@@ -263,7 +265,7 @@ class Events {
 		];
 		Gateway::sendToAll(json_encode($new_message));*/
 		$task_connection = new AsyncTcpConnection('Text://127.0.0.1:2208');
-		$task_connection->send(json_encode(['function' => 'sync_hyperv_queue', 'args' => []]));
+		$task_connection->send(json_encode(['type' => 'sync_hyperv_queue', 'args' => []]));
 		$task_connection->onMessage = function($task_connection, $task_result) use ($task_connection) {
 			 //var_dump($task_result);
 			 $task_connection->close();
@@ -303,16 +305,16 @@ class Events {
 				$new_value[$run_id] = $json;
 			} while(!$global->cas('running', $old_value, $new_value));
 			Gateway::sendToUid($uid, json_encode($json));
-            Worker::safeEcho("Sending ".json_encode($json)." to {$uid}\n");
+			Worker::safeEcho("Sending ".json_encode($json)." to {$uid}\n");
 		} else {
-            Worker::safeEcho("{$uid} is not online, cant send\n");
+			Worker::safeEcho("{$uid} is not online, cant send\n");
 			// if they are not online then queue it up for later
 		}
 	}
 
 	public static function say($from, $is, $to, $content, $from_name) {
 		global $global;
-        Worker::safeEcho("Saying {$content} from {$from} to {$to} is {$is} name {$from_name}\n");
+		Worker::safeEcho("Saying {$content} from {$from} to {$to} is {$is} name {$from_name}\n");
 		if ($is == 'room') {
 			$new_message = [
 				'type' => 'say',
@@ -359,93 +361,93 @@ class Events {
 
 
 
-    /**
-     * handler for when receiving a vps details lsit message
-     *
-     * @param int $client_id
-     * @param array $message_data
-     */
-    public static function msgVpsList($client_id, $message_data) {
-        if (!is_array($message_data['content'])) {
-            echo "error with vps list content " . var_export($message_data['content'], true).PHP_EOL;
-            return;
-        }
-        //echo "got vps list content " . var_export($message_data['content'], true).PHP_EOL;
-        $task_connection = new AsyncTcpConnection('Text://127.0.0.1:2208');
-        $task_connection->send(json_encode([
-            'function' => 'vps_get_list',
-            'args' => [
-                'name' => $_SESSION['name'],
-                'id' => str_replace('vps','',$_SESSION['uid']),
-                'content' => $message_data['content']
-            ]
-        ]));
-        $task_connection->onMessage = function($task_connection, $task_result) use ($message_data) {
-            //$task_result = json_decode($task_result, true);
-            echo "Process VPS List for ".$_SESSION['name']." returned:".$task_result.PHP_EOL;
-            $task_connection->close();
-        };
-        $task_connection->connect();
-        return;
-    }
+	/**
+	 * handler for when receiving a vps details lsit message
+	 *
+	 * @param int $client_id
+	 * @param array $message_data
+	 */
+	public static function msgVpsList($client_id, $message_data) {
+		if (!is_array($message_data['content'])) {
+			echo "error with vps list content " . var_export($message_data['content'], true).PHP_EOL;
+			return;
+		}
+		//echo "got vps list content " . var_export($message_data['content'], true).PHP_EOL;
+		$task_connection = new AsyncTcpConnection('Text://127.0.0.1:2208');
+		$task_connection->send(json_encode([
+			'type' => 'vps_get_list',
+			'args' => [
+				'name' => $_SESSION['name'],
+				'id' => str_replace('vps','',$_SESSION['uid']),
+				'content' => $message_data['content']
+			]
+		]));
+		$task_connection->onMessage = function($task_connection, $task_result) use ($message_data) {
+			//$task_result = json_decode($task_result, true);
+			echo "Process VPS List for ".$_SESSION['name']." returned:".$task_result.PHP_EOL;
+			$task_connection->close();
+		};
+		$task_connection->connect();
+		return;
+	}
 
-    /**
-     * handler for when receiving a vps details lsit message
-     *
-     * @param int $client_id
-     * @param array $message_data
-     */
-    public static function msgVpsInfo($client_id, $message_data) {
-        if (!is_array($message_data['content'])) {
-            echo "error with vps info content " . var_export($message_data['content'], true).PHP_EOL;
-            return;
-        }
-        //echo "got vps list content " . var_export($message_data['content'], true).PHP_EOL;
-        $task_connection = new AsyncTcpConnection('Text://127.0.0.1:2208');
-        $task_connection->send(json_encode([
-            'function' => 'vps_update_info',
-            'args' => [
-                'name' => $_SESSION['name'],
-                'id' => str_replace('vps','',$_SESSION['uid']),
-                'content' => $message_data['content']
-            ]
-        ]));
-        $task_connection->onMessage = function($task_connection, $task_result) use ($message_data) {
-            //$task_result = json_decode($task_result, true);
-            echo "Process VPS Info for ".$_SESSION['name']." returned:".$task_result.PHP_EOL;
-            $task_connection->close();
-        };
-        $task_connection->connect();
-        return;
-    }
+	/**
+	 * handler for when receiving a vps details lsit message
+	 *
+	 * @param int $client_id
+	 * @param array $message_data
+	 */
+	public static function msgVpsInfo($client_id, $message_data) {
+		if (!is_array($message_data['content'])) {
+			echo "error with vps info content " . var_export($message_data['content'], true).PHP_EOL;
+			return;
+		}
+		//echo "got vps list content " . var_export($message_data['content'], true).PHP_EOL;
+		$task_connection = new AsyncTcpConnection('Text://127.0.0.1:2208');
+		$task_connection->send(json_encode([
+			'type' => 'vps_update_info',
+			'args' => [
+				'name' => $_SESSION['name'],
+				'id' => str_replace('vps','',$_SESSION['uid']),
+				'content' => $message_data['content']
+			]
+		]));
+		$task_connection->onMessage = function($task_connection, $task_result) use ($message_data) {
+			//$task_result = json_decode($task_result, true);
+			echo "Process VPS Info for ".$_SESSION['name']." returned:".$task_result.PHP_EOL;
+			$task_connection->close();
+		};
+		$task_connection->connect();
+		return;
+	}
 
-    /**
-     * handler for when receiving a get map message
-     *
-     * @param int $client_id
-     * @param array $message_data
-     */
-    public static function msgGetMap($client_id, $message_data) {
-        //echo "got vps list content " . var_export($message_data['content'], true).PHP_EOL;
-        $task_connection = new AsyncTcpConnection('Text://127.0.0.1:2208');
-        $task_connection->send(json_encode([
-            'function' => 'get_map',
-            'args' => [
-                'name' => $_SESSION['name'],
-                'id' => str_replace('vps','',$_SESSION['uid']),
-            ]
-        ]));
-        $task_connection->onMessage = function($task_connection, $task_result) use ($_SESSION, $message_data) {
-            $task_result = json_decode($task_result, true);
-            Gateway::sendToUid($_SESSION['uid'], json_encode([
-                'function' => 'get_map',
-                'content' => $task_result
-            ]));
-            $task_connection->close();
-        };
-        $task_connection->connect();
-        return;
-    }
+	/**
+	 * handler for when receiving a get map message
+	 *
+	 * @param int $client_id
+	 * @param array $message_data
+	 */
+	public static function msgGetMap($client_id, $message_data) {
+		//echo "got vps list content " . var_export($message_data['content'], true).PHP_EOL;
+		$task_connection = new AsyncTcpConnection('Text://127.0.0.1:2208');
+		$task_connection->send(json_encode([
+			'type' => 'get_map',
+			'args' => [
+				'name' => $_SESSION['name'],
+				'id' => str_replace('vps','',$_SESSION['uid']),
+			]
+		]));
+		$task_connection->onMessage = function($task_connection, $task_result) use ($_SESSION, $message_data) {
+			$task_result = json_decode($task_result, true);
+			Gateway::sendToUid($_SESSION['uid'], json_encode([
+				'type' => 'get_map',
+				'content' => $task_result
+			]));
+			$task_connection->close();
+		};
+		$task_connection->connect();
+		return;
+	}
 
 
 	/**
@@ -461,7 +463,7 @@ class Events {
 		}
 		$task_connection = new AsyncTcpConnection('Text://127.0.0.1:2208');
 		$task_connection->send(json_encode([
-			'function' => 'bandwidth',
+			'type' => 'bandwidth',
 			'args' => [
 				'name' => $_SESSION['name'],
 				'uid' => $_SESSION['uid'],
@@ -573,13 +575,13 @@ class Events {
 		echo "Got Run Command ".json_encode($message_data).PHP_EOL;
 		if ($_SESSION['login'] == TRUE) {
 			if ($_SESSION['ima'] == 'admin') {
-                Worker::safeEcho("running command {$message_data['command']}\n");
+				Worker::safeEcho("running command {$message_data['command']}\n");
 				return self::run_command($message_data['host'], $message_data['command'], isset($message_data['interact']) ? $message_data['interact'] : false, $_SESSION['uid'], isset($message_data['rows']) ? $message_data['rows'] : 80, isset($message_data['cols']) ? $message_data['cols'] : 24);
 			} else {
-                Worker::safeEcho("ima: {$_SESSION['ima']}\n");
+				Worker::safeEcho("ima: {$_SESSION['ima']}\n");
 			}
 		}
-        Worker::safeEcho("But not running it\n");
+		Worker::safeEcho("But not running it\n");
 		return;
 	}
 
@@ -706,7 +708,7 @@ class Events {
 				Gateway::setSession($client_id, $_SESSION);
 				Gateway::bindUid($client_id, $uid);
 				Gateway::joinGroup($client_id, $ima.'s');
-                Worker::safeEcho("{$row['vps_name']} has been successfully logged in from {$_SERVER['REMOTE_ADDR']}\n");
+				Worker::safeEcho("{$row['vps_name']} has been successfully logged in from {$_SERVER['REMOTE_ADDR']}\n");
 				$new_message = [ // Send the error response
 					'type' => 'login',
 					'id' => $uid,
@@ -744,7 +746,7 @@ class Events {
 				$_SESSION['login'] = true;
 				Gateway::setSession($client_id, $_SESSION);
 				Gateway::bindUid($client_id, $uid);
-                Worker::safeEcho("{$results[0]['account_lid']} has been successfully logged in from {$_SERVER['REMOTE_ADDR']}\n");
+				Worker::safeEcho("{$results[0]['account_lid']} has been successfully logged in from {$_SERVER['REMOTE_ADDR']}\n");
 				$rooms = $global->rooms;
 				if (!in_array($uid, $rooms[0]['members']))
 					$rooms[0]['members'][] = $uid;

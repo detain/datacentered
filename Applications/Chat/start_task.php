@@ -32,27 +32,27 @@ $task_worker->onConnect = function($connection) { // When the client is connecte
 };
 $task_worker->onBufferFull = function($connection)
 {
-    Worker::safeEcho("TaskWorker bufferFull and do not send again\n");
+	Worker::safeEcho("TaskWorker bufferFull and do not send again\n");
 };
 $task_worker->onBufferDrain = function($connection)
 {
-    Worker::safeEcho("TaskWorker buffer drain and continue send\n");
+	Worker::safeEcho("TaskWorker buffer drain and continue send\n");
 };
 $task_worker->onError = function($connection, $code, $msg)
 {
-    Worker::safeEcho("TaskWorker error {$code} {$msg}\n");
+	Worker::safeEcho("TaskWorker error {$code} {$msg}\n");
 };
 
 $task_worker->onMessage = function($connection, $task_data) {
 	global $functions;
 	$task_data = json_decode($task_data, true);			// Suppose you send json data
-	//echo "Starting Task {$task_data['function']}\n";
+	//echo "Starting Task {$task_data['type']}\n";
 	$return = false;
-	if (isset($task_data['function']) && in_array($task_data['function'], $functions)) {
+	if (isset($task_data['type']) && in_array($task_data['type'], $functions)) {
 		if (isset($task_data['args']))
-			$return = call_user_func($task_data['function'], $task_data['args']);
+			$return = call_user_func($task_data['type'], $task_data['args']);
 		else
-			$return = call_user_func($task_data['function']);
+			$return = call_user_func($task_data['type']);
 	}
 	$connection->send(json_encode(['return' => $return]));
 };
