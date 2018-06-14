@@ -52,8 +52,8 @@ class Events {
 				]
 			];
 			Timer::add(3600, ['Events', 'hyperv_update_list_timer']);
-			Timer::add(60, ['Events', 'hyperv_queue_timer']);
-			Timer::add(60, ['Events', 'vps_queue_timer']);
+			Timer::add(30, ['Events', 'hyperv_queue_timer']);
+			Timer::add(30, ['Events', 'vps_queue_timer']);
 		}
 	}
 
