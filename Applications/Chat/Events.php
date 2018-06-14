@@ -221,7 +221,7 @@ class Events {
 							//echo "Got Result ".var_export($task_result, true).PHP_EOL;
 							//echo "Bandwidth Update for ".$_SESSION['name']." content: ".json_encode($message_data['content'])." returned:".var_export($task_result,TRUE).PHP_EOL;
 							if (trim($task_result['return']) != '') {
-								self::run_command($server_id,$task_result['return'],false,'room_1');
+								self::run_command($server_id,$task_result['return'],false,'room_1',80,24,true);
 							}
 							$task_connection->close();
 						};
@@ -282,7 +282,7 @@ class Events {
 	 * @param mixed $for null for nobody, or a uid or reserved word to indicate how the response if any should be handled
 	 * @return void
 	 */
-	public static function run_command($host, $cmd, $interact = false, $for = null, $rows = 80, $cols = 24) {
+	public static function run_command($host, $cmd, $interact = false, $for = null, $rows = 80, $cols = 24, $update_after = false) {
 		global $global;
 		// we need to store the command locally so we can easily react proeprly if we get a response
 		if (substr($host, 0, 3) == 'vps' && is_numeric(substr($host, 3)))
@@ -295,6 +295,7 @@ class Events {
 				'command' => $cmd,
 				'id' => $run_id,
 				'interact' => $interact,
+				'update_after' => $update_after,
 				'host' => $uid,
 				'rows' => $rows,
 				'cols' => $cols,
@@ -579,7 +580,7 @@ class Events {
 		if ($_SESSION['login'] == TRUE) {
 			if ($_SESSION['ima'] == 'admin') {
 				Worker::safeEcho("running command {$message_data['command']}\n");
-				return self::run_command($message_data['host'], $message_data['command'], isset($message_data['interact']) ? $message_data['interact'] : false, $_SESSION['uid'], isset($message_data['rows']) ? $message_data['rows'] : 80, isset($message_data['cols']) ? $message_data['cols'] : 24);
+				return self::run_command($message_data['host'], $message_data['command'], isset($message_data['interact']) ? $message_data['interact'] : false, $_SESSION['uid'], isset($message_data['rows']) ? $message_data['rows'] : 80, isset($message_data['cols']) ? $message_data['cols'] : 24, isset($message_data['update_after']) ? $message_data['update_after'] : false);
 			} else {
 				Worker::safeEcho("ima: {$_SESSION['ima']}\n");
 			}
