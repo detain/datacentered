@@ -202,12 +202,12 @@ class Events {
 			if (sizeof($queues) > 0) {
 				foreach ($queues as $server_id => $rows) {
 					$server_data = $global->hosts[$server_id];
-					if ($server_id != 467) {
-						echo 'Wanted To Process Queues For Server '.$server_id.' '.$server_data['vps_name'].PHP_EOL;
-						continue;
-					} else {
+					//if ($server_id != 467) {
+						//echo 'Wanted To Process Queues For Server '.$server_id.' '.$server_data['vps_name'].PHP_EOL;
+						//continue;
+					//} else {
 						echo 'Processing Queues For Server '.$server_id.' '.$server_data['vps_name'].PHP_EOL;
-					}
+					//}
 					$var = 'vps_host_'.$server_id;
 					if (!isset($global->$var))
 						$global->$var = 0;
