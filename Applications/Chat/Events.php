@@ -601,6 +601,8 @@ class Events {
 		if ($_SESSION['login'] == TRUE) {
 			$id = $message_data['id'];
 			$running = $global->running;
+			if (!isset($running[$id]))
+				return;
 			$run = $running[$id];
 			if ($_SESSION['ima'] == 'admin') {
 				// stdin to send to host/process
