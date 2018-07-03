@@ -152,16 +152,16 @@
         },
         {
             "name": "react/cache",
-            "version": "v0.4.2",
+            "version": "v0.5.0",
             "source": {
                 "type": "git",
                 "url": "https://github.com/reactphp/cache.git",
-                "reference": "75494f26b4ef089db9bf8c90b63c296246e099e8"
+                "reference": "7d7da7fb7574d471904ba357b39bbf110ccdbf66"
             },
             "dist": {
                 "type": "zip",
-                "url": "https://api.github.com/repos/reactphp/cache/zipball/75494f26b4ef089db9bf8c90b63c296246e099e8",
-                "reference": "75494f26b4ef089db9bf8c90b63c296246e099e8",
+                "url": "https://api.github.com/repos/reactphp/cache/zipball/7d7da7fb7574d471904ba357b39bbf110ccdbf66",
+                "reference": "7d7da7fb7574d471904ba357b39bbf110ccdbf66",
                 "shasum": ""
             },
             "require": {
@@ -188,7 +188,7 @@
                 "promise",
                 "reactphp"
             ],
-            "time": "2017-12-20T16:47:13+00:00"
+            "time": "2018-06-25T12:52:40+00:00"
         },
         {
             "name": "react/child-process",
@@ -234,21 +234,21 @@
         },
         {
             "name": "react/dns",
-            "version": "v0.4.13",
+            "version": "v0.4.15",
             "source": {
                 "type": "git",
                 "url": "https://github.com/reactphp/dns.git",
-                "reference": "7d1e08c300fd7de600810883386ee5e2a64898f4"
+                "reference": "319e110a436d26a2fa137cfa3ef2063951715794"
             },
             "dist": {
                 "type": "zip",
-                "url": "https://api.github.com/repos/reactphp/dns/zipball/7d1e08c300fd7de600810883386ee5e2a64898f4",
-                "reference": "7d1e08c300fd7de600810883386ee5e2a64898f4",
+                "url": "https://api.github.com/repos/reactphp/dns/zipball/319e110a436d26a2fa137cfa3ef2063951715794",
+                "reference": "319e110a436d26a2fa137cfa3ef2063951715794",
                 "shasum": ""
             },
             "require": {
                 "php": ">=5.3.0",
-                "react/cache": "~0.4.0|~0.3.0",
+                "react/cache": "^0.5 || ^0.4 || ^0.3",
                 "react/event-loop": "^1.0 || ^0.5 || ^0.4 || ^0.3.5",
                 "react/promise": "^2.1 || ^1.2.1",
                 "react/promise-timer": "^1.2",
@@ -275,7 +275,7 @@
                 "dns-resolver",
                 "reactphp"
             ],
-            "time": "2018-02-27T12:51:22+00:00"
+            "time": "2018-07-02T12:17:56+00:00"
         },
         {
             "name": "react/event-loop",
@@ -785,12 +785,12 @@
             "source": {
                 "type": "git",
                 "url": "https://github.com/walkor/GatewayWorker.git",
-                "reference": "0d91d66dd5cdcc05a3c6ab17dc7c15087728baed"
+                "reference": "f45d41d28cc8a1c582866718773440989b9285d8"
             },
             "dist": {
                 "type": "zip",
-                "url": "https://api.github.com/repos/walkor/GatewayWorker/zipball/0d91d66dd5cdcc05a3c6ab17dc7c15087728baed",
-                "reference": "0d91d66dd5cdcc05a3c6ab17dc7c15087728baed",
+                "url": "https://api.github.com/repos/walkor/GatewayWorker/zipball/f45d41d28cc8a1c582866718773440989b9285d8",
+                "reference": "f45d41d28cc8a1c582866718773440989b9285d8",
                 "shasum": ""
             },
             "require": {
@@ -811,7 +811,7 @@
                 "communication",
                 "distributed"
             ],
-            "time": "2018-05-22T16:57:48+00:00"
+            "time": "2018-06-13T14:24:29+00:00"
         },
         {
             "name": "workerman/globaldata",
@@ -849,12 +849,12 @@
             "source": {
                 "type": "git",
                 "url": "https://github.com/walkor/Workerman.git",
-                "reference": "c83e189b5855d91f99a7d01ac58f5bbc7161b5e5"
+                "reference": "b70b5142ea9207fb91bcae6bc90ae52ee8bbfc7d"
             },
             "dist": {
                 "type": "zip",
-                "url": "https://api.github.com/repos/walkor/Workerman/zipball/c83e189b5855d91f99a7d01ac58f5bbc7161b5e5",
-                "reference": "c83e189b5855d91f99a7d01ac58f5bbc7161b5e5",
+                "url": "https://api.github.com/repos/walkor/Workerman/zipball/b70b5142ea9207fb91bcae6bc90ae52ee8bbfc7d",
+                "reference": "b70b5142ea9207fb91bcae6bc90ae52ee8bbfc7d",
                 "shasum": ""
             },
             "require": {
@@ -887,7 +887,7 @@
                 "asynchronous",
                 "event-loop"
             ],
-            "time": "2018-06-07T09:36:14+00:00"
+            "time": "2018-06-28T08:31:04+00:00"
         }
     ],
     "packages-dev": [
@@ -2650,12 +2650,12 @@
             "source": {
                 "type": "git",
                 "url": "https://github.com/symfony/config.git",
-                "reference": "73e055cf2e6467715f187724a0347ea32079967c"
+                "reference": "1fffdeb349ff36a25184e5564c25289b1dbfc402"
             },
             "dist": {
                 "type": "zip",
-                "url": "https://api.github.com/repos/symfony/config/zipball/73e055cf2e6467715f187724a0347ea32079967c",
-                "reference": "73e055cf2e6467715f187724a0347ea32079967c",
+                "url": "https://api.github.com/repos/symfony/config/zipball/1fffdeb349ff36a25184e5564c25289b1dbfc402",
+                "reference": "1fffdeb349ff36a25184e5564c25289b1dbfc402",
                 "shasum": ""
             },
             "require": {
@@ -2706,7 +2706,7 @@
             ],
             "description": "Symfony Config Component",
             "homepage": "https://symfony.com",
-            "time": "2018-05-14T16:49:53+00:00"
+            "time": "2018-06-19T14:02:58+00:00"
         },
         {
             "name": "symfony/console",
@@ -2783,12 +2783,12 @@
             "source": {
                 "type": "git",
                 "url": "https://github.com/symfony/debug.git",
-                "reference": "a7e8068943f45eaabf58ac2ee424d9f792b4d7e1"
+                "reference": "0e3ca9cbde90fffec8038f4d4e16fd4046bbd018"
             },
             "dist": {
                 "type": "zip",
-                "url": "https://api.github.com/repos/symfony/debug/zipball/a7e8068943f45eaabf58ac2ee424d9f792b4d7e1",
-                "reference": "a7e8068943f45eaabf58ac2ee424d9f792b4d7e1",
+                "url": "https://api.github.com/repos/symfony/debug/zipball/0e3ca9cbde90fffec8038f4d4e16fd4046bbd018",
+                "reference": "0e3ca9cbde90fffec8038f4d4e16fd4046bbd018",
                 "shasum": ""
             },
             "require": {
@@ -2831,7 +2831,7 @@
             ],
             "description": "Symfony Debug Component",
             "homepage": "https://symfony.com",
-            "time": "2018-06-08T09:38:38+00:00"
+            "time": "2018-06-26T08:45:54+00:00"
         },
         {
             "name": "symfony/event-dispatcher",
@@ -2899,12 +2899,12 @@
             "source": {
                 "type": "git",
                 "url": "https://github.com/symfony/filesystem.git",
-                "reference": "8e03ca3fa52a0f56b87506f38cf7bd3f9442b3a0"
+                "reference": "8a721a5f2553c6c3482b1c5b22ed60fe94dd63ed"
             },
             "dist": {
                 "type": "zip",
-                "url": "https://api.github.com/repos/symfony/filesystem/zipball/8e03ca3fa52a0f56b87506f38cf7bd3f9442b3a0",
-                "reference": "8e03ca3fa52a0f56b87506f38cf7bd3f9442b3a0",
+                "url": "https://api.github.com/repos/symfony/filesystem/zipball/8a721a5f2553c6c3482b1c5b22ed60fe94dd63ed",
+                "reference": "8a721a5f2553c6c3482b1c5b22ed60fe94dd63ed",
                 "shasum": ""
             },
             "require": {
@@ -2941,7 +2941,7 @@
             ],
             "description": "Symfony Filesystem Component",
             "homepage": "https://symfony.com",
-            "time": "2018-05-16T08:49:21+00:00"
+            "time": "2018-06-21T11:10:19+00:00"
         },
         {
             "name": "symfony/polyfill-ctype",
@@ -3223,12 +3223,12 @@
             "source": {
                 "type": "git",
                 "url": "https://github.com/vlucas/phpdotenv.git",
-                "reference": "fe2a5c22c94949983be10263417f47f8551d5946"
+                "reference": "6ae3e2e6494bb5e58c2decadafc3de7f1453f70a"
             },
             "dist": {
                 "type": "zip",
-                "url": "https://api.github.com/repos/vlucas/phpdotenv/zipball/fe2a5c22c94949983be10263417f47f8551d5946",
-                "reference": "fe2a5c22c94949983be10263417f47f8551d5946",
+                "url": "https://api.github.com/repos/vlucas/phpdotenv/zipball/6ae3e2e6494bb5e58c2decadafc3de7f1453f70a",
+                "reference": "6ae3e2e6494bb5e58c2decadafc3de7f1453f70a",
                 "shasum": ""
             },
             "require": {
@@ -3265,7 +3265,7 @@
                 "env",
                 "environment"
             ],
-            "time": "2018-03-19T21:27:48+00:00"
+            "time": "2018-07-01T10:25:50+00:00"
         },
         {
             "name": "webmozart/assert",
