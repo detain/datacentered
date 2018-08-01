@@ -1578,12 +1578,12 @@
             "source": {
                 "type": "git",
                 "url": "https://github.com/phpspec/prophecy.git",
-                "reference": "dcf425ffc656e958ebf9780b796072e3daf44614"
+                "reference": "dbfc2600dee41b0ca3786f274bc1287d85d1c8bf"
             },
             "dist": {
                 "type": "zip",
-                "url": "https://api.github.com/repos/phpspec/prophecy/zipball/dcf425ffc656e958ebf9780b796072e3daf44614",
-                "reference": "dcf425ffc656e958ebf9780b796072e3daf44614",
+                "url": "https://api.github.com/repos/phpspec/prophecy/zipball/dbfc2600dee41b0ca3786f274bc1287d85d1c8bf",
+                "reference": "dbfc2600dee41b0ca3786f274bc1287d85d1c8bf",
                 "shasum": ""
             },
             "require": {
@@ -1633,7 +1633,7 @@
                 "spy",
                 "stub"
             ],
-            "time": "2018-07-18T09:55:46+00:00"
+            "time": "2018-07-31T07:47:46+00:00"
         },
         {
             "name": "phpunit/php-code-coverage",
