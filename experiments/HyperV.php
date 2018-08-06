@@ -32,11 +32,11 @@ while ($db->next_record(MYSQL_ASSOC)) {
 	$rows[$db->Record['vps_id']] = $db->Record;
 	$sids[] = $db->Record['vps_id'];
 }
-//	vps_queue_handler($server_info, 'getnewvps');
+//	vps_queue_handler($server_info, 'get_new_vps');
 $db->query("select * from vps where vps_status='pending-setup' and vps_server in (".implode(',', $sids).")", __LINE__, __FILE__);
 while ($db->next_record(MYSQL_ASSOC))
 	$rows[$db->Record['vps_server']]['newvps'][] = $db->Record;
-//	vps_queue_handler($server_info, 'getqueue');
+//	vps_queue_handler($server_info, 'get_queue');
 $db->query("select vps.*, hl1.* from vps, queue_log as hl1 left join queue_log as hl2 on hl2.history_type=hl1.history_id and hl2.history_section='vpsqueuedone' where hl1.history_section='vpsqueue' and hl1.history_type=vps_id and hl2.history_id is null and vps_server in (".implode(',', $sids).")", __LINE__, __FILE__);
 while ($db->next_record(MYSQL_ASSOC))
 	$rows[$db->Record['vps_server']]['queue'][] = $db->Record;
@@ -50,7 +50,7 @@ foreach ($rows as $service_id => $service_master) {
 				if (isset($result->GetVMListResult->VMList) && isset($result->GetVMListResult->VMList->VirtualMachineSummary)) {
 					if (isset($result->GetVMListResult->VMList->VirtualMachineSummary->VmId))
 						$result->GetVMListResult->VMList->VirtualMachineSummary = [0 => $result->GetVMListResult->VMList->VirtualMachineSummary];
-					vps_queue_handler($service_master, 'serverlist', $result);
+					vps_queue_handler($service_master, 'server_list', $result);
 				} else {
 					echo $service_master['vps_name'].' ERROR: Command Completed but missing expected fields!'.PHP_EOL;
 				}
