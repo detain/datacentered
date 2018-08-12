@@ -9,7 +9,7 @@ require __DIR__.'/Events.php';
 if (ini_get('default_socket_timeout') < 1200 && ini_get('default_socket_timeout') > 1)
 	ini_set('default_socket_timeout', 1200);
 
-$gateway = new Gateway("websocket://0.0.0.0:7271");
+$gateway = new Gateway("Websocket://0.0.0.0:7271");
 $gateway->name = 'ChatGateway';
 $gateway->count = 4; // Set the number of processes, the number of gateway process recommendations and cpu the same
 $gateway->lanIp = '127.0.0.1'; // When distributed deployment set to intranet ip (non 127.0.0.1)

@@ -18,7 +18,7 @@ $context = [																						// Certificate is best to apply for a certific
 		'verify_peer_name' => false,
 	]
 ];
-$gateway_ssl = new Gateway("websocket://0.0.0.0:7272", $context);
+$gateway_ssl = new Gateway("Websocket://0.0.0.0:7272", $context);
 $gateway_ssl->name = 'SslChatGateway';
 $gateway_ssl->transport = 'ssl';
 $gateway_ssl->count = 4; // Set the number of processes, the number of gateway process recommendations and cpu the same
