@@ -9,13 +9,13 @@ require __DIR__.'/Events.php';
 if (ini_get('default_socket_timeout') < 1200 && ini_get('default_socket_timeout') > 1)
 	ini_set('default_socket_timeout', 1200);
 
-$gateway = new Gateway("Websocket://0.0.0.0:7271");
+$gateway = new Gateway("websocket://0.0.0.0:7271");
 $gateway->name = 'ChatGateway';
 $gateway->count = 4; // Set the number of processes, the number of gateway process recommendations and cpu the same
 $gateway->lanIp = '127.0.0.1'; // When distributed deployment set to intranet ip (non 127.0.0.1)
 $gateway->startPort = 2300; // Internal communication start port. If $ gateway-> count = 4, the starting port is 2300. 2300 2301 2302 2303 4 ports are generally used as the internal communication port
 $gateway->pingInterval = 60; // Heartbeat interval
-$gateway->pingNotResponseLimit = 2;
+$gateway->pingNotResponseLimit = 1;
 $gateway->pingData = '{"type":"ping"}'; // heartbeat data
 $gateway->registerAddress = '127.0.0.1:1236'; // Service registration address
 //$gateway->onWorkerStart = function($worker) {};
@@ -30,15 +30,15 @@ $gateway->onConnect = function($connection) { // When the client is connected, s
 };
 $gateway->onBufferFull = function($connection)
 {
-    Worker::safeEcho("GateWay bufferFull and do not send again\n");
+	Worker::safeEcho("GateWay bufferFull and do not send again\n");
 };
 $gateway->onBufferDrain = function($connection)
 {
-    Worker::safeEcho("GateWay buffer drain and continue send\n");
+	Worker::safeEcho("GateWay buffer drain and continue send\n");
 };
 $gateway->onError = function($connection, $code, $msg)
 {
-    Worker::safeEcho("GateWay error {$code} {$msg}\n");
+	Worker::safeEcho("GateWay error {$code} {$msg}\n");
 };
 
 

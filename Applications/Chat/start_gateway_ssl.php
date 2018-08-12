@@ -18,14 +18,14 @@ $context = [																						// Certificate is best to apply for a certific
 		'verify_peer_name' => false,
 	]
 ];
-$gateway_ssl = new Gateway("Websocket://0.0.0.0:7272", $context);
-$gateway_ssl->name = 'ChatGateway';
+$gateway_ssl = new Gateway("websocket://0.0.0.0:7272", $context);
+$gateway_ssl->name = 'SslChatGateway';
 $gateway_ssl->transport = 'ssl';
 $gateway_ssl->count = 4; // Set the number of processes, the number of gateway process recommendations and cpu the same
 $gateway_ssl->lanIp = '127.0.0.1'; // When distributed deployment set to intranet ip (non 127.0.0.1)
 $gateway_ssl->startPort = 2400; // Internal communication start port. If $ gateway-> count = 4, the starting port is 2300. 2300 2301 2302 2303 4 ports are generally used as the internal communication port
 $gateway_ssl->pingInterval = 60; // Heartbeat interval
-$gateway_ssl->pingNotResponseLimit = 2;
+$gateway_ssl->pingNotResponseLimit = 1;
 $gateway_ssl->pingData = '{"type":"ping"}'; // heartbeat data
 $gateway_ssl->registerAddress = '127.0.0.1:1236'; // Service registration address
 //$gateway->maxSendBufferSize = 102400000;
@@ -41,15 +41,15 @@ $gateway_ssl->onConnect = function($connection) { // When the client is connecte
 };
 $gateway_ssl->onBufferFull = function($connection)
 {
-    Worker::safeEcho("GateWaySSL bufferFull and do not send again\n");
+	Worker::safeEcho("GateWaySSL bufferFull and do not send again\n");
 };
 $gateway_ssl->onBufferDrain = function($connection)
 {
-    Worker::safeEcho("GateWaySSL buffer drain and continue send\n");
+	Worker::safeEcho("GateWaySSL buffer drain and continue send\n");
 };
 $gateway_ssl->onError = function($connection, $code, $msg)
 {
-    Worker::safeEcho("GateWaySSL error {$code} {$msg}\n");
+	Worker::safeEcho("GateWaySSL error {$code} {$msg}\n");
 };
 
 // If it is not started in the root directory, run the runAll method
