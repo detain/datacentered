@@ -36,7 +36,7 @@ class Events {
 		 * @var GlobalData\Client
 		 */
 		global $global;
-		$global = new GlobalData\Client('127.0.0.1:2207');	 // initialize the GlobalData client
+		$global = new GlobalData\Client('127.0.0.1:2207');     // initialize the GlobalData client
 		$db_config = include __DIR__.'/../../../../include/config/config.db.php';
 		$loop = Worker::getEventLoop();
 		self::$db = new \Workerman\MySQL\Connection($db_config['db_host'], $db_config['db_port'], $db_config['db_user'], $db_config['db_pass'], $db_config['db_name'], 'utf8mb4');
@@ -87,17 +87,17 @@ class Events {
 		 * @var GlobalData\Client
 		 */
 		global $global;
-		//Worker::safeEcho("client:{$_SERVER['REMOTE_ADDR']}:{$_SERVER['REMOTE_PORT']} gateway:{$_SERVER['GATEWAY_ADDR']}:{$_SERVER['GATEWAY_PORT']} client_id:{$client_id} session:".json_encode($_SESSION)." onMessage:".serialize($message).PHP_EOL); // debug
+		//Worker::safeEcho("[{$client_id}] client:{$_SERVER['REMOTE_ADDR']}:{$_SERVER['REMOTE_PORT']} gateway:{$_SERVER['GATEWAY_ADDR']}:{$_SERVER['GATEWAY_PORT']} client_id:{$client_id} session:".json_encode($_SESSION)." onMessage:".serialize($message).PHP_EOL); // debug
 		$message_data = json_decode($message, true); // Client is passed json data
 		if (!$message_data)
 			return ;
 		if (!isset($message_data['type']))
-			Worker::safeEcho("Got message {$message} but no type passed".PHP_EOL);
+			Worker::safeEcho("[{$client_id}] Got message {$message} but no type passed".PHP_EOL);
 		$method = 'msg'.str_replace(' ','',ucwords(str_replace(['-','_'],[' ',' '],$message_data['type'])));
 		if (method_exists('Events', $method))
 			call_user_func(['Events', $method], $client_id, $message_data);
 		else
-			Worker::safeEcho("Wanted to call method {$method} but it doesnt exist".PHP_EOL);
+			Worker::safeEcho("[{$client_id}] Wanted to call method {$method} but it doesnt exist".PHP_EOL);
 	}
 
 	/**
@@ -110,10 +110,11 @@ class Events {
 		 * @var GlobalData\Client
 		 */
 		global $global;
-		Worker::safeEcho("client:{$_SERVER['REMOTE_ADDR']}:{$_SERVER['REMOTE_PORT']} gateway:{$_SERVER['GATEWAY_ADDR']}:{$_SERVER['GATEWAY_PORT']} client_id:{$client_id} onClose:''".PHP_EOL); // debug
+		Worker::safeEcho("[{$client_id}] client:".(isset($_SESSION['name']) ? $_SESSION['name'] : '')." {$_SERVER['REMOTE_ADDR']}:{$_SERVER['REMOTE_PORT']} gateway:{$_SERVER['GATEWAY_ADDR']}:{$_SERVER['GATEWAY_PORT']} client_id:{$client_id} onClose:''".PHP_EOL); // debug
 		if (isset($_SESSION['uid'])) {
-			if (isset($global->rooms) && sizeof($global->rooms) > 0) {
-				$new_message = [
+			$clientIds = Gateway::getClientIdByUid($_SESSION['uid']);
+			if (count($clientIds) == 1 && isset($global->rooms) && sizeof($global->rooms) > 0) {
+				$logoutMessage = [
 					'type' => 'logout',
 					'id' => $_SESSION['uid'],
 					'time' => date('Y-m-d H:i:s')
@@ -124,7 +125,7 @@ class Events {
 					if (($key = array_search($_SESSION['uid'], $room['members'])) !== false) {
 						$updated = true;
 						unset($room['members'][$key]);
-						Gateway::sendToGroup($room['id'], json_encode($new_message));
+						Gateway::sendToGroup($room['id'], json_encode($logoutMessage));
 						$rooms[$idx] = $room;
 					}
 				}
@@ -139,24 +140,26 @@ class Events {
 						unset($new_value[$id]);
 					} while(!$global->cas('hosts', $old_value, $new_value));
 				} else {
-					// Send command to stop running any processes that were running and directed at this user
-					$running = $global->running;
-					if (sizeof($running) > 0) {
-						$remove = false;
-						foreach ($running as $run) {
-							if ($run['for'] == $_SESSION['uid']) {
-								$remove = true;
-								Gateway::sendToUid($run['host'], json_encode(['type' => 'stop_run', 'id' => $run['id']]));
+					if (count($clientIds) == 1) {
+						// Send command to stop running any processes that were running and directed at this user
+						$running = $global->running;
+						if (sizeof($running) > 0) {
+							$remove = false;
+							foreach ($running as $run) {
+								if ($run['for'] == $_SESSION['uid']) {
+									$remove = true;
+									Gateway::sendToUid($run['host'], json_encode(['type' => 'stop_run', 'id' => $run['id']]));
+								}
 							}
+							/* if ($remove === TRUE) {
+								do {
+									$old_value = $new_value = $global->running;
+									foreach ($new_value as $idx => $run)
+										if ($run['for'] == $_SESSION['uid'])
+											unset($new_values[$idx]);
+								} while(!$global->cas('running', $old_value, $new_value));
+							} */
 						}
-						/* if ($remove === TRUE) {
-							do {
-								$old_value = $new_value = $global->running;
-								foreach ($new_value as $idx => $run)
-									if ($run['for'] == $_SESSION['uid'])
-										unset($new_values[$idx]);
-							} while(!$global->cas('running', $old_value, $new_value));
-						} */
 					}
 				}
 			}
@@ -370,10 +373,10 @@ class Events {
 	 */
 	public static function msgVpsList($client_id, $message_data) {
 		if (!is_array($message_data['content'])) {
-			Worker::safeEcho("error with vps list content " . var_export($message_data['content'], true).PHP_EOL);
+			Worker::safeEcho("[{$client_id}] error with vps list content " . var_export($message_data['content'], true).PHP_EOL);
 			return;
 		}
-		//Worker::safeEcho("got vps list content " . var_export($message_data['content'], true).PHP_EOL);
+		//Worker::safeEcho("[{$client_id}] got vps list content " . var_export($message_data['content'], true).PHP_EOL);
 		$task_connection = new AsyncTcpConnection('Text://127.0.0.1:2208');
 		$task_connection->send(json_encode([
 			'type' => 'vps_get_list',
@@ -383,9 +386,9 @@ class Events {
 				'content' => $message_data['content']
 			]
 		]));
-		$task_connection->onMessage = function($task_connection, $task_result) use ($message_data) {
+		$task_connection->onMessage = function($task_connection, $task_result) use ($client_id, $message_data) {
 			//$task_result = json_decode($task_result, true);
-			Worker::safeEcho("Process VPS List for ".$_SESSION['name']." returned:".$task_result.PHP_EOL);
+			Worker::safeEcho("[{$client_id}] Process VPS List for ".$_SESSION['name']." returned:".$task_result.PHP_EOL);
 			$task_connection->close();
 		};
 		$task_connection->connect();
@@ -400,10 +403,10 @@ class Events {
 	 */
 	public static function msgVpsInfo($client_id, $message_data) {
 		if (!is_array($message_data['content'])) {
-			Worker::safeEcho("error with vps info content " . var_export($message_data['content'], true).PHP_EOL);
+			Worker::safeEcho("[{$client_id}] error with vps info content " . var_export($message_data['content'], true).PHP_EOL);
 			return;
 		}
-		//Worker::safeEcho("got vps list content " . var_export($message_data['content'], true).PHP_EOL);
+		//Worker::safeEcho("[{$client_id}] got vps list content " . var_export($message_data['content'], true).PHP_EOL);
 		$task_connection = new AsyncTcpConnection('Text://127.0.0.1:2208');
 		$task_connection->send(json_encode([
 			'type' => 'vps_update_info',
@@ -413,9 +416,9 @@ class Events {
 				'content' => $message_data['content']
 			]
 		]));
-		$task_connection->onMessage = function($task_connection, $task_result) use ($message_data) {
+		$task_connection->onMessage = function($task_connection, $task_result) use ($client_id, $message_data) {
 			//$task_result = json_decode($task_result, true);
-			Worker::safeEcho("Process VPS Info for ".$_SESSION['name']." returned:".$task_result.PHP_EOL);
+			Worker::safeEcho("[{$client_id}] Process VPS Info for ".$_SESSION['name']." returned:".$task_result.PHP_EOL);
 			$task_connection->close();
 		};
 		$task_connection->connect();
@@ -429,11 +432,11 @@ class Events {
 	 * @param array $message_data
 	 */
 	public static function msgGetMap($client_id, $message_data) {
-		//Worker::safeEcho("got vps list content " . var_export($message_data['content'], true).PHP_EOL);
-		Worker::safeEcho(json_encode($_SESSION).PHP_EOL);
+		//Worker::safeEcho("[{$client_id}] got vps list content " . var_export($message_data['content'], true).PHP_EOL);
+		Worker::safeEcho("[{$client_id}] ".json_encode($_SESSION).PHP_EOL);
 		$uid = $_SESSION['uid'];
 		$id = str_replace('vps','',$uid);
-		Worker::safeEcho("GetMap event calling get_map task uid $uid id $id".PHP_EOL);
+		Worker::safeEcho("[{$client_id}] GetMap event calling get_map task uid $uid id $id".PHP_EOL);
 		$task_connection = new AsyncTcpConnection('Text://127.0.0.1:2208');
 		$task_connection->send(json_encode([
 			'type' => 'get_map',
@@ -441,9 +444,10 @@ class Events {
 				'id' => $id
 			]
 		]));
-		$task_connection->onMessage = function($task_connection, $task_result) use ($uid, $message_data) {
+		$task_connection->onMessage = function($task_connection, $task_result) use ($client_id, $uid, $message_data) {
 			$task_result = json_decode($task_result, true);
-			Gateway::sendToUid($uid, json_encode([
+			//Gateway::sendToUid($uid, json_encode([
+			Gateway::sendToClient($client_id, json_encode([
 				'type' => 'get_map',
 				'content' => $task_result
 			]));
@@ -462,7 +466,7 @@ class Events {
 	 */
 	public static function msgBandwidth($client_id, $message_data) {
 		if (!is_array($message_data['content'])) {
-			Worker::safeEcho("error with bandwidth content " . var_export($message_data['content'], true).PHP_EOL);
+			Worker::safeEcho("[{$client_id}] error with bandwidth content " . var_export($message_data['content'], true).PHP_EOL);
 			return;
 		}
 		$task_connection = new AsyncTcpConnection('Text://127.0.0.1:2208');
@@ -474,8 +478,8 @@ class Events {
 				'content' => $message_data['content']
 			]
 		]));
-		$task_connection->onMessage = function($task_connection, $task_result) use ($message_data) {
-			//Worker::safeEcho("Bandwidth Update for ".$_SESSION['name']." content: ".json_encode($message_data['content'])." returned:".var_export($task_result,TRUE).PHP_EOL);
+		$task_connection->onMessage = function($task_connection, $task_result) use ($client_id, $message_data) {
+			//Worker::safeEcho("[{$client_id}] Bandwidth Update for ".$_SESSION['name']." content: ".json_encode($message_data['content'])." returned:".var_export($task_result,TRUE).PHP_EOL);
 			$task_connection->close();
 		};
 		$task_connection->connect();
@@ -521,7 +525,7 @@ class Events {
 				'type' => 'clients',
 				'content' => base64_encode(gzcompress(json_encode($clients),9)),
 			];
-			Worker::safeEcho("Loaded Clients, Request Length:".strlen(json_encode($new_message)).PHP_EOL);
+			Worker::safeEcho("[{$client_id}] Loaded Clients, Request Length:".strlen(json_encode($new_message)).PHP_EOL);
 			Gateway::sendToCurrentClient(json_encode($new_message));
 		}
 		return;
@@ -555,10 +559,8 @@ class Events {
 	 */
 	public static function msgPong($client_id, $message_data) {
 		if(empty($_SESSION['login'])) {
-			$msg = 'You have not successfully authenticated within the allowed time, goodbye.';
+			$msg = "[{$client_id}] You have not successfully authenticated within the allowed time, goodbye.";
 			Worker::safeEcho($msg.PHP_EOL);
-			//error_log($msg);
-			error_log($msg);
 			$new_message = [ // Send the error response
 				'type' => 'error',
 				'content' => $msg,
@@ -576,16 +578,16 @@ class Events {
 	 * @param array $message_data
 	 */
 	public static function msgRun($client_id, $message_data) {
-		Worker::safeEcho("Got Run Command ".json_encode($message_data).PHP_EOL);
+		Worker::safeEcho("[{$client_id}] Got Run Command ".json_encode($message_data).PHP_EOL);
 		if ($_SESSION['login'] == TRUE) {
 			if ($_SESSION['ima'] == 'admin') {
-				Worker::safeEcho("running command {$message_data['command']}".PHP_EOL);
+				Worker::safeEcho("[{$client_id}] running command {$message_data['command']}".PHP_EOL);
 				return self::run_command($message_data['host'], $message_data['command'], isset($message_data['interact']) ? $message_data['interact'] : false, $_SESSION['uid'], isset($message_data['rows']) ? $message_data['rows'] : 80, isset($message_data['cols']) ? $message_data['cols'] : 24, isset($message_data['update_after']) ? $message_data['update_after'] : false);
 			} else {
-				Worker::safeEcho("ima: {$_SESSION['ima']}".PHP_EOL);
+				Worker::safeEcho("[{$client_id}] ima: {$_SESSION['ima']}".PHP_EOL);
 			}
 		}
-		Worker::safeEcho("But not running it".PHP_EOL);
+		Worker::safeEcho("[{$client_id}] But not running it".PHP_EOL);
 		return;
 	}
 
@@ -597,7 +599,7 @@ class Events {
 	 */
 	public static function msgRunning($client_id, $message_data) {
 		global $global;
-		Worker::safeEcho("Got Running Command ".json_encode($message_data).PHP_EOL);
+		Worker::safeEcho("[{$client_id}] Got Running Command ".json_encode($message_data).PHP_EOL);
 		if ($_SESSION['login'] == TRUE) {
 			$id = $message_data['id'];
 			$running = $global->running;
@@ -626,7 +628,7 @@ class Events {
 	 */
 	public static function msgRan($client_id, $message_data) {
 		global $global;
-		//Worker::safeEcho("Got Ran Command ".json_encode($message_data).PHP_EOL);
+		//Worker::safeEcho("[{$client_id}] Got Ran Command ".json_encode($message_data).PHP_EOL);
 		// indicates both completion of a run process and its final exit code or terminal signal
 		// response(s) from a run command
 		$id = $message_data['id'];
@@ -657,12 +659,12 @@ class Events {
 		Worker::safeEcho(json_encode($message_data).PHP_EOL);
 		if ($_SESSION['login'] == TRUE) {
 			if ($_SESSION['ima'] == 'admin') {
-				Worker::safeEcho("Got phpsysinfo init message ".json_encode($message_data).PHP_EOL);
+				Worker::safeEcho("[{$client_id}] Got phpsysinfo init message ".json_encode($message_data).PHP_EOL);
 				$message_data['for'] = $_SESSION['uid']; // add the client 'for' field from session uid
 				// stdin to send to host/process
 				return Gateway::sendToUid('vps'.$message_data['host'], json_encode($message_data));
 			} else {
-				Worker::safeEcho("Got phpsysinfo response ".json_encode($message_data).PHP_EOL);
+				Worker::safeEcho("[{$client_id}] Got phpsysinfo response ".json_encode($message_data).PHP_EOL);
 				$message_data['host'] = str_replace('vps','',$_SESSION['uid']); // add the remote servers 'host' field from session uid
 				return Gateway::sendToUid($message_data['for'], json_encode($message_data));
 			}
@@ -679,15 +681,14 @@ class Events {
 	public static function msgLogin($client_id, $message_data) {
 		global $global;
 		$ima = isset($message_data['ima']) && in_array($message_data['ima'], ['host', 'admin']) ? $message_data['ima'] : 'admin';
-		//Worker::safeEcho("client:{$_SERVER['REMOTE_ADDR']}:{$_SERVER['REMOTE_PORT']} gateway:{$_SERVER['GATEWAY_ADDR']}:{$_SERVER['GATEWAY_PORT']} client_id:{$client_id} session:".json_encode($_SESSION)." onMessage:".serialize($message).PHP_EOL); // debug
+		//Worker::safeEcho("[{$client_id}] client:{$_SERVER['REMOTE_ADDR']}:{$_SERVER['REMOTE_PORT']} gateway:{$_SERVER['GATEWAY_ADDR']}:{$_SERVER['GATEWAY_PORT']} client_id:{$client_id} session:".json_encode($_SESSION)." onMessage:".serialize($message).PHP_EOL); // debug
 		switch ($ima) {
 			case 'host':
 				$row = self::$db->select('*')->from('vps_masters')->where('vps_ip= :vps_ip')->bindValues(array('vps_ip'=>$_SERVER['REMOTE_ADDR']))->row();
 				if ($row === FALSE) {
 					//error
-					$msg = 'This System '.$_SERVER['REMOTE_ADDR'].' does not appear to match up with one of our hosts.';
+					$msg = "[{$client_id}] This System {$_SERVER['REMOTE_ADDR']} does not appear to match up with one of our hosts.";
 					Worker::safeEcho($msg.PHP_EOL);
-					error_log($msg);
 					$new_message = [ // Send the error response
 						'type' => 'error',
 						'content' => $msg,
@@ -714,7 +715,7 @@ class Events {
 				Gateway::setSession($client_id, $_SESSION);
 				Gateway::bindUid($client_id, $uid);
 				Gateway::joinGroup($client_id, $ima.'s');
-				Worker::safeEcho("{$row['vps_name']} has been successfully logged in from {$_SERVER['REMOTE_ADDR']}".PHP_EOL);
+				Worker::safeEcho("[{$client_id}] {$row['vps_name']} has been successfully logged in from {$_SERVER['REMOTE_ADDR']}".PHP_EOL);
 				$new_message = [ // Send the error response
 					'type' => 'login',
 					'id' => $uid,
@@ -735,9 +736,8 @@ class Events {
 					$results = self::$db->query('select accounts.*, account_value from accounts left join accounts_ext on accounts.account_id=accounts_ext.account_id and accounts_ext.account_key="picture" where account_ima="admin" and account_lid="'.$message_data['username'].'" and account_passwd="'.md5($message_data['password']).'"');
 				if (sizeof($results) == 0 || $results[0] === FALSE) {
 					//error
-					$msg = 'Invalid Credentials Specified For User '.$mesage_data['username'];
+					$msg = "[{$client_id}] Invalid Credentials Specified For User {$mesage_data['username']}";
 					Worker::safeEcho($msg.PHP_EOL);
-					error_log($msg);
 					$new_message = [ // Send the error response
 						'type' => 'error',
 						'content' => $msg,
@@ -753,7 +753,7 @@ class Events {
 				$_SESSION['login'] = true;
 				Gateway::setSession($client_id, $_SESSION);
 				Gateway::bindUid($client_id, $uid);
-				Worker::safeEcho("{$results[0]['account_lid']} has been successfully logged in from {$_SERVER['REMOTE_ADDR']}".PHP_EOL);
+				Worker::safeEcho("[{$client_id}] {$results[0]['account_lid']} has been successfully logged in from {$_SERVER['REMOTE_ADDR']}".PHP_EOL);
 				$rooms = $global->rooms;
 				if (!in_array($uid, $rooms[0]['members']))
 					$rooms[0]['members'][] = $uid;
@@ -776,9 +776,8 @@ class Events {
 			case 'client':
 			case 'guest':
 			default:
-				$msg = 'Invalid Login Type '.$ima.'. Check back later for "client" and "guest" support to be added in addition to the "host" and "admin" types.';
+				$msg = "[{$client_id}] Invalid Login Type {$ima}. Check back later for \"client\" and \"guest\" support to be added in addition to the \"host\" and \"admin\" types.";
 				Worker::safeEcho($msg.PHP_EOL);
-				error_log($msg);
 				$new_message = [ // Send the error response
 					'type' => 'error',
 					'content' => $msg,
