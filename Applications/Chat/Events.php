@@ -557,6 +557,16 @@ class Events {
 	 * @param int $client_id
 	 * @param array $message_data
 	 */
+	public static function msgPing($client_id, $message_data) {
+		Gateway::sendToCurrentClient(json_encode(['type' => 'pong']));
+		return;
+	}
+	/**
+	 * handler for when receiving a pong message.
+	 *
+	 * @param int $client_id
+	 * @param array $message_data
+	 */
 	public static function msgPong($client_id, $message_data) {
 		if(empty($_SESSION['login'])) {
 			$msg = "[{$client_id}] You have not successfully authenticated within the allowed time, goodbye.";
