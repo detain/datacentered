@@ -87,7 +87,7 @@ class Events {
 		 * @var GlobalData\Client
 		 */
 		global $global;
-		//Worker::safeEcho("[{$client_id}] client:{$_SERVER['REMOTE_ADDR']}:{$_SERVER['REMOTE_PORT']} gateway:{$_SERVER['GATEWAY_ADDR']}:{$_SERVER['GATEWAY_PORT']} client_id:{$client_id} session:".json_encode($_SESSION)." onMessage:".serialize($message).PHP_EOL); // debug
+		//Worker::safeEcho("[{$client_id}] client:{$_SERVER['REMOTE_ADDR']}:{$_SERVER['REMOTE_PORT']} gateway:{$_SERVER['GATEWAY_ADDR']}:{$_SERVER['GATEWAY_PORT']} session:".json_encode($_SESSION)." onMessage:".serialize($message).PHP_EOL); // debug
 		$message_data = json_decode($message, true); // Client is passed json data
 		if (!$message_data)
 			return ;
@@ -110,7 +110,7 @@ class Events {
 		 * @var GlobalData\Client
 		 */
 		global $global;
-		Worker::safeEcho("[{$client_id}] client:".(isset($_SESSION['name']) ? $_SESSION['name'] : '')." {$_SERVER['REMOTE_ADDR']}:{$_SERVER['REMOTE_PORT']} gateway:{$_SERVER['GATEWAY_ADDR']}:{$_SERVER['GATEWAY_PORT']} client_id:{$client_id} onClose:''".PHP_EOL); // debug
+		Worker::safeEcho("[{$client_id}] client:".(isset($_SESSION['name']) ? $_SESSION['name'] : '')." {$_SERVER['REMOTE_ADDR']}:{$_SERVER['REMOTE_PORT']} gateway:{$_SERVER['GATEWAY_ADDR']}:{$_SERVER['GATEWAY_PORT']} onClose:''".PHP_EOL); // debug
 		if (isset($_SESSION['uid'])) {
 			$clientIds = Gateway::getClientIdByUid($_SESSION['uid']);
 			if (count($clientIds) == 1 && isset($global->rooms) && sizeof($global->rooms) > 0) {
@@ -691,7 +691,7 @@ class Events {
 	public static function msgLogin($client_id, $message_data) {
 		global $global;
 		$ima = isset($message_data['ima']) && in_array($message_data['ima'], ['host', 'admin']) ? $message_data['ima'] : 'admin';
-		//Worker::safeEcho("[{$client_id}] client:{$_SERVER['REMOTE_ADDR']}:{$_SERVER['REMOTE_PORT']} gateway:{$_SERVER['GATEWAY_ADDR']}:{$_SERVER['GATEWAY_PORT']} client_id:{$client_id} session:".json_encode($_SESSION)." onMessage:".serialize($message).PHP_EOL); // debug
+		//Worker::safeEcho("[{$client_id}] client:{$_SERVER['REMOTE_ADDR']}:{$_SERVER['REMOTE_PORT']} gateway:{$_SERVER['GATEWAY_ADDR']}:{$_SERVER['GATEWAY_PORT']} session:".json_encode($_SESSION)." onMessage:".serialize($message).PHP_EOL); // debug
 		switch ($ima) {
 			case 'host':
 				$row = self::$db->select('*')->from('vps_masters')->where('vps_ip= :vps_ip')->bindValues(array('vps_ip'=>$_SERVER['REMOTE_ADDR']))->row();
