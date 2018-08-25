@@ -12,12 +12,12 @@
             "source": {
                 "type": "git",
                 "url": "https://github.com/danielstjules/php-pretty-datetime.git",
-                "reference": "d4bb790e8761160b2bb993df46a0042fcc6195b3"
+                "reference": "c489c9052a2d2202e13f899fff98c043f6297910"
             },
             "dist": {
                 "type": "zip",
-                "url": "https://api.github.com/repos/danielstjules/php-pretty-datetime/zipball/d4bb790e8761160b2bb993df46a0042fcc6195b3",
-                "reference": "d4bb790e8761160b2bb993df46a0042fcc6195b3",
+                "url": "https://api.github.com/repos/danielstjules/php-pretty-datetime/zipball/c489c9052a2d2202e13f899fff98c043f6297910",
+                "reference": "c489c9052a2d2202e13f899fff98c043f6297910",
                 "shasum": ""
             },
             "require": {
@@ -50,7 +50,7 @@
                 "string",
                 "time"
             ],
-            "time": "2014-12-16T01:27:21+00:00"
+            "time": "2018-08-23T06:05:47+00:00"
         },
         {
             "name": "evenement/evenement",
@@ -809,12 +809,12 @@
             "source": {
                 "type": "git",
                 "url": "https://github.com/walkor/GatewayWorker.git",
-                "reference": "e826c56b30c3248bef94672f0196368551af7ca5"
+                "reference": "c206ec41e21f092055d1ddd3ee296895fc004cb5"
             },
             "dist": {
                 "type": "zip",
-                "url": "https://api.github.com/repos/walkor/GatewayWorker/zipball/e826c56b30c3248bef94672f0196368551af7ca5",
-                "reference": "e826c56b30c3248bef94672f0196368551af7ca5",
+                "url": "https://api.github.com/repos/walkor/GatewayWorker/zipball/c206ec41e21f092055d1ddd3ee296895fc004cb5",
+                "reference": "c206ec41e21f092055d1ddd3ee296895fc004cb5",
                 "shasum": ""
             },
             "require": {
@@ -835,7 +835,7 @@
                 "communication",
                 "distributed"
             ],
-            "time": "2018-08-03T01:59:36+00:00"
+            "time": "2018-08-21T06:17:30+00:00"
         },
         {
             "name": "workerman/gatewayclient",
@@ -843,12 +843,12 @@
             "source": {
                 "type": "git",
                 "url": "https://github.com/walkor/GatewayClient.git",
-                "reference": "4ebe0bb064f3a3acea4aafc81646f94aaac8b7ed"
+                "reference": "6374bc0c41185b0043f851885d3e8adb701f382a"
             },
             "dist": {
                 "type": "zip",
-                "url": "https://api.github.com/repos/walkor/GatewayClient/zipball/4ebe0bb064f3a3acea4aafc81646f94aaac8b7ed",
-                "reference": "4ebe0bb064f3a3acea4aafc81646f94aaac8b7ed",
+                "url": "https://api.github.com/repos/walkor/GatewayClient/zipball/6374bc0c41185b0043f851885d3e8adb701f382a",
+                "reference": "6374bc0c41185b0043f851885d3e8adb701f382a",
                 "shasum": ""
             },
             "type": "library",
@@ -862,7 +862,7 @@
                 "MIT"
             ],
             "homepage": "http://www.workerman.net",
-            "time": "2018-06-13T14:27:15+00:00"
+            "time": "2018-08-22T09:37:22+00:00"
         },
         {
             "name": "workerman/globaldata",
@@ -963,12 +963,12 @@
             "source": {
                 "type": "git",
                 "url": "https://github.com/walkor/Workerman.git",
-                "reference": "6d70996b2b4ec94000e807246aca0e861c9601d8"
+                "reference": "8a4108a78bd5f50b5ca47e71aeab312e563d8b36"
             },
             "dist": {
                 "type": "zip",
-                "url": "https://api.github.com/repos/walkor/Workerman/zipball/6d70996b2b4ec94000e807246aca0e861c9601d8",
-                "reference": "6d70996b2b4ec94000e807246aca0e861c9601d8",
+                "url": "https://api.github.com/repos/walkor/Workerman/zipball/8a4108a78bd5f50b5ca47e71aeab312e563d8b36",
+                "reference": "8a4108a78bd5f50b5ca47e71aeab312e563d8b36",
                 "shasum": ""
             },
             "require": {
@@ -1001,7 +1001,7 @@
                 "asynchronous",
                 "event-loop"
             ],
-            "time": "2018-08-04T12:41:54+00:00"
+            "time": "2018-08-16T02:03:00+00:00"
         }
     ],
     "packages-dev": [
@@ -3337,12 +3337,12 @@
             "source": {
                 "type": "git",
                 "url": "https://github.com/vlucas/phpdotenv.git",
-                "reference": "8abb4f9aa89ddea9d52112c65bbe8d0125e2fa8e"
+                "reference": "54d599d414f8cf3f6129e287acaf44b610486aa1"
             },
             "dist": {
                 "type": "zip",
-                "url": "https://api.github.com/repos/vlucas/phpdotenv/zipball/8abb4f9aa89ddea9d52112c65bbe8d0125e2fa8e",
-                "reference": "8abb4f9aa89ddea9d52112c65bbe8d0125e2fa8e",
+                "url": "https://api.github.com/repos/vlucas/phpdotenv/zipball/54d599d414f8cf3f6129e287acaf44b610486aa1",
+                "reference": "54d599d414f8cf3f6129e287acaf44b610486aa1",
                 "shasum": ""
             },
             "require": {
@@ -3379,7 +3379,7 @@
                 "env",
                 "environment"
             ],
-            "time": "2018-07-29T20:33:41+00:00"
+            "time": "2018-08-22T19:34:05+00:00"
         },
         {
             "name": "webmozart/assert",
