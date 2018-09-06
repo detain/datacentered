@@ -963,12 +963,12 @@
             "source": {
                 "type": "git",
                 "url": "https://github.com/walkor/Workerman.git",
-                "reference": "8a4108a78bd5f50b5ca47e71aeab312e563d8b36"
+                "reference": "462bfff44f027b99d6efbfdd12279a3e062d66ee"
             },
             "dist": {
                 "type": "zip",
-                "url": "https://api.github.com/repos/walkor/Workerman/zipball/8a4108a78bd5f50b5ca47e71aeab312e563d8b36",
-                "reference": "8a4108a78bd5f50b5ca47e71aeab312e563d8b36",
+                "url": "https://api.github.com/repos/walkor/Workerman/zipball/462bfff44f027b99d6efbfdd12279a3e062d66ee",
+                "reference": "462bfff44f027b99d6efbfdd12279a3e062d66ee",
                 "shasum": ""
             },
             "require": {
@@ -1001,7 +1001,7 @@
                 "asynchronous",
                 "event-loop"
             ],
-            "time": "2018-08-16T02:03:00+00:00"
+            "time": "2018-08-24T13:49:46+00:00"
         }
     ],
     "packages-dev": [
@@ -1171,12 +1171,12 @@
             "source": {
                 "type": "git",
                 "url": "https://github.com/doctrine/instantiator.git",
-                "reference": "8e884e78f9f0eb1329e445619e04456e64d8051d"
+                "reference": "83b5716aee90e1f733512942c635ac350cbd533c"
             },
             "dist": {
                 "type": "zip",
-                "url": "https://api.github.com/repos/doctrine/instantiator/zipball/8e884e78f9f0eb1329e445619e04456e64d8051d",
-                "reference": "8e884e78f9f0eb1329e445619e04456e64d8051d",
+                "url": "https://api.github.com/repos/doctrine/instantiator/zipball/83b5716aee90e1f733512942c635ac350cbd533c",
+                "reference": "83b5716aee90e1f733512942c635ac350cbd533c",
                 "shasum": ""
             },
             "require": {
@@ -1217,7 +1217,7 @@
                 "constructor",
                 "instantiate"
             ],
-            "time": "2015-06-14T21:17:01+00:00"
+            "time": "2018-09-01T02:07:49+00:00"
         },
         {
             "name": "gitonomy/gitlib",
@@ -2764,12 +2764,12 @@
             "source": {
                 "type": "git",
                 "url": "https://github.com/symfony/config.git",
-                "reference": "7b08223b7f6abd859651c56bcabf900d1627d085"
+                "reference": "bd0ac6a7d0d656e862fded9551f077acdf02a30f"
             },
             "dist": {
                 "type": "zip",
-                "url": "https://api.github.com/repos/symfony/config/zipball/7b08223b7f6abd859651c56bcabf900d1627d085",
-                "reference": "7b08223b7f6abd859651c56bcabf900d1627d085",
+                "url": "https://api.github.com/repos/symfony/config/zipball/bd0ac6a7d0d656e862fded9551f077acdf02a30f",
+                "reference": "bd0ac6a7d0d656e862fded9551f077acdf02a30f",
                 "shasum": ""
             },
             "require": {
@@ -2820,7 +2820,7 @@
             ],
             "description": "Symfony Config Component",
             "homepage": "https://symfony.com",
-            "time": "2018-07-26T11:19:56+00:00"
+            "time": "2018-09-02T17:11:59+00:00"
         },
         {
             "name": "symfony/console",
@@ -2828,12 +2828,12 @@
             "source": {
                 "type": "git",
                 "url": "https://github.com/symfony/console.git",
-                "reference": "6b217594552b9323bcdcfc14f8a0ce126e84cd73"
+                "reference": "4a59d3d9f473e85e26c887f747490d063f6c4497"
             },
             "dist": {
                 "type": "zip",
-                "url": "https://api.github.com/repos/symfony/console/zipball/6b217594552b9323bcdcfc14f8a0ce126e84cd73",
-                "reference": "6b217594552b9323bcdcfc14f8a0ce126e84cd73",
+                "url": "https://api.github.com/repos/symfony/console/zipball/4a59d3d9f473e85e26c887f747490d063f6c4497",
+                "reference": "4a59d3d9f473e85e26c887f747490d063f6c4497",
                 "shasum": ""
             },
             "require": {
@@ -2889,7 +2889,7 @@
             ],
             "description": "Symfony Console Component",
             "homepage": "https://symfony.com",
-            "time": "2018-07-26T11:19:56+00:00"
+            "time": "2018-09-02T17:11:59+00:00"
         },
         {
             "name": "symfony/debug",
@@ -3013,12 +3013,12 @@
             "source": {
                 "type": "git",
                 "url": "https://github.com/symfony/filesystem.git",
-                "reference": "285ce5005cb01a0aeaa5b0cf590bd0cc40bb631c"
+                "reference": "81d3c01beb72ed42c07f3f04bc692feda16e534e"
             },
             "dist": {
                 "type": "zip",
-                "url": "https://api.github.com/repos/symfony/filesystem/zipball/285ce5005cb01a0aeaa5b0cf590bd0cc40bb631c",
-                "reference": "285ce5005cb01a0aeaa5b0cf590bd0cc40bb631c",
+                "url": "https://api.github.com/repos/symfony/filesystem/zipball/81d3c01beb72ed42c07f3f04bc692feda16e534e",
+                "reference": "81d3c01beb72ed42c07f3f04bc692feda16e534e",
                 "shasum": ""
             },
             "require": {
@@ -3055,7 +3055,7 @@
             ],
             "description": "Symfony Filesystem Component",
             "homepage": "https://symfony.com",
-            "time": "2018-08-10T07:29:05+00:00"
+            "time": "2018-09-03T08:40:31+00:00"
         },
         {
             "name": "symfony/polyfill-ctype",
@@ -3180,12 +3180,12 @@
             "source": {
                 "type": "git",
                 "url": "https://github.com/symfony/process.git",
-                "reference": "4d6b125d5293cbceedc2aa10f2c71617e76262e7"
+                "reference": "87798b5834a609e7d25f104f52ebb19f77e06fd0"
             },
             "dist": {
                 "type": "zip",
-                "url": "https://api.github.com/repos/symfony/process/zipball/4d6b125d5293cbceedc2aa10f2c71617e76262e7",
-                "reference": "4d6b125d5293cbceedc2aa10f2c71617e76262e7",
+                "url": "https://api.github.com/repos/symfony/process/zipball/87798b5834a609e7d25f104f52ebb19f77e06fd0",
+                "reference": "87798b5834a609e7d25f104f52ebb19f77e06fd0",
                 "shasum": ""
             },
             "require": {
@@ -3221,7 +3221,7 @@
             ],
             "description": "Symfony Process Component",
             "homepage": "https://symfony.com",
-            "time": "2018-08-03T10:42:44+00:00"
+            "time": "2018-09-02T17:11:59+00:00"
         },
         {
             "name": "symfony/stopwatch",
@@ -3278,12 +3278,12 @@
             "source": {
                 "type": "git",
                 "url": "https://github.com/symfony/yaml.git",
-                "reference": "c2f4812ead9f847cb69e90917ca7502e6892d6b8"
+                "reference": "84fa64edb72e90a5421391f0c5206b4c90788750"
             },
             "dist": {
                 "type": "zip",
-                "url": "https://api.github.com/repos/symfony/yaml/zipball/c2f4812ead9f847cb69e90917ca7502e6892d6b8",
-                "reference": "c2f4812ead9f847cb69e90917ca7502e6892d6b8",
+                "url": "https://api.github.com/repos/symfony/yaml/zipball/84fa64edb72e90a5421391f0c5206b4c90788750",
+                "reference": "84fa64edb72e90a5421391f0c5206b4c90788750",
                 "shasum": ""
             },
             "require": {
@@ -3329,7 +3329,7 @@
             ],
             "description": "Symfony Yaml Component",
             "homepage": "https://symfony.com",
-            "time": "2018-08-10T07:34:36+00:00"
+            "time": "2018-09-02T17:11:59+00:00"
         },
         {
             "name": "vlucas/phpdotenv",
