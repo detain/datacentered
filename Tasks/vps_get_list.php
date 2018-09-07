@@ -1,6 +1,7 @@
 <?php
 
-function vps_get_list($args) {
+function vps_get_list($args)
+{
 	require_once __DIR__.'/../../../include/functions.inc.php';
 	global $global;
 	$db = $GLOBALS['tf']->db;

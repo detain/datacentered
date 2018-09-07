@@ -20,10 +20,11 @@ $web->count = 2; // WebServer number of processes
 $web->transport = 'ssl';
 $web->addRoot(isset($_SERVER['HOSTNAME']) ? $_SERVER['HOSTNAME'] : trim(`hostname -f`), __DIR__.'/../../Web'); // Set the site root
 
-if(!defined('GLOBAL_START')) // If it is not started in the root directory, run the runAll method
+if (!defined('GLOBAL_START')) { // If it is not started in the root directory, run the runAll method
 	Worker::runAll();
+}
 
 	
-$web->onConnect = function($connection) { 
+$web->onConnect = function ($connection) {
 	$connection->maxSendBufferSize = 50663296;
 };

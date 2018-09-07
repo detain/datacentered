@@ -1,6 +1,7 @@
 <?php
 
-function get_map($args) {
+function get_map($args)
+{
 	require_once __DIR__.'/../../../include/functions.inc.php';
 	global $global;
 	$db = $GLOBALS['tf']->db;

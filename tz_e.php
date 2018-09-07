@@ -27,14 +27,14 @@ define('HTTP_HOST', preg_replace('~^www\.~i', '', $_SERVER['HTTP_HOST']));
 
 $time_start = microtime_float();
 
-function memory_usage() 
+function memory_usage()
 {
-	$memory	 = ( ! function_exists('memory_get_usage')) ? '0' : round(memory_get_usage()/1024/1024, 2).'MB';
+	$memory	 = (! function_exists('memory_get_usage')) ? '0' : round(memory_get_usage()/1024/1024, 2).'MB';
 	return $memory;
 }
 
 // 计时
-function microtime_float() 
+function microtime_float()
 {
 	$mtime = microtime();
 	$mtime = explode(' ', $mtime);
@@ -42,42 +42,40 @@ function microtime_float()
 }
 
 //单位转换
-function formatsize($size) 
+function formatsize($size)
 {
 	$danwei=array(' B ',' K ',' M ',' G ',' T ');
 	$allsize=array();
 	$i=0;
 
-	for($i = 0; $i <5; $i++) 
-	{
-		if(floor($size/pow(1024,$i))==0){break;}
+	for ($i = 0; $i <5; $i++) {
+		if (floor($size/pow(1024, $i))==0) {
+			break;
+		}
 	}
 
-	for($l = $i-1; $l >=0; $l--) 
-	{
-		$allsize1[$l]=floor($size/pow(1024,$l));
+	for ($l = $i-1; $l >=0; $l--) {
+		$allsize1[$l]=floor($size/pow(1024, $l));
 		$allsize[$l]=$allsize1[$l]-$allsize1[$l+1]*1024;
 	}
 
 	$len=count($allsize);
 
-	for($j = $len-1; $j >=0; $j--) 
-	{
+	for ($j = $len-1; $j >=0; $j--) {
 		$fsize=$fsize.$allsize[$j].$danwei[$j];
-	}	
+	}
 	return $fsize;
 }
 
-function valid_email($str) 
+function valid_email($str)
 {
-	return ( ! preg_match("/^([a-z0-9\+_\-]+)(\.[a-z0-9\+_\-]+)*@([a-z0-9\-]+\.)+[a-z]{2,6}$/ix", $str)) ? FALSE : TRUE;
+	return (! preg_match("/^([a-z0-9\+_\-]+)(\.[a-z0-9\+_\-]+)*@([a-z0-9\-]+\.)+[a-z]{2,6}$/ix", $str)) ? false : true;
 }
 
 //检测PHP设置参数
 function show($varName)
 {
-	switch($result = get_cfg_var($varName))
-	{
+	switch ($result = get_cfg_var($varName)) {
 		case 0:
 			return '<font color="red">×</font>';
 		break;
@@ -97,38 +95,28 @@ $valInt = isset($_POST['pInt']) ? $_POST['pInt'] : "No Test";
 $valFloat = isset($_POST['pFloat']) ? $_POST['pFloat'] : "No Test";
 $valIo = isset($_POST['pIo']) ? $_POST['pIo'] : "No Test";
 
-if ($_GET['act'] == "phpinfo") 
-{
+if ($_GET['act'] == "phpinfo") {
 	phpinfo();
 	exit();
-} 
-elseif($_POST['act'] == "Int Test")
-{
+} elseif ($_POST['act'] == "Int Test") {
 	$valInt = test_int();
-} 
-elseif($_POST['act'] == "Float Test")
-{
+} elseif ($_POST['act'] == "Float Test") {
 	$valFloat = test_float();
-} 
-elseif($_POST['act'] == "IO Test")
-{
+} elseif ($_POST['act'] == "IO Test") {
 	$valIo = test_io();
-} 
+}
 //网速测试-开始
-elseif($_POST['act']=="Start Test")
-{
-?>
+elseif ($_POST['act']=="Start Test") {
+	?>
 	<script language="javascript" type="text/javascript">
 		var acd1;
 		acd1 = new Date();
 		acd1ok=acd1.getTime();
 	</script>
 	<?php
-	for($i=1;$i<=100000;$i++)
-	{
+	for ($i=1;$i<=100000;$i++) {
 		echo "<!--567890#########0#########0#########0#########0#########0#########0#########0#########012345-->";
-	}
-	?>
+	} ?>
 	<script language="javascript" type="text/javascript">
 		var acd2;
 		acd2 = new Date();
@@ -138,41 +126,35 @@ elseif($_POST['act']=="Start Test")
 <?php
 }
 //网速测试-结束
-elseif($_GET['act'] == "Function")
-{
+elseif ($_GET['act'] == "Function") {
 	$arr = get_defined_functions();
-	Function php()
+	function php()
 	{
 	}
 	echo "<pre>";
-	Echo "This shows all the functions supported by the system, and custom functions\n";
+	echo "This shows all the functions supported by the system, and custom functions\n";
 	print_r($arr);
 	echo "</pre>";
 	exit();
-}elseif($_GET['act'] == "disable_functions")
-{
+} elseif ($_GET['act'] == "disable_functions") {
 	$disFuns=get_cfg_var("disable_functions");
-	if(empty($disFuns))
-	{
+	if (empty($disFuns)) {
 		$arr = '<font color=red>×</font>';
-	}
-	else
-	{ 
+	} else {
 		$arr = $disFuns;
 	}
-	Function php()
+	function php()
 	{
 	}
 	echo "<pre>";
-	Echo "This shows all the functions disable by the system\n";
+	echo "This shows all the functions disable by the system\n";
 	print_r($arr);
 	echo "</pre>";
 	exit();
 }
 
 //MySQL检测
-if ($_POST['act'] == 'MySQL Test')
-{
+if ($_POST['act'] == 'MySQL Test') {
 	$host = isset($_POST['host']) ? trim($_POST['host']) : '';
 	$port = isset($_POST['port']) ? (int) $_POST['port'] : '';
 	$login = isset($_POST['login']) ? trim($_POST['login']) : '';
@@ -181,47 +163,43 @@ if ($_POST['act'] == 'MySQL Test')
 	$port = intval($port) ? intval($port) : '';
 	$login = preg_match('~[^a-z0-9\_\-]+~i', $login) ? '' : htmlspecialchars($login);
 	$password = is_string($password) ? htmlspecialchars($password) : '';
-}
-elseif ($_POST['act'] == 'Function Test')
-{
+} elseif ($_POST['act'] == 'Function Test') {
 	$funRe = "Function".$_POST['funName']."Test results support the position: ".isfun1($_POST['funName']);
-} 
-elseif ($_POST['act'] == 'Mail Test')
-{
+} elseif ($_POST['act'] == 'Mail Test') {
 	$mailRe = "Mail test results: send";
-	if($_SERVER['SERVER_PORT']==80){$mailContent = "http://".$_SERVER['SERVER_NAME'].($_SERVER['PHP_SELF'] ? $_SERVER['PHP_SELF'] : $_SERVER['SCRIPT_NAME']);}
-	else{$mailContent = "http://".$_SERVER['SERVER_NAME'].":".$_SERVER['SERVER_PORT'].($_SERVER['PHP_SELF'] ? $_SERVER['PHP_SELF'] : $_SERVER['SCRIPT_NAME']);}
+	if ($_SERVER['SERVER_PORT']==80) {
+		$mailContent = "http://".$_SERVER['SERVER_NAME'].($_SERVER['PHP_SELF'] ? $_SERVER['PHP_SELF'] : $_SERVER['SCRIPT_NAME']);
+	} else {
+		$mailContent = "http://".$_SERVER['SERVER_NAME'].":".$_SERVER['SERVER_PORT'].($_SERVER['PHP_SELF'] ? $_SERVER['PHP_SELF'] : $_SERVER['SCRIPT_NAME']);
+	}
 	$mailRe .= (false !== @mail($_POST["mailAdd"], $mailContent, "This is a test mail!")) ? "Complete":"Failure";
 }
 
 //网络速度测试
-if(isset($_POST['speed']))
-{
-	$speed=round(100/($_POST['speed']/1000),2);
-}
-elseif($_GET['speed']=="0")
-{
+if (isset($_POST['speed'])) {
+	$speed=round(100/($_POST['speed']/1000), 2);
+} elseif ($_GET['speed']=="0") {
 	$speed=6666.67;
-}
-elseif(isset($_GET['speed']) and $_GET['speed']>0)
-{
-	$speed=round(100/($_GET['speed']/1000),2); //下载速度: $speed kb/s
-}
-else
-{
+} elseif (isset($_GET['speed']) and $_GET['speed']>0) {
+	$speed=round(100/($_GET['speed']/1000), 2); //下载速度: $speed kb/s
+} else {
 	$speed="<font color=\"red\">&nbsp;No Test&nbsp;</font>";
-}	
+}
 	
 	
 // 检测函数支持
 function isfun($funName = '')
 {
-    if (!$funName || trim($funName) == '' || preg_match('~[^a-z0-9\_]+~i', $funName, $tmp)) return '错误';
+	if (!$funName || trim($funName) == '' || preg_match('~[^a-z0-9\_]+~i', $funName, $tmp)) {
+		return '错误';
+	}
 	return (false !== function_exists($funName)) ? '<font color="green">√</font>' : '<font color="red">×</font>';
 }
 function isfun1($funName = '')
 {
-    if (!$funName || trim($funName) == '' || preg_match('~[^a-z0-9\_]+~i', $funName, $tmp)) return '错误';
+	if (!$funName || trim($funName) == '' || preg_match('~[^a-z0-9\_]+~i', $funName, $tmp)) {
+		return '错误';
+	}
 	return (false !== function_exists($funName)) ? '√' : '×';
 }
 
@@ -229,8 +207,7 @@ function isfun1($funName = '')
 function test_int()
 {
 	$timeStart = gettimeofday();
-	for($i = 0; $i < 3000000; $i++)
-	{
+	for ($i = 0; $i < 3000000; $i++) {
 		$t = 1+1;
 	}
 	$timeEnd = gettimeofday();
@@ -246,8 +223,7 @@ function test_float()
 	$t = pi();
 	$timeStart = gettimeofday();
 
-	for($i = 0; $i < 3000000; $i++)
-	{
+	for ($i = 0; $i < 3000000; $i++) {
 		//开平方
 		sqrt($t);
 	}
@@ -263,8 +239,7 @@ function test_io()
 {
 	$fp = @fopen(PHPSELF, "r");
 	$timeStart = gettimeofday();
-	for($i = 0; $i < 10000; $i++) 
-	{
+	for ($i = 0; $i < 10000; $i++) {
 		@fread($fp, 10240);
 		@rewind($fp);
 	}
@@ -275,16 +250,72 @@ function test_io()
 	return($time);
 }
 
-function GetCoreInformation() {$data = file('/proc/stat');$cores = array();foreach( $data as $line ) {if( preg_match('/^cpu[0-9]/', $line) ){$info = explode(' ', $line);$cores[]=array('user'=>$info[1],'nice'=>$info[2],'sys' => $info[3],'idle'=>$info[4],'iowait'=>$info[5],'irq' => $info[6],'softirq' => $info[7]);}}return $cores;}
-function GetCpuPercentages($stat1, $stat2) {if(count($stat1)!==count($stat2)){return;}$cpus=array();for( $i = 0, $l = count($stat1); $i < $l; $i++) {	$dif = array();	$dif['user'] = $stat2[$i]['user'] - $stat1[$i]['user'];$dif['nice'] = $stat2[$i]['nice'] - $stat1[$i]['nice'];	$dif['sys'] = $stat2[$i]['sys'] - $stat1[$i]['sys'];$dif['idle'] = $stat2[$i]['idle'] - $stat1[$i]['idle'];$dif['iowait'] = $stat2[$i]['iowait'] - $stat1[$i]['iowait'];$dif['irq'] = $stat2[$i]['irq'] - $stat1[$i]['irq'];$dif['softirq'] = $stat2[$i]['softirq'] - $stat1[$i]['softirq'];$total = array_sum($dif);$cpu = array();foreach($dif as $x=>$y) $cpu[$x] = round($y / $total * 100, 2);$cpus['cpu' . $i] = $cpu;}return $cpus;}
+function GetCoreInformation()
+{
+	$data = file('/proc/stat');
+	$cores = array();
+	foreach ($data as $line) {
+		if (preg_match('/^cpu[0-9]/', $line)) {
+			$info = explode(' ', $line);
+			$cores[]=array('user'=>$info[1],'nice'=>$info[2],'sys' => $info[3],'idle'=>$info[4],'iowait'=>$info[5],'irq' => $info[6],'softirq' => $info[7]);
+		}
+	}
+	return $cores;
+}
+function GetCpuPercentages($stat1, $stat2)
+{
+	if (count($stat1)!==count($stat2)) {
+		return;
+	}
+	$cpus=array();
+	for ($i = 0, $l = count($stat1); $i < $l; $i++) {
+		$dif = array();
+		$dif['user'] = $stat2[$i]['user'] - $stat1[$i]['user'];
+		$dif['nice'] = $stat2[$i]['nice'] - $stat1[$i]['nice'];
+		$dif['sys'] = $stat2[$i]['sys'] - $stat1[$i]['sys'];
+		$dif['idle'] = $stat2[$i]['idle'] - $stat1[$i]['idle'];
+		$dif['iowait'] = $stat2[$i]['iowait'] - $stat1[$i]['iowait'];
+		$dif['irq'] = $stat2[$i]['irq'] - $stat1[$i]['irq'];
+		$dif['softirq'] = $stat2[$i]['softirq'] - $stat1[$i]['softirq'];
+		$total = array_sum($dif);
+		$cpu = array();
+		foreach ($dif as $x=>$y) {
+			$cpu[$x] = round($y / $total * 100, 2);
+		}
+		$cpus['cpu' . $i] = $cpu;
+	}
+	return $cpus;
+}
 $stat1 = GetCoreInformation();sleep(1);$stat2 = GetCoreInformation();$data = GetCpuPercentages($stat1, $stat2);
 $cpu_show = $data['cpu0']['user']."%us,  ".$data['cpu0']['sys']."%sy,  ".$data['cpu0']['nice']."%ni, ".$data['cpu0']['idle']."%id,  ".$data['cpu0']['iowait']."%wa,  ".$data['cpu0']['irq']."%irq,  ".$data['cpu0']['softirq']."%softirq";
-function makeImageUrl($title, $data) {$api='http://api.yahei.net/tz/cpu_show.php?id=';$url.=$data['user'].',';$url.=$data['nice'].',';$url.=$data['sys'].',';$url.=$data['idle'].',';$url.=$data['iowait'];$url.='&chdl=User|Nice|Sys|Idle|Iowait&chdlp=b&chl=';$url.=$data['user'].'%25|';$url.=$data['nice'].'%25|';$url.=$data['sys'].'%25|';$url.=$data['idle'].'%25|';$url.=$data['iowait'].'%25';$url.='&chtt=Core+'.$title;return $api.base64_encode($url);}
-if($_GET['act'] == "cpu_percentage"){echo "<center><b><font face='Microsoft YaHei' color='#666666' size='3'>Slow image loading, please be patient!</font></b><br /><br />";foreach( $data as $k => $v ) {echo '<img src="' . makeImageUrl( $k, $v ) . '" style="width:360px;height:240px;border: #CCCCCC 1px solid;background: #FFFFFF;margin:5px;padding:5px;" />';}echo "</center>";exit();}
+function makeImageUrl($title, $data)
+{
+	$api='http://api.yahei.net/tz/cpu_show.php?id=';
+	$url.=$data['user'].',';
+	$url.=$data['nice'].',';
+	$url.=$data['sys'].',';
+	$url.=$data['idle'].',';
+	$url.=$data['iowait'];
+	$url.='&chdl=User|Nice|Sys|Idle|Iowait&chdlp=b&chl=';
+	$url.=$data['user'].'%25|';
+	$url.=$data['nice'].'%25|';
+	$url.=$data['sys'].'%25|';
+	$url.=$data['idle'].'%25|';
+	$url.=$data['iowait'].'%25';
+	$url.='&chtt=Core+'.$title;
+	return $api.base64_encode($url);
+}
+if ($_GET['act'] == "cpu_percentage") {
+	echo "<center><b><font face='Microsoft YaHei' color='#666666' size='3'>Slow image loading, please be patient!</font></b><br /><br />";
+	foreach ($data as $k => $v) {
+		echo '<img src="' . makeImageUrl($k, $v) . '" style="width:360px;height:240px;border: #CCCCCC 1px solid;background: #FFFFFF;margin:5px;padding:5px;" />';
+	}
+	echo "</center>";
+	exit();
+}
 
 // 根据不同系统取得CPU相关信息
-switch(PHP_OS)
-{
+switch (PHP_OS) {
 	case "Linux":
 		$sysReShow = (false !== ($sysInfo = sys_linux()))?"show":"none";
 	break;
@@ -293,11 +324,11 @@ switch(PHP_OS)
 		$sysReShow = (false !== ($sysInfo = sys_freebsd()))?"show":"none";
 	break;
 	
-/*	
+/*
 	case "WINNT":
 		$sysReShow = (false !== ($sysInfo = sys_windows()))?"show":"none";
 	break;
-*/	
+*/
 	
 	default:
 	break;
@@ -306,96 +337,122 @@ switch(PHP_OS)
 //linux系统探测
 function sys_linux()
 {
-    // CPU
-    if (false === ($str = @file("/proc/cpuinfo"))) return false;
-    $str = implode("", $str);
-    @preg_match_all("/model\s+name\s{0,}\:+\s{0,}([\w\s\)\(\@.-]+)([\r\n]+)/s", $str, $model);
-    @preg_match_all("/cpu\s+MHz\s{0,}\:+\s{0,}([\d\.]+)[\r\n]+/", $str, $mhz);
-    @preg_match_all("/cache\s+size\s{0,}\:+\s{0,}([\d\.]+\s{0,}[A-Z]+[\r\n]+)/", $str, $cache);
-    @preg_match_all("/bogomips\s{0,}\:+\s{0,}([\d\.]+)[\r\n]+/", $str, $bogomips);
-    if (false !== is_array($model[1]))
-	{
-        $res['cpu']['num'] = sizeof($model[1]);
+	// CPU
+	if (false === ($str = @file("/proc/cpuinfo"))) {
+		return false;
+	}
+	$str = implode("", $str);
+	@preg_match_all("/model\s+name\s{0,}\:+\s{0,}([\w\s\)\(\@.-]+)([\r\n]+)/s", $str, $model);
+	@preg_match_all("/cpu\s+MHz\s{0,}\:+\s{0,}([\d\.]+)[\r\n]+/", $str, $mhz);
+	@preg_match_all("/cache\s+size\s{0,}\:+\s{0,}([\d\.]+\s{0,}[A-Z]+[\r\n]+)/", $str, $cache);
+	@preg_match_all("/bogomips\s{0,}\:+\s{0,}([\d\.]+)[\r\n]+/", $str, $bogomips);
+	if (false !== is_array($model[1])) {
+		$res['cpu']['num'] = sizeof($model[1]);
 		/*
-        for($i = 0; $i < $res['cpu']['num']; $i++)
-        {
-            $res['cpu']['model'][] = $model[1][$i].'&nbsp;('.$mhz[1][$i].')';
-            $res['cpu']['mhz'][] = $mhz[1][$i];
-            $res['cpu']['cache'][] = $cache[1][$i];
-            $res['cpu']['bogomips'][] = $bogomips[1][$i];
-        }*/
-		if($res['cpu']['num']==1)
+		for($i = 0; $i < $res['cpu']['num']; $i++)
+		{
+			$res['cpu']['model'][] = $model[1][$i].'&nbsp;('.$mhz[1][$i].')';
+			$res['cpu']['mhz'][] = $mhz[1][$i];
+			$res['cpu']['cache'][] = $cache[1][$i];
+			$res['cpu']['bogomips'][] = $bogomips[1][$i];
+		}*/
+		if ($res['cpu']['num']==1) {
 			$x1 = '';
-		else
+		} else {
 			$x1 = ' ×'.$res['cpu']['num'];
+		}
 		$mhz[1][0] = ' | Frequency:'.$mhz[1][0];
 		$cache[1][0] = ' | Secondary cache:'.$cache[1][0];
 		$bogomips[1][0] = ' | Bogomips:'.$bogomips[1][0];
 		$res['cpu']['model'][] = $model[1][0].$mhz[1][0].$cache[1][0].$bogomips[1][0].$x1;
-        if (false !== is_array($res['cpu']['model'])) $res['cpu']['model'] = implode("<br />", $res['cpu']['model']);
-        if (false !== is_array($res['cpu']['mhz'])) $res['cpu']['mhz'] = implode("<br />", $res['cpu']['mhz']);
-        if (false !== is_array($res['cpu']['cache'])) $res['cpu']['cache'] = implode("<br />", $res['cpu']['cache']);
-        if (false !== is_array($res['cpu']['bogomips'])) $res['cpu']['bogomips'] = implode("<br />", $res['cpu']['bogomips']);
+		if (false !== is_array($res['cpu']['model'])) {
+			$res['cpu']['model'] = implode("<br />", $res['cpu']['model']);
+		}
+		if (false !== is_array($res['cpu']['mhz'])) {
+			$res['cpu']['mhz'] = implode("<br />", $res['cpu']['mhz']);
+		}
+		if (false !== is_array($res['cpu']['cache'])) {
+			$res['cpu']['cache'] = implode("<br />", $res['cpu']['cache']);
+		}
+		if (false !== is_array($res['cpu']['bogomips'])) {
+			$res['cpu']['bogomips'] = implode("<br />", $res['cpu']['bogomips']);
+		}
 	}
 
-    // NETWORK
+	// NETWORK
 
-    // UPTIME
-    if (false === ($str = @file("/proc/uptime"))) return false;
-    $str = explode(" ", implode("", $str));
-    $str = trim($str[0]);
-    $min = $str / 60;
-    $hours = $min / 60;
-    $days = floor($hours / 24);
-    $hours = floor($hours - ($days * 24));
-    $min = floor($min - ($days * 60 * 24) - ($hours * 60));
-    if ($days !== 0) $res['uptime'] = $days."Day";
-    if ($hours !== 0) $res['uptime'] .= $hours."Hour";
-    $res['uptime'] .= $min."Minute";
+	// UPTIME
+	if (false === ($str = @file("/proc/uptime"))) {
+		return false;
+	}
+	$str = explode(" ", implode("", $str));
+	$str = trim($str[0]);
+	$min = $str / 60;
+	$hours = $min / 60;
+	$days = floor($hours / 24);
+	$hours = floor($hours - ($days * 24));
+	$min = floor($min - ($days * 60 * 24) - ($hours * 60));
+	if ($days !== 0) {
+		$res['uptime'] = $days."Day";
+	}
+	if ($hours !== 0) {
+		$res['uptime'] .= $hours."Hour";
+	}
+	$res['uptime'] .= $min."Minute";
 
-    // MEMORY
-    if (false === ($str = @file("/proc/meminfo"))) return false;
-    $str = implode("", $str);
-    preg_match_all("/MemTotal\s{0,}\:+\s{0,}([\d\.]+).+?MemFree\s{0,}\:+\s{0,}([\d\.]+).+?Cached\s{0,}\:+\s{0,}([\d\.]+).+?SwapTotal\s{0,}\:+\s{0,}([\d\.]+).+?SwapFree\s{0,}\:+\s{0,}([\d\.]+)/s", $str, $buf);
+	// MEMORY
+	if (false === ($str = @file("/proc/meminfo"))) {
+		return false;
+	}
+	$str = implode("", $str);
+	preg_match_all("/MemTotal\s{0,}\:+\s{0,}([\d\.]+).+?MemFree\s{0,}\:+\s{0,}([\d\.]+).+?Cached\s{0,}\:+\s{0,}([\d\.]+).+?SwapTotal\s{0,}\:+\s{0,}([\d\.]+).+?SwapFree\s{0,}\:+\s{0,}([\d\.]+)/s", $str, $buf);
 	preg_match_all("/Buffers\s{0,}\:+\s{0,}([\d\.]+)/s", $str, $buffers);
 
-    $res['memTotal'] = round($buf[1][0]/1024, 2);
-    $res['memFree'] = round($buf[2][0]/1024, 2);
-    $res['memBuffers'] = round($buffers[1][0]/1024, 2);
+	$res['memTotal'] = round($buf[1][0]/1024, 2);
+	$res['memFree'] = round($buf[2][0]/1024, 2);
+	$res['memBuffers'] = round($buffers[1][0]/1024, 2);
 	$res['memCached'] = round($buf[3][0]/1024, 2);
-    $res['memUsed'] = $res['memTotal']-$res['memFree'];
-    $res['memPercent'] = (floatval($res['memTotal'])!=0)?round($res['memUsed']/$res['memTotal']*100,2):0;
+	$res['memUsed'] = $res['memTotal']-$res['memFree'];
+	$res['memPercent'] = (floatval($res['memTotal'])!=0)?round($res['memUsed']/$res['memTotal']*100, 2):0;
 
-    $res['memRealUsed'] = $res['memTotal'] - $res['memFree'] - $res['memCached'] - $res['memBuffers']; //真实内存使用
+	$res['memRealUsed'] = $res['memTotal'] - $res['memFree'] - $res['memCached'] - $res['memBuffers']; //真实内存使用
 	$res['memRealFree'] = $res['memTotal'] - $res['memRealUsed']; //真实空闲
-    $res['memRealPercent'] = (floatval($res['memTotal'])!=0)?round($res['memRealUsed']/$res['memTotal']*100,2):0; //真实内存使用率
+	$res['memRealPercent'] = (floatval($res['memTotal'])!=0)?round($res['memRealUsed']/$res['memTotal']*100, 2):0; //真实内存使用率
 
-	$res['memCachedPercent'] = (floatval($res['memCached'])!=0)?round($res['memCached']/$res['memTotal']*100,2):0; //Cached内存使用率
+	$res['memCachedPercent'] = (floatval($res['memCached'])!=0)?round($res['memCached']/$res['memTotal']*100, 2):0; //Cached内存使用率
 
-    $res['swapTotal'] = round($buf[4][0]/1024, 2);
-    $res['swapFree'] = round($buf[5][0]/1024, 2);
-    $res['swapUsed'] = round($res['swapTotal']-$res['swapFree'], 2);
-    $res['swapPercent'] = (floatval($res['swapTotal'])!=0)?round($res['swapUsed']/$res['swapTotal']*100,2):0;
+	$res['swapTotal'] = round($buf[4][0]/1024, 2);
+	$res['swapFree'] = round($buf[5][0]/1024, 2);
+	$res['swapUsed'] = round($res['swapTotal']-$res['swapFree'], 2);
+	$res['swapPercent'] = (floatval($res['swapTotal'])!=0)?round($res['swapUsed']/$res['swapTotal']*100, 2):0;
 
-    // LOAD AVG
-    if (false === ($str = @file("/proc/loadavg"))) return false;
-    $str = explode(" ", implode("", $str));
-    $str = array_chunk($str, 4);
-    $res['loadAvg'] = implode(" ", $str[0]);
+	// LOAD AVG
+	if (false === ($str = @file("/proc/loadavg"))) {
+		return false;
+	}
+	$str = explode(" ", implode("", $str));
+	$str = array_chunk($str, 4);
+	$res['loadAvg'] = implode(" ", $str[0]);
 
-    return $res;
+	return $res;
 }
 
 //FreeBSD系统探测
 function sys_freebsd()
 {
 	//CPU
-	if (false === ($res['cpu']['num'] = get_key("hw.ncpu"))) return false;
+	if (false === ($res['cpu']['num'] = get_key("hw.ncpu"))) {
+		return false;
+	}
 	$res['cpu']['model'] = get_key("hw.model");
 	//LOAD AVG
-	if (false === ($res['loadAvg'] = get_key("vm.loadavg"))) return false;
+	if (false === ($res['loadAvg'] = get_key("vm.loadavg"))) {
+		return false;
+	}
 	//UPTIME
-	if (false === ($buf = get_key("kern.boottime"))) return false;
+	if (false === ($buf = get_key("kern.boottime"))) {
+		return false;
+	}
 	$buf = explode(' ', $buf);
 	$sys_ticks = time() - intval($buf[3]);
 	$min = $sys_ticks / 60;
@@ -403,11 +460,17 @@ function sys_freebsd()
 	$days = floor($hours / 24);
 	$hours = floor($hours - ($days * 24));
 	$min = floor($min - ($days * 60 * 24) - ($hours * 60));
-	if ($days !== 0) $res['uptime'] = $days."Day";
-	if ($hours !== 0) $res['uptime'] .= $hours."Hour";
+	if ($days !== 0) {
+		$res['uptime'] = $days."Day";
+	}
+	if ($hours !== 0) {
+		$res['uptime'] .= $hours."Hour";
+	}
 	$res['uptime'] .= $min."Minute";
 	//MEMORY
-	if (false === ($buf = get_key("hw.physmem"))) return false;
+	if (false === ($buf = get_key("hw.physmem"))) {
+		return false;
+	}
 	$res['memTotal'] = round($buf/1024/1024, 2);
 
 	$str = get_key("vm.vmtotal");
@@ -418,9 +481,9 @@ function sys_freebsd()
 	$res['memCached'] = round($buff[0][2]/1024, 2);
 	$res['memUsed'] = round($buf[0][1]/1024, 2) + $res['memCached'];
 	$res['memFree'] = $res['memTotal'] - $res['memUsed'];
-	$res['memPercent'] = (floatval($res['memTotal'])!=0)?round($res['memUsed']/$res['memTotal']*100,2):0;
+	$res['memPercent'] = (floatval($res['memTotal'])!=0)?round($res['memUsed']/$res['memTotal']*100, 2):0;
 
-	$res['memRealPercent'] = (floatval($res['memTotal'])!=0)?round($res['memRealUsed']/$res['memTotal']*100,2):0;
+	$res['memRealPercent'] = (floatval($res['memTotal'])!=0)?round($res['memRealUsed']/$res['memTotal']*100, 2):0;
 
 	return $res;
 }
@@ -435,9 +498,10 @@ function get_key($keyName)
 function find_command($commandName)
 {
 	$path = array('/bin', '/sbin', '/usr/bin', '/usr/sbin', '/usr/local/bin', '/usr/local/sbin');
-	foreach($path as $p) 
-	{
-		if (@is_executable("$p/$commandName")) return "$p/$commandName";
+	foreach ($path as $p) {
+		if (@is_executable("$p/$commandName")) {
+			return "$p/$commandName";
+		}
 	}
 	return false;
 }
@@ -446,11 +510,11 @@ function find_command($commandName)
 function do_command($commandName, $args)
 {
 	$buffer = "";
-	if (false === ($command = find_command($commandName))) return false;
-	if ($fp = @popen("$command $args", 'r')) 
-	{
-		while (!@feof($fp))
-		{
+	if (false === ($command = find_command($commandName))) {
+		return false;
+	}
+	if ($fp = @popen("$command $args", 'r')) {
+		while (!@feof($fp)) {
 			$buffer .= @fgets($fp, 4096);
 		}
 		return trim($buffer);
@@ -461,22 +525,18 @@ function do_command($commandName, $args)
 //windows系统探测
 function sys_windows()
 {
-	if (PHP_VERSION >= 5)
-	{
+	if (PHP_VERSION >= 5) {
 		$objLocator = new COM("WbemScripting.SWbemLocator");
 		$wmi = $objLocator->ConnectServer();
 		$prop = $wmi->get("Win32_PnPEntity");
-	}
-	else
-	{
+	} else {
 		return false;
 	}
 
 	//CPU
-	$cpuinfo = GetWMI($wmi,"Win32_Processor", array("Name","L2CacheSize","NumberOfCores"));
+	$cpuinfo = GetWMI($wmi, "Win32_Processor", array("Name","L2CacheSize","NumberOfCores"));
 	$res['cpu']['num'] = $cpuinfo[0]['NumberOfCores'];
-	if (null == $res['cpu']['num']) 
-	{
+	if (null == $res['cpu']['num']) {
 		$res['cpu']['num'] = 1;
 	}/*
 	for ($i=0;$i<$res['cpu']['num'];$i++)
@@ -485,66 +545,65 @@ function sys_windows()
 		$res['cpu']['cache'] .= $cpuinfo[0]['L2CacheSize']."<br />";
 	}*/
 	$cpuinfo[0]['L2CacheSize'] = ' ('.$cpuinfo[0]['L2CacheSize'].')';
-	if($res['cpu']['num']==1)
+	if ($res['cpu']['num']==1) {
 		$x1 = '';
-	else
+	} else {
 		$x1 = ' ×'.$res['cpu']['num'];
+	}
 	$res['cpu']['model'] = $cpuinfo[0]['Name'].$cpuinfo[0]['L2CacheSize'].$x1;
 	// SYSINFO
-	$sysinfo = GetWMI($wmi,"Win32_OperatingSystem", array('LastBootUpTime','TotalVisibleMemorySize','FreePhysicalMemory','Caption','CSDVersion','SerialNumber','InstallDate'));
-	$sysinfo[0]['Caption']=iconv('GBK', 'UTF-8',$sysinfo[0]['Caption']);
-	$sysinfo[0]['CSDVersion']=iconv('GBK', 'UTF-8',$sysinfo[0]['CSDVersion']);
-	$res['win_n'] = $sysinfo[0]['Caption']." ".$sysinfo[0]['CSDVersion']." 序列号:{$sysinfo[0]['SerialNumber']} 于".date('Y年m月d日H:i:s',strtotime(substr($sysinfo[0]['InstallDate'],0,14)))."安装";
+	$sysinfo = GetWMI($wmi, "Win32_OperatingSystem", array('LastBootUpTime','TotalVisibleMemorySize','FreePhysicalMemory','Caption','CSDVersion','SerialNumber','InstallDate'));
+	$sysinfo[0]['Caption']=iconv('GBK', 'UTF-8', $sysinfo[0]['Caption']);
+	$sysinfo[0]['CSDVersion']=iconv('GBK', 'UTF-8', $sysinfo[0]['CSDVersion']);
+	$res['win_n'] = $sysinfo[0]['Caption']." ".$sysinfo[0]['CSDVersion']." 序列号:{$sysinfo[0]['SerialNumber']} 于".date('Y年m月d日H:i:s', strtotime(substr($sysinfo[0]['InstallDate'], 0, 14)))."安装";
 	//UPTIME
 	$res['uptime'] = $sysinfo[0]['LastBootUpTime'];
 
-	$sys_ticks = 3600*8 + time() - strtotime(substr($res['uptime'],0,14));
+	$sys_ticks = 3600*8 + time() - strtotime(substr($res['uptime'], 0, 14));
 	$min = $sys_ticks / 60;
 	$hours = $min / 60;
 	$days = floor($hours / 24);
 	$hours = floor($hours - ($days * 24));
 	$min = floor($min - ($days * 60 * 24) - ($hours * 60));
-	if ($days !== 0) $res['uptime'] = $days."Day";
-	if ($hours !== 0) $res['uptime'] .= $hours."Hour";
+	if ($days !== 0) {
+		$res['uptime'] = $days."Day";
+	}
+	if ($hours !== 0) {
+		$res['uptime'] .= $hours."Hour";
+	}
 	$res['uptime'] .= $min."Minute";
 
 	//MEMORY
-	$res['memTotal'] = round($sysinfo[0]['TotalVisibleMemorySize']/1024,2);
-	$res['memFree'] = round($sysinfo[0]['FreePhysicalMemory']/1024,2);
+	$res['memTotal'] = round($sysinfo[0]['TotalVisibleMemorySize']/1024, 2);
+	$res['memFree'] = round($sysinfo[0]['FreePhysicalMemory']/1024, 2);
 	$res['memUsed'] = $res['memTotal']-$res['memFree'];	//上面两行已经除以1024,这行不用再除了
-	$res['memPercent'] = round($res['memUsed'] / $res['memTotal']*100,2);
+	$res['memPercent'] = round($res['memUsed'] / $res['memTotal']*100, 2);
 
-	$swapinfo = GetWMI($wmi,"Win32_PageFileUsage", array('AllocatedBaseSize','CurrentUsage'));
+	$swapinfo = GetWMI($wmi, "Win32_PageFileUsage", array('AllocatedBaseSize','CurrentUsage'));
 
 	// LoadPercentage
-	$loadinfo = GetWMI($wmi,"Win32_Processor", array("LoadPercentage"));
+	$loadinfo = GetWMI($wmi, "Win32_Processor", array("LoadPercentage"));
 	$res['loadAvg'] = $loadinfo[0]['LoadPercentage'];
 
 	return $res;
 }
 
-function GetWMI($wmi,$strClass, $strValue = array())
+function GetWMI($wmi, $strClass, $strValue = array())
 {
 	$arrData = array();
 
 	$objWEBM = $wmi->Get($strClass);
 	$arrProp = $objWEBM->Properties_;
 	$arrWEBMCol = $objWEBM->Instances_();
-	foreach($arrWEBMCol as $objItem) 
-	{
+	foreach ($arrWEBMCol as $objItem) {
 		@reset($arrProp);
 		$arrInstance = array();
-		foreach($arrProp as $propItem) 
-		{
+		foreach ($arrProp as $propItem) {
 			eval("\$value = \$objItem->" . $propItem->Name . ";");
-			if (empty($strValue)) 
-			{
+			if (empty($strValue)) {
 				$arrInstance[$propItem->Name] = trim($value);
-			} 
-			else
-			{
-				if (in_array($propItem->Name, $strValue)) 
-				{
+			} else {
+				if (in_array($propItem->Name, $strValue)) {
 					$arrInstance[$propItem->Name] = trim($value);
 				}
 			}
@@ -557,7 +616,7 @@ function GetWMI($wmi,$strClass, $strValue = array())
 //比例条
 function bar($percent)
 {
-?>
+	?>
 	<div class="bar"><div class="barli" style="width:<?php echo $percent?>%">&nbsp;</div></div>
 <?php
 }
@@ -566,17 +625,16 @@ $uptime = $sysInfo['uptime']; //在线时间
 $stime = date('Y-m-d H:i:s'); //系统当前时间
 
 //硬盘
-$dt = round(@disk_total_space(".")/(1024*1024*1024),3); //总
-$df = round(@disk_free_space(".")/(1024*1024*1024),3); //可用
+$dt = round(@disk_total_space(".")/(1024*1024*1024), 3); //总
+$df = round(@disk_free_space(".")/(1024*1024*1024), 3); //可用
 $du = $dt-$df; //已用
-$hdPercent = (floatval($dt)!=0)?round($du/$dt*100,2):0;
+$hdPercent = (floatval($dt)!=0)?round($du/$dt*100, 2):0;
 
 $load = $sysInfo['loadAvg'];	//系统负载
 
 
 //判断内存如果小于1G，就显示M，否则显示G单位
-if($sysInfo['memTotal']<1024)
-{
+if ($sysInfo['memTotal']<1024) {
 	$memTotal = $sysInfo['memTotal']." M";
 	$mt = $sysInfo['memTotal']." M";
 	$mu = $sysInfo['memUsed']." M";
@@ -592,32 +650,29 @@ if($sysInfo['memTotal']<1024)
 	$memRealPercent = $sysInfo['memRealPercent']; //真实内存使用比率
 	$memPercent = $sysInfo['memPercent']; //内存总使用率
 	$memCachedPercent = $sysInfo['memCachedPercent']; //cache内存使用率
-}
-else
-{
-	$memTotal = round($sysInfo['memTotal']/1024,3)." G";
-	$mt = round($sysInfo['memTotal']/1024,3)." G";
-	$mu = round($sysInfo['memUsed']/1024,3)." G";
-	$mf = round($sysInfo['memFree']/1024,3)." G";
-	$mc = round($sysInfo['memCached']/1024,3)." G";
-	$mb = round($sysInfo['memBuffers']/1024,3)." G";
-	$st = round($sysInfo['swapTotal']/1024,3)." G";
-	$su = round($sysInfo['swapUsed']/1024,3)." G";
-	$sf = round($sysInfo['swapFree']/1024,3)." G";
+} else {
+	$memTotal = round($sysInfo['memTotal']/1024, 3)." G";
+	$mt = round($sysInfo['memTotal']/1024, 3)." G";
+	$mu = round($sysInfo['memUsed']/1024, 3)." G";
+	$mf = round($sysInfo['memFree']/1024, 3)." G";
+	$mc = round($sysInfo['memCached']/1024, 3)." G";
+	$mb = round($sysInfo['memBuffers']/1024, 3)." G";
+	$st = round($sysInfo['swapTotal']/1024, 3)." G";
+	$su = round($sysInfo['swapUsed']/1024, 3)." G";
+	$sf = round($sysInfo['swapFree']/1024, 3)." G";
 	$swapPercent = $sysInfo['swapPercent'];
-	$memRealUsed = round($sysInfo['memRealUsed']/1024,3)." G"; //真实内存使用
-	$memRealFree = round($sysInfo['memRealFree']/1024,3)." G"; //真实内存空闲
+	$memRealUsed = round($sysInfo['memRealUsed']/1024, 3)." G"; //真实内存使用
+	$memRealFree = round($sysInfo['memRealFree']/1024, 3)." G"; //真实内存空闲
 	$memRealPercent = $sysInfo['memRealPercent']; //真实内存使用比率
 	$memPercent = $sysInfo['memPercent']; //内存总使用率
 	$memCachedPercent = $sysInfo['memCachedPercent']; //cache内存使用率
 }
 
 //网卡流量
-$strs = @file("/proc/net/dev"); 
+$strs = @file("/proc/net/dev");
 
-for ($i = 2; $i < count($strs); $i++ )
-{
-	preg_match_all( "/([^\s]+):[\s]{0,}(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)/", $strs[$i], $info );
+for ($i = 2; $i < count($strs); $i++) {
+	preg_match_all("/([^\s]+):[\s]{0,}(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)/", $strs[$i], $info);
 	$NetOutSpeed[$i] = $info[10][0];
 	$NetInputSpeed[$i] = $info[2][0];
 	$NetInput[$i] = formatsize($info[2][0]);
@@ -625,10 +680,9 @@ for ($i = 2; $i < count($strs); $i++ )
 }
 
 //ajax调用实时刷新
-if ($_GET['act'] == "rt")
-{
+if ($_GET['act'] == "rt") {
 	$arr=array('useSpace'=>"$du",'freeSpace'=>"$df",'hdPercent'=>"$hdPercent",'barhdPercent'=>"$hdPercent%",'TotalMemory'=>"$mt",'UsedMemory'=>"$mu",'FreeMemory'=>"$mf",'CachedMemory'=>"$mc",'Buffers'=>"$mb",'TotalSwap'=>"$st",'swapUsed'=>"$su",'swapFree'=>"$sf",'loadAvg'=>"$load",'uptime'=>"$uptime",'freetime'=>"$freetime",'bjtime'=>"$bjtime",'stime'=>"$stime",'memRealPercent'=>"$memRealPercent",'memRealUsed'=>"$memRealUsed",'memRealFree'=>"$memRealFree",'memPercent'=>"$memPercent%",'memCachedPercent'=>"$memCachedPercent",'barmemCachedPercent'=>"$memCachedPercent%",'swapPercent'=>"$swapPercent",'barmemRealPercent'=>"$memRealPercent%",'barswapPercent'=>"$swapPercent%",'NetOut2'=>"$NetOut[2]",'NetOut3'=>"$NetOut[3]",'NetOut4'=>"$NetOut[4]",'NetOut5'=>"$NetOut[5]",'NetOut6'=>"$NetOut[6]",'NetOut7'=>"$NetOut[7]",'NetOut8'=>"$NetOut[8]",'NetOut9'=>"$NetOut[9]",'NetOut10'=>"$NetOut[10]",'NetInput2'=>"$NetInput[2]",'NetInput3'=>"$NetInput[3]",'NetInput4'=>"$NetInput[4]",'NetInput5'=>"$NetInput[5]",'NetInput6'=>"$NetInput[6]",'NetInput7'=>"$NetInput[7]",'NetInput8'=>"$NetInput[8]",'NetInput9'=>"$NetInput[9]",'NetInput10'=>"$NetInput[10]",'NetOutSpeed2'=>"$NetOutSpeed[2]",'NetOutSpeed3'=>"$NetOutSpeed[3]",'NetOutSpeed4'=>"$NetOutSpeed[4]",'NetOutSpeed5'=>"$NetOutSpeed[5]",'NetInputSpeed2'=>"$NetInputSpeed[2]",'NetInputSpeed3'=>"$NetInputSpeed[3]",'NetInputSpeed4'=>"$NetInputSpeed[4]",'NetInputSpeed5'=>"$NetInputSpeed[5]");
-	$jarr=json_encode($arr); 
+	$jarr=json_encode($arr);
 	$_GET['callback'] = htmlspecialchars($_GET['callback']);
 	echo $_GET['callback'],'(',$jarr,')';
 	exit;
@@ -800,15 +854,27 @@ function displayData(dataJSON)
   <tr><th colspan="4">Server Parameters</th></tr>
   <tr>
     <td>Server Domain/IP</td>
-    <td colspan="3"><?php echo @get_current_user();?> - <?php echo $_SERVER['SERVER_NAME'];?>(<?php if('/'==DIRECTORY_SEPARATOR){echo $_SERVER['SERVER_ADDR'];}else{echo @gethostbyname($_SERVER['SERVER_NAME']);} ?>)&nbsp;&nbsp;Your IP address is: <?php echo @$_SERVER['REMOTE_ADDR'];?></td>
+    <td colspan="3"><?php echo @get_current_user();?> - <?php echo $_SERVER['SERVER_NAME'];?>(<?php if ('/'==DIRECTORY_SEPARATOR) {
+	echo $_SERVER['SERVER_ADDR'];
+} else {
+	echo @gethostbyname($_SERVER['SERVER_NAME']);
+} ?>)&nbsp;&nbsp;Your IP address is: <?php echo @$_SERVER['REMOTE_ADDR'];?></td>
   </tr>
   <tr>
     <td>Server identifies the</td>
-    <td colspan="3"><?php if($sysInfo['win_n'] != ''){echo $sysInfo['win_n'];}else{echo @php_uname();};?></td>
+    <td colspan="3"><?php if ($sysInfo['win_n'] != '') {
+	echo $sysInfo['win_n'];
+} else {
+	echo @php_uname();
+};?></td>
   </tr>
   <tr>
     <td width="15%">Server OS</td>
-    <td width="35%"><?php $os = explode(" ", php_uname()); echo $os[0];?> &nbsp;Kernel version: <?php if('/'==DIRECTORY_SEPARATOR){echo $os[2];}else{echo $os[1];} ?></td>
+    <td width="35%"><?php $os = explode(" ", php_uname()); echo $os[0];?> &nbsp;Kernel version: <?php if ('/'==DIRECTORY_SEPARATOR) {
+	echo $os[2];
+} else {
+	echo $os[1];
+} ?></td>
     <td width="15%">Web Server</td>
     <td width="35%"><?php echo $_SERVER['SERVER_SOFTWARE'];?></td>
   </tr>
@@ -820,15 +886,19 @@ function displayData(dataJSON)
   </tr>
   <tr>
 	  <td>Server HostName</td>
-	  <td><?php if('/'==DIRECTORY_SEPARATOR ){echo $os[1];}else{echo $os[2];} ?></td>
+	  <td><?php if ('/'==DIRECTORY_SEPARATOR) {
+	echo $os[1];
+} else {
+	echo $os[2];
+} ?></td>
 	  <td>Absolute Path</td>
-	  <td><?php echo $_SERVER['DOCUMENT_ROOT']?str_replace('\\','/',$_SERVER['DOCUMENT_ROOT']):str_replace('\\','/',dirname(__FILE__));?></td>
+	  <td><?php echo $_SERVER['DOCUMENT_ROOT']?str_replace('\\', '/', $_SERVER['DOCUMENT_ROOT']):str_replace('\\', '/', dirname(__FILE__));?></td>
 	</tr>
   <tr>
 	  <td>Administrator Mail</td>
 	  <td><?php echo $_SERVER['SERVER_ADMIN'];?></td>
 		<td>Prober Path</td>
-		<td><?php echo str_replace('\\','/',__FILE__)?str_replace('\\','/',__FILE__):$_SERVER['SCRIPT_FILENAME'];?></td>
+		<td><?php echo str_replace('\\', '/', __FILE__)?str_replace('\\', '/', __FILE__):$_SERVER['SCRIPT_FILENAME'];?></td>
 	</tr>
 </table>
 
@@ -847,7 +917,11 @@ function displayData(dataJSON)
   </tr>
   <tr>
     <td>CPU usage</td>
-    <td colspan="5"><?php if('/'==DIRECTORY_SEPARATOR){echo $cpu_show." | <a href='".$phpSelf."?act=cpu_percentage' target='_blank' class='static'>View Chart</a>";}else{echo "Only supports the Linux system";}?>
+    <td colspan="5"><?php if ('/'==DIRECTORY_SEPARATOR) {
+	echo $cpu_show." | <a href='".$phpSelf."?act=cpu_percentage' target='_blank' class='static'>View Chart</a>";
+} else {
+	echo "Only supports the Linux system";
+}?>
 	</td>
   </tr>
   <tr>
@@ -865,12 +939,12 @@ function displayData(dataJSON)
 		<td colspan="5">
 <?php
 $tmp = array(
-    'memTotal', 'memUsed', 'memFree', 'memPercent',
-    'memCached', 'memRealPercent',
-    'swapTotal', 'swapUsed', 'swapFree', 'swapPercent'
+	'memTotal', 'memUsed', 'memFree', 'memPercent',
+	'memCached', 'memRealPercent',
+	'swapTotal', 'swapUsed', 'swapFree', 'swapPercent'
 );
-foreach ($tmp AS $v) {
-    $sysInfo[$v] = $sysInfo[$v] ? $sysInfo[$v] : 0;
+foreach ($tmp as $v) {
+	$sysInfo[$v] = $sysInfo[$v] ? $sysInfo[$v] : 0;
 }
 ?>
           Total Memory: 
@@ -884,42 +958,40 @@ foreach ($tmp AS $v) {
           <div class="bar"><div id="barmemPercent" class="barli_green" style="width:<?php echo $memPercent?>%">&nbsp;</div> </div>
 <?php
 //判断如果cache为0，不显示
-if($sysInfo['memCached']>0)
-{
-?>		
-		  Cache Memory <span id="CachedMemory"><?php echo $mc;?></span>
+if ($sysInfo['memCached']>0) {
+	?>		
+		  Cache Memory <span id="CachedMemory"><?php echo $mc; ?></span>
 		  , Rate 
-          <span id="memCachedPercent"><?php echo $memCachedPercent;?></span>
-		  %	| Buffers  <span id="Buffers"><?php echo $mb;?></span>
+          <span id="memCachedPercent"><?php echo $memCachedPercent; ?></span>
+		  %	| Buffers  <span id="Buffers"><?php echo $mb; ?></span>
           <div class="bar"><div id="barmemCachedPercent" class="barli_blue" style="width:<?php echo $memCachedPercent?>%" >&nbsp;</div></div>
 
           Real Memory Used
-          <span id="memRealUsed"><?php echo $memRealUsed;?></span>
+          <span id="memRealUsed"><?php echo $memRealUsed; ?></span>
 		  , Real Memory Free
-          <span id="memRealFree"><?php echo $memRealFree;?></span>
+          <span id="memRealFree"><?php echo $memRealFree; ?></span>
 		  , Rate
-          <span id="memRealPercent"><?php echo $memRealPercent;?></span>
+          <span id="memRealPercent"><?php echo $memRealPercent; ?></span>
           %
           <div class="bar_1"><div id="barmemRealPercent" class="barli_1" style="width:<?php echo $memRealPercent?>%" >&nbsp;</div></div> 
 <?php
 }
 //判断如果SWAP区为0，不显示
-if($sysInfo['swapTotal']>0)
-{
-?>	
+if ($sysInfo['swapTotal']>0) {
+	?>	
           SWAP: 
-          <?php echo $st;?>
+          <?php echo $st; ?>
           , Used
-          <span id="swapUsed"><?php echo $su;?></span>
+          <span id="swapUsed"><?php echo $su; ?></span>
           , Free
-          <span id="swapFree"><?php echo $sf;?></span>
+          <span id="swapFree"><?php echo $sf; ?></span>
           , Rate
-          <span id="swapPercent"><?php echo $swapPercent;?></span>
+          <span id="swapPercent"><?php echo $swapPercent; ?></span>
           %
           <div class="bar"><div id="barswapPercent" class="barli_red" style="width:<?php echo $swapPercent?>%"  >&nbsp;</div> </div>
 
 <?php
-}	
+}
 ?>		  
 	  </td>
 	</tr>
@@ -933,8 +1005,8 @@ if($sysInfo['swapTotal']>0)
 <?php if (false !== ($strs = @file("/proc/net/dev"))) : ?>
 <table width="100%" cellpadding="3" cellspacing="0" align="center">
     <tr><th colspan="5">NetWork</th></tr>
-<?php for ($i = 2; $i < count($strs); $i++ ) : ?>
-<?php preg_match_all( "/([^\s]+):[\s]{0,}(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)/", $strs[$i], $info );?>
+<?php for ($i = 2; $i < count($strs); $i++) : ?>
+<?php preg_match_all("/([^\s]+):[\s]{0,}(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)/", $strs[$i], $info);?>
      <tr>
         <td width="13%"><?php echo $info[1][0]?> : </td>
         <td width="29%">In : <font color='#CC0000'><span id="NetInput<?php echo $i?>"><?php echo $NetInput[$i]?></span></font></td>
@@ -975,7 +1047,7 @@ foreach ($able as $key=>$value) {
 		$phpSelf = $_SERVER[PHP_SELF] ? $_SERVER[PHP_SELF] : $_SERVER[SCRIPT_NAME];
 		$disFuns=get_cfg_var("disable_functions");
 		?>
-    <?php echo (false!==eregi("phpinfo",$disFuns))? '<font color="red">×</font>' :"<a href='$phpSelf?act=phpinfo' target='_blank'>PHPINFO</a>";?>
+    <?php echo (false!==eregi("phpinfo", $disFuns))? '<font color="red">×</font>' :"<a href='$phpSelf?act=phpinfo' target='_blank'>PHPINFO</a>";?>
     </td>
     <td width="32%">PHP Version: </td>
     <td width="18%"><?php echo PHP_VERSION;?></td>
@@ -1090,21 +1162,17 @@ foreach ($able as $key=>$value) {
 		<td colspan="3" class="word">
 <?php 
 $disFuns=get_cfg_var("disable_functions");
-if(empty($disFuns))
-{
+if (empty($disFuns)) {
 	echo '<font color=red>×</font>';
-}
-else
-{ 
+} else {
 	//echo $disFuns;
-	$disFuns_array =  explode(',',$disFuns);
-	foreach ($disFuns_array as $key=>$value) 
-	{
+	$disFuns_array =  explode(',', $disFuns);
+	foreach ($disFuns_array as $key=>$value) {
 		if ($key!=0 && $key%5==0) {
 			echo '<br />';
+		}
+		echo "$value&nbsp;&nbsp;";
 	}
-	echo "$value&nbsp;&nbsp;";
-}	
 }
 
 ?>
@@ -1139,10 +1207,12 @@ else
     <td>GD Library: </td>
     <td>
     <?php
-        if(function_exists(gd_info)) {
-            $gd_info = @gd_info();
-	        echo $gd_info["GD Version"];
-	    }else{echo '<font color="red">×</font>';}
+		if (function_exists(gd_info)) {
+			$gd_info = @gd_info();
+			echo $gd_info["GD Version"];
+		} else {
+			echo '<font color="red">×</font>';
+		}
 	?></td>
     <td>Zlib: </td>
     <td><?php echo isfun("gzclose");?></td>
@@ -1185,34 +1255,61 @@ else
   <tr><th colspan="4">Other Components</th></tr>
   <tr>
     <td width="32%">Zend Version</td>
-    <td width="18%"><?php $zend_version = zend_version();if(empty($zend_version)){echo '<font color=red>×</font>';}else{echo $zend_version;}?></td>
+    <td width="18%"><?php $zend_version = zend_version(); if (empty($zend_version)) {
+		echo '<font color=red>×</font>';
+	} else {
+		echo $zend_version;
+	}?></td>
     <td width="32%">
 <?php
 $PHP_VERSION = PHP_VERSION;
-$PHP_VERSION = substr($PHP_VERSION,2,1);
-if($PHP_VERSION > 2)
-{
+$PHP_VERSION = substr($PHP_VERSION, 2, 1);
+if ($PHP_VERSION > 2) {
 	echo "ZendGuardLoader[On]";
-}
-else
-{
+} else {
 	echo "Zend Optimizer";
 }
 ?>
 	</td>
-    <td width="18%"><?php if($PHP_VERSION > 2){echo (get_cfg_var("zend_loader.enable"))?'<font color=green>√</font>':'<font color=red>×</font>';} else{if(function_exists('zend_optimizer_version')){	echo zend_optimizer_version();}else{	echo (get_cfg_var("zend_optimizer.optimization_level")||get_cfg_var("zend_extension_manager.optimizer_ts")||get_cfg_var("zend.ze1_compatibility_mode")||get_cfg_var("zend_extension_ts"))?'<font color=green>√</font>':'<font color=red>×</font>';}}?></td>
+    <td width="18%"><?php if ($PHP_VERSION > 2) {
+	echo (get_cfg_var("zend_loader.enable"))?'<font color=green>√</font>':'<font color=red>×</font>';
+} else {
+	if (function_exists('zend_optimizer_version')) {
+		echo zend_optimizer_version();
+	} else {
+		echo (get_cfg_var("zend_optimizer.optimization_level")||get_cfg_var("zend_extension_manager.optimizer_ts")||get_cfg_var("zend.ze1_compatibility_mode")||get_cfg_var("zend_extension_ts"))?'<font color=green>√</font>':'<font color=red>×</font>';
+	}
+}?></td>
   </tr>
   <tr>
     <td>eAccelerator</td>
-    <td><?php if((phpversion('eAccelerator'))!=''){echo phpversion('eAccelerator');}else{ echo "<font color=red>×</font>";} ?></td>
+    <td><?php if ((phpversion('eAccelerator'))!='') {
+	echo phpversion('eAccelerator');
+} else {
+	echo "<font color=red>×</font>";
+} ?></td>
     <td>ioncube</td>
-    <td><?php if(extension_loaded('ionCube Loader')){   $ys = ioncube_loader_iversion();   $gm = ".".(int)substr($ys,3,2);   echo ionCube_Loader_version().$gm;}else{echo "<font color=red>×</font>";}?></td>
+    <td><?php if (extension_loaded('ionCube Loader')) {
+	$ys = ioncube_loader_iversion();
+	$gm = ".".(int)substr($ys, 3, 2);
+	echo ionCube_Loader_version().$gm;
+} else {
+	echo "<font color=red>×</font>";
+}?></td>
   </tr>
   <tr>
     <td>XCache</td>
-    <td><?php if((phpversion('XCache'))!=''){echo phpversion('XCache');}else{ echo "<font color=red>×</font>";} ?></td>
+    <td><?php if ((phpversion('XCache'))!='') {
+	echo phpversion('XCache');
+} else {
+	echo "<font color=red>×</font>";
+} ?></td>
     <td>APC</td>
-    <td><?php if((phpversion('APC'))!=''){echo phpversion('APC');}else{ echo "<font color=red>×</font>";} ?></td>
+    <td><?php if ((phpversion('APC'))!='') {
+	echo phpversion('APC');
+} else {
+	echo "<font color=red>×</font>";
+} ?></td>
   </tr>
 </table>
 
@@ -1224,13 +1321,13 @@ else
     <td width="32%">MySQL: </td>
     <td width="18%"><?php echo isfun("mysql_close");?>
     <?php
-    if(function_exists("mysql_get_server_info")) {
-        $s = @mysql_get_server_info();
-        $s = $s ? '&nbsp; mysql_server version: '.$s : '';
-	    $c = '&nbsp; mysql_client version: '.@mysql_get_client_info();
-        echo $s;
-    }
-    ?>
+	if (function_exists("mysql_get_server_info")) {
+		$s = @mysql_get_server_info();
+		$s = $s ? '&nbsp; mysql_server version: '.$s : '';
+		$c = '&nbsp; mysql_client version: '.@mysql_get_client_info();
+		echo $s;
+	}
+	?>
 	</td>
     <td width="32%">ODBC: </td>
     <td width="18%"><?php echo isfun("odbc_close");?></td>
@@ -1249,7 +1346,17 @@ else
   </tr>
   <tr>
     <td>SQLite: </td>
-    <td><?php if(extension_loaded('sqlite3')) {$sqliteVer = SQLite3::version();echo '<font color=green>√</font>　';echo "SQLite3　Ver ";echo $sqliteVer[versionString];}else {echo isfun("sqlite_close");if(isfun("sqlite_close") == '<font color="green">√</font>') {echo "&nbsp;： ".@sqlite_libversion();}}?></td>
+    <td><?php if (extension_loaded('sqlite3')) {
+		$sqliteVer = SQLite3::version();
+		echo '<font color=green>√</font>　';
+		echo "SQLite3　Ver ";
+		echo $sqliteVer[versionString];
+	} else {
+		echo isfun("sqlite_close");
+		if (isfun("sqlite_close") == '<font color="green">√</font>') {
+			echo "&nbsp;： ".@sqlite_libversion();
+		}
+	}?></td>
     <td>Hyperwave: </td>
     <td><?php echo isfun("hw_close");?></td>
   </tr>
@@ -1368,22 +1475,18 @@ else
     <td colspan="11" class="suduk" ><table align="center" width="550" border="0" cellspacing="0" cellpadding="0" height="8" class="suduk">
     <tr>
       <td class="sudu"  width="<?php 
-	if(preg_match("/[^\d-., ]/",$speed))
-		{
-			echo "0";
-		}
-	else{
-			echo 550*($speed/11000);
-		} 
+	if (preg_match("/[^\d-., ]/", $speed)) {
+		echo "0";
+	} else {
+		echo 550*($speed/11000);
+	}
 		?>"></td>
       <td class="suduk" width="<?php 
-	if(preg_match("/[^\d-., ]/",$speed))
-		{
-			echo "550";
-		}
-	else{
-			echo 550-550*($speed/11000);
-		} 
+	if (preg_match("/[^\d-., ]/", $speed)) {
+		echo "550";
+	} else {
+		echo 550-550*($speed/11000);
+	}
 		?>"></td>
     </tr>
     </table>
@@ -1415,9 +1518,9 @@ else
 </table>
   <?php
   if ($_POST['act'] == 'MySQL Test') {
-  	if(function_exists("mysql_close")==1) {
-  		$link = @mysql_connect($host.":".$port,$login,$password);
-  		if ($link){
+  	if (function_exists("mysql_close")==1) {
+  		$link = @mysql_connect($host.":".$port, $login, $password);
+  		if ($link) {
   			echo "<script>alert('Connect to the MySql database to normal')</script>";
   		} else {
   			echo "<script>alert('Unable to connect to MySql database!')</script>";

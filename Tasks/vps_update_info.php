@@ -1,6 +1,7 @@
 <?php
 
-function vps_update_info($args) {
+function vps_update_info($args)
+{
 	require_once __DIR__.'/../../../include/functions.inc.php';
 	global $global;
 	$db = $GLOBALS['tf']->db;

@@ -6,8 +6,9 @@ use \Workerman\Autoloader;
 
 //require __DIR__.'/Events.php';
 
-if (ini_get('default_socket_timeout') < 1200 && ini_get('default_socket_timeout') > 1)
+if (ini_get('default_socket_timeout') < 1200 && ini_get('default_socket_timeout') > 1) {
 	ini_set('default_socket_timeout', 1200);
+}
 
 $context = [																						// Certificate is best to apply for a certificate
 	'ssl' => [																						// use the absolute/full paths
@@ -31,7 +32,7 @@ $gateway_ssl->pingData = ''; // heartbeat data
 $gateway_ssl->registerAddress = '127.0.0.1:1236'; // Service registration address
 //$gateway->maxSendBufferSize = 102400000;
 //$gateway->onWorkerStart = function($worker) {};
-$gateway_ssl->onConnect = function($connection) { // When the client is connected, set the connection onWebSocketConnect, that is, when the websocket handshake callback
+$gateway_ssl->onConnect = function ($connection) { // When the client is connected, set the connection onWebSocketConnect, that is, when the websocket handshake callback
 	$connection->maxSendBufferSize = 100*1024*1024; // Set the current connection application layer send buffer size of the connection to 100mb, will override the default value
 	$connection::$maxPackageSize = 100*1024*1024; // Set the current connection application layer received packet size to 100mb (default 10mb)
 	//$connection->onWebSocketConnect = function($connection , $http_header) {
@@ -40,19 +41,17 @@ $gateway_ssl->onConnect = function($connection) { // When the client is connecte
 		// onWebSocketConnect Inside $_GET $_SERVER is available  var_dump($_GET, $_SERVER);
 	//};
 };
-$gateway_ssl->onBufferFull = function($connection)
-{
+$gateway_ssl->onBufferFull = function ($connection) {
 	Worker::safeEcho("GateWaySSL bufferFull and do not send again\n");
 };
-$gateway_ssl->onBufferDrain = function($connection)
-{
+$gateway_ssl->onBufferDrain = function ($connection) {
 	Worker::safeEcho("GateWaySSL buffer drain and continue send\n");
 };
-$gateway_ssl->onError = function($connection, $code, $msg)
-{
+$gateway_ssl->onError = function ($connection, $code, $msg) {
 	Worker::safeEcho("GateWaySSL error {$code} {$msg}\n");
 };
 
 // If it is not started in the root directory, run the runAll method
-if(!defined('GLOBAL_START'))
+if (!defined('GLOBAL_START')) {
 	Worker::runAll();
+}

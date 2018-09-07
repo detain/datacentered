@@ -1,9 +1,11 @@
 <?php
 
-function hyperv_cleanupresources($args) {
+function hyperv_cleanupresources($args)
+{
 	require_once __DIR__.'/../../../include/functions.inc.php';
-	if (ini_get('default_socket_timeout') < 1200 && ini_get('default_socket_timeout') > 1)
+	if (ini_get('default_socket_timeout') < 1200 && ini_get('default_socket_timeout') > 1) {
 		ini_set('default_socket_timeout', 1200);
+	}
 	global $global;
 	$service_master = $args['service_master'];
 	$parameters = [
@@ -19,7 +21,8 @@ function hyperv_cleanupresources($args) {
 	}
 	if (isset($args['queue']) && count($args['queue']) > 0) {
 		function_requirements('vps_queue_handler');
-		foreach ($args['queue'] as $queue)
-		vps_queue_handler($service_master, $queue);
+		foreach ($args['queue'] as $queue) {
+			vps_queue_handler($service_master, $queue);
+		}
 	}
 }

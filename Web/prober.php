@@ -13,4 +13,3 @@ $json['network']['v6'] = NetworkStats::Checkipv6();
 $json['hddusage'] = StorageStats::hddusage();
 
 echo json_encode($json);
-
