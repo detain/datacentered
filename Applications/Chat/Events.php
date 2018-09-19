@@ -34,7 +34,7 @@ class Events
 		//$worker->maxSendBufferSize = 102400000;
 		//$worker->sendToGatewayBufferSize = 102400000;
 		/**
-		 * @var GlobalData\Client
+		 * @var \GlobalData\Client
 		 */
 		global $global;
 		$global = new GlobalData\Client('127.0.0.1:2207');     // initialize the GlobalData client
@@ -88,7 +88,7 @@ class Events
 	public static function onMessage($client_id, $message)
 	{
 		/**
-		 * @var GlobalData\Client
+		 * @var \GlobalData\Client
 		 */
 		global $global;
 		//Worker::safeEcho("[{$client_id}] client:{$_SERVER['REMOTE_ADDR']}:{$_SERVER['REMOTE_PORT']} gateway:{$_SERVER['GATEWAY_ADDR']}:{$_SERVER['GATEWAY_PORT']} session:".json_encode($_SESSION)." onMessage:".serialize($message).PHP_EOL); // debug
@@ -115,7 +115,7 @@ class Events
 	public static function onClose($client_id)
 	{
 		/**
-		 * @var GlobalData\Client
+		 * @var \GlobalData\Client
 		 */
 		global $global;
 		Worker::safeEcho("[{$client_id}] client:".(isset($_SESSION['name']) ? $_SESSION['name'] : '')." {$_SERVER['REMOTE_ADDR']}:{$_SERVER['REMOTE_PORT']} gateway:{$_SERVER['GATEWAY_ADDR']}:{$_SERVER['GATEWAY_PORT']} onClose:''".PHP_EOL); // debug
@@ -182,7 +182,7 @@ class Events
 	public static function vps_queue_timer()
 	{
 		/**
-		 * @var GlobalData\Client
+		 * @var \GlobalData\Client
 		 */
 		global $global;
 		/**
@@ -232,7 +232,7 @@ class Events
 						$task_connection->send(json_encode(['type' => 'vps_queue_task', 'args' => [
 							'id' => $server_id,
 						]]));
-						$task_connection->onMessage = function ($task_connection, $task_result) use ($server_id, $server_data) {
+						$task_connection->onMessage = function (AsyncTcpConnection $task_connection, $task_result) use ($server_id, $server_data) {
 							$task_result = json_decode($task_result, true);
 							//Worker::safeEcho("Got Result ".var_export($task_result, true).PHP_EOL);
 							//Worker::safeEcho("Bandwidth Update for ".$_SESSION['name']." content: ".json_encode($message_data['content'])." returned:".var_export($task_result,TRUE).PHP_EOL);
@@ -263,7 +263,7 @@ class Events
 		Gateway::sendToAll(json_encode($new_message));*/
 		$task_connection = new AsyncTcpConnection('Text://127.0.0.1:2208');
 		$task_connection->send(json_encode(['type' => 'async_hyperv_get_list', 'args' => []]));
-		$task_connection->onMessage = function ($task_connection, $task_result) use ($task_connection) {
+		$task_connection->onMessage = function (AsyncTcpConnection $task_connection, $task_result) use ($task_connection) {
 			//var_dump($task_result);
 			$task_connection->close();
 		};
@@ -284,7 +284,7 @@ class Events
 		Gateway::sendToAll(json_encode($new_message));*/
 		$task_connection = new AsyncTcpConnection('Text://127.0.0.1:2208');
 		$task_connection->send(json_encode(['type' => 'sync_hyperv_queue', 'args' => []]));
-		$task_connection->onMessage = function ($task_connection, $task_result) use ($task_connection) {
+		$task_connection->onMessage = function (AsyncTcpConnection $task_connection, $task_result) use ($task_connection) {
 			//var_dump($task_result);
 			$task_connection->close();
 		};
@@ -302,6 +302,9 @@ class Events
 	 */
 	public static function run_command($host, $cmd, $interact = false, $for = null, $rows = 80, $cols = 24, $update_after = false)
 	{
+		/**
+		* @var \GlobalData\Client
+		*/
 		global $global;
 		// we need to store the command locally so we can easily react proeprly if we get a response
 		if (substr($host, 0, 3) == 'vps' && is_numeric(substr($host, 3))) {
@@ -335,6 +338,9 @@ class Events
 
 	public static function say($from, $is, $to, $content, $from_name)
 	{
+		/**
+		* @var \GlobalData\Client
+		*/
 		global $global;
 		Worker::safeEcho("Saying {$content} from {$from} to {$to} is {$is} name {$from_name}".PHP_EOL);
 		if ($is == 'room') {
@@ -406,7 +412,7 @@ class Events
 				'content' => $message_data['content']
 			]
 		]));
-		$task_connection->onMessage = function ($task_connection, $task_result) use ($client_id, $message_data) {
+		$task_connection->onMessage = function (AsyncTcpConnection $task_connection, $task_result) use ($client_id, $message_data) {
 			//$task_result = json_decode($task_result, true);
 			//Worker::safeEcho("[{$client_id}] Process VPS List for ".$_SESSION['name']." returned:".$task_result.PHP_EOL);
 			$task_connection->close();
@@ -437,7 +443,7 @@ class Events
 				'content' => $message_data['content']
 			]
 		]));
-		$task_connection->onMessage = function ($task_connection, $task_result) use ($client_id, $message_data) {
+		$task_connection->onMessage = function (AsyncTcpConnection $task_connection, $task_result) use ($client_id, $message_data) {
 			//$task_result = json_decode($task_result, true);
 			//Worker::safeEcho("[{$client_id}] Process VPS Info for ".$_SESSION['name']." returned:".$task_result.PHP_EOL);
 			$task_connection->close();
@@ -466,7 +472,7 @@ class Events
 				'id' => $id
 			]
 		]));
-		$task_connection->onMessage = function ($task_connection, $task_result) use ($client_id, $uid, $message_data) {
+		$task_connection->onMessage = function (AsyncTcpConnection $task_connection, $task_result) use ($client_id, $uid, $message_data) {
 			$task_result = json_decode($task_result, true);
 			//Gateway::sendToUid($uid, json_encode([
 			Gateway::sendToClient($client_id, json_encode([
@@ -501,7 +507,7 @@ class Events
 				'content' => $message_data['content']
 			]
 		]));
-		$task_connection->onMessage = function ($task_connection, $task_result) use ($client_id, $message_data) {
+		$task_connection->onMessage = function (AsyncTcpConnection $task_connection, $task_result) use ($client_id, $message_data) {
 			//Worker::safeEcho("[{$client_id}] Bandwidth Update for ".$_SESSION['name']." content: ".json_encode($message_data['content'])." returned:".var_export($task_result,TRUE).PHP_EOL);
 			$task_connection->close();
 		};
@@ -517,6 +523,9 @@ class Events
 	 */
 	public static function msgClients($client_id, $message_data)
 	{
+		/**
+		* @var \GlobalData\Client
+		*/
 		global $global;
 		if ($_SESSION['login'] == true && $_SESSION['ima'] == 'admin') {
 			$sessions = Gateway::getAllClientSessions();
@@ -642,6 +651,9 @@ class Events
 	 */
 	public static function msgRunning($client_id, $message_data)
 	{
+		/**
+		* @var \GlobalData\Client
+		*/
 		global $global;
 		Worker::safeEcho("[{$client_id}] Got Running Command ".json_encode($message_data).PHP_EOL);
 		if ($_SESSION['login'] == true) {
@@ -674,6 +686,9 @@ class Events
 	 */
 	public static function msgRan($client_id, $message_data)
 	{
+		/**
+		* @var \GlobalData\Client
+		*/
 		global $global;
 		//Worker::safeEcho("[{$client_id}] Got Ran Command ".json_encode($message_data).PHP_EOL);
 		// indicates both completion of a run process and its final exit code or terminal signal
@@ -731,6 +746,9 @@ class Events
 	 */
 	public static function msgLogin($client_id, $message_data)
 	{
+		/**
+		* @var \GlobalData\Client
+		*/
 		global $global;
 		$ima = isset($message_data['ima']) && in_array($message_data['ima'], ['host', 'admin']) ? $message_data['ima'] : 'admin';
 		//Worker::safeEcho("[{$client_id}] client:{$_SERVER['REMOTE_ADDR']}:{$_SERVER['REMOTE_PORT']} gateway:{$_SERVER['GATEWAY_ADDR']}:{$_SERVER['GATEWAY_PORT']} session:".json_encode($_SESSION)." onMessage:".serialize($message).PHP_EOL); // debug
@@ -748,7 +766,7 @@ class Events
 					return Gateway::sendToCurrentClient(json_encode($new_message));
 				}
 				/**
-				 * @var GlobalData\Client
+				 * @var \GlobalData\Client
 				 */
 				global $global;
 				$uid = 'vps'.$row['vps_id'];

@@ -3,6 +3,9 @@
 function get_map($args)
 {
 	require_once __DIR__.'/../../../include/functions.inc.php';
+	/**
+	* @var \GlobalData\Client
+	*/
 	global $global;
 	$db = $GLOBALS['tf']->db;
 	$db->query("select * from vps_masters left join vps_master_details using (vps_id) where vps_id=".$args['id']);

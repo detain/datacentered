@@ -22,6 +22,9 @@ function async_hyperv_get_list_server(\Clue\React\Buzz\Browser &$browser, $servi
 			//echo "Running GetVMList for {$service_master['vps_name']}\n";
 			$api->GetVMList(['hyperVAdmin' => 'Administrator', 'adminPassword' => $service_master['vps_root']])->then(
 				function ($result) use (&$factory, &$client, $service_master) {
+					/**
+					* @var \GlobalData\Client
+					*/
 					global $global;
 					$var = 'vps_host_'.$service_master['vps_id'];
 					if (isset($result->GetVMListResult->Success)) {
@@ -49,6 +52,9 @@ function async_hyperv_get_list_server(\Clue\React\Buzz\Browser &$browser, $servi
 				},
 				function (Exception $e) use ($service_master) {
 					echo $service_master['vps_name'].' GetVMList ERROR: ' . $e->getMessage() . PHP_EOL;
+					/**
+					* @var \GlobalData\Client
+					*/
 					global $global;
 					$var = 'vps_host_'.$service_master['vps_id'];
 					$global->$var = 0;
@@ -80,6 +86,9 @@ function async_hyperv_get_list($args)
 		]
 	]);
 	$browser = new \Clue\React\Buzz\Browser($loop, $connector);
+	/**
+	* @var \GlobalData\Client
+	*/
 	global $global;
 	$db = $GLOBALS['tf']->db;
 	$db->query("select * from vps_masters left join vps_master_details using (vps_id) where vps_type=".get_service_define('HYPERV'));

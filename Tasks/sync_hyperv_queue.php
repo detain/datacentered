@@ -3,6 +3,9 @@
 function sync_hyperv_queue($args)
 {
 	require_once __DIR__.'/../../../include/functions.inc.php';
+	/**
+	* @var \GlobalData\Client
+	*/
 	global $global;
 	$db = $GLOBALS['tf']->db;
 	$db->query("select * from vps_masters left join vps_master_details using (vps_id) where vps_type=".get_service_define('HYPERV'));

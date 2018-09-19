@@ -6,6 +6,9 @@ function hyperv_cleanupresources($args)
 	if (ini_get('default_socket_timeout') < 1200 && ini_get('default_socket_timeout') > 1) {
 		ini_set('default_socket_timeout', 1200);
 	}
+	/**
+	* @var \GlobalData\Client
+	*/
 	global $global;
 	$service_master = $args['service_master'];
 	$parameters = [
