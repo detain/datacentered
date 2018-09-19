@@ -18,7 +18,7 @@ function async_hyperv_get_list_server(\Clue\React\Buzz\Browser &$browser, $servi
 				echo 'Error: ' . $e->getMessage() . PHP_EOL;
 				return;
 			}
-			$api = new Proxy($client);
+			$api = new \Clue\React\Soap\Proxy($client);
 			//echo "Running GetVMList for {$service_master['vps_name']}\n";
 			$api->GetVMList(['hyperVAdmin' => 'Administrator', 'adminPassword' => $service_master['vps_root']])->then(
 				function ($result) use (&$factory, &$client, $service_master) {
@@ -37,6 +37,7 @@ function async_hyperv_get_list_server(\Clue\React\Buzz\Browser &$browser, $servi
 						//echo $service_master['vps_name'].' Successfull Get VM List'.PHP_EOL;
 						function_requirements('vps_queue_handler');
 						vps_queue_handler($service_master, 'server_list', $result);
+						//echo $service_master['vps_name'] . ' Got VM List'.PHP_EOL;
 					} else {
 						//echo $service_master['vps_name'].' ERROR: Command Completed but missing expected fields! Output: '.json_encode($result).PHP_EOL;
 						if (isset($result->Success) && $result->Success == 'false' && $global->$var < 3) {
