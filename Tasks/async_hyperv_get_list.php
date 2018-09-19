@@ -66,9 +66,6 @@ function async_hyperv_get_list_server(\Clue\React\Buzz\Browser &$browser, $servi
 			return;
 		}
 	);
-	$factory->createClient($url)->then(function (Client $client) use (&$factorty, $service_master) {
-		$api = new \Clue\React\Soap\Proxy($client);
-	});
 }
 
 function async_hyperv_get_list($args)
