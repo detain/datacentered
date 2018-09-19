@@ -408,7 +408,7 @@ class Events
 		]));
 		$task_connection->onMessage = function ($task_connection, $task_result) use ($client_id, $message_data) {
 			//$task_result = json_decode($task_result, true);
-			Worker::safeEcho("[{$client_id}] Process VPS List for ".$_SESSION['name']." returned:".$task_result.PHP_EOL);
+			//Worker::safeEcho("[{$client_id}] Process VPS List for ".$_SESSION['name']." returned:".$task_result.PHP_EOL);
 			$task_connection->close();
 		};
 		$task_connection->connect();
@@ -439,7 +439,7 @@ class Events
 		]));
 		$task_connection->onMessage = function ($task_connection, $task_result) use ($client_id, $message_data) {
 			//$task_result = json_decode($task_result, true);
-			Worker::safeEcho("[{$client_id}] Process VPS Info for ".$_SESSION['name']." returned:".$task_result.PHP_EOL);
+			//Worker::safeEcho("[{$client_id}] Process VPS Info for ".$_SESSION['name']." returned:".$task_result.PHP_EOL);
 			$task_connection->close();
 		};
 		$task_connection->connect();
@@ -455,10 +455,10 @@ class Events
 	public static function msgGetMap($client_id, $message_data)
 	{
 		//Worker::safeEcho("[{$client_id}] got vps list content " . var_export($message_data['content'], true).PHP_EOL);
-		Worker::safeEcho("[{$client_id}] ".json_encode($_SESSION).PHP_EOL);
+		//Worker::safeEcho("[{$client_id}] ".json_encode($_SESSION).PHP_EOL);
 		$uid = $_SESSION['uid'];
 		$id = str_replace('vps', '', $uid);
-		Worker::safeEcho("[{$client_id}] GetMap event calling get_map task uid $uid id $id".PHP_EOL);
+		//Worker::safeEcho("[{$client_id}] GetMap event calling get_map task uid $uid id $id".PHP_EOL);
 		$task_connection = new AsyncTcpConnection('Text://127.0.0.1:2208');
 		$task_connection->send(json_encode([
 			'type' => 'get_map',
