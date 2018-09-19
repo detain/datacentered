@@ -1,6 +1,8 @@
 <?php
 use Workerman\Connection\AsyncTcpConnection;
 
+require_once __DIR__.'/../../../vendor/workerman/statistics/Applications/Statistics/Clients/StatisticClient.php';
+
 if (ini_get('default_socket_timeout') < 1200 && ini_get('default_socket_timeout') > 1) {
 	ini_set('default_socket_timeout', 1200);
 }
@@ -20,6 +22,7 @@ function async_hyperv_get_list_server(\Clue\React\Buzz\Browser &$browser, $servi
 			}
 			$api = new \Clue\React\Soap\Proxy($client);
 			//echo "Running GetVMList for {$service_master['vps_name']}\n";
+			\StatisticClient::tick('Hyper-V', 'GetVMList');
 			$api->GetVMList(['hyperVAdmin' => 'Administrator', 'adminPassword' => $service_master['vps_root']])->then(
 				function ($result) use (&$factory, &$client, $service_master) {
 					/**
@@ -31,6 +34,7 @@ function async_hyperv_get_list_server(\Clue\React\Buzz\Browser &$browser, $servi
 						$result = $result->GetVMListResult;
 					}
 					if (isset($result->Success) && $result->Success == 'true' && isset($result->VMList) && isset($result->VMList->VirtualMachineSummary)) {
+						\StatisticClient::report('Hyper-V', 'GetVMList', true, 0, '', 'udp://199.231.187.29:55656');
 						if (isset($result->VMList->VirtualMachineSummary->VmId)) {
 							$result->VMList->VirtualMachineSummary = [0 => $result->VMList->VirtualMachineSummary];
 						}
@@ -39,6 +43,7 @@ function async_hyperv_get_list_server(\Clue\React\Buzz\Browser &$browser, $servi
 						vps_queue_handler($service_master, 'server_list', $result);
 						//echo $service_master['vps_name'] . ' Got VM List'.PHP_EOL;
 					} else {
+						\StatisticClient::report('Hyper-V', 'GetVMList', false, 100, 'Missing expected output fields', 'udp://199.231.187.29:55656');
 						//echo $service_master['vps_name'].' ERROR: Command Completed but missing expected fields! Output: '.json_encode($result).PHP_EOL;
 						if (isset($result->Success) && $result->Success == 'false' && $global->$var < 3) {
 							$task_connection = new AsyncTcpConnection('Text://127.0.0.1:2208');                                                // Asynchronous link with the remote task service
@@ -53,6 +58,7 @@ function async_hyperv_get_list_server(\Clue\React\Buzz\Browser &$browser, $servi
 				},
 				function (Exception $e) use ($service_master) {
 					echo $service_master['vps_name'].' GetVMList ERROR: ' . $e->getMessage() . PHP_EOL;
+					\StatisticClient::report('Hyper-V', 'GetVMList', false, $e->getCode(), $e->getMessage(), 'udp://199.231.187.29:55656');
 					/**
 					* @var \GlobalData\Client
 					*/
@@ -63,6 +69,7 @@ function async_hyperv_get_list_server(\Clue\React\Buzz\Browser &$browser, $servi
 			);
 		},
 		function (\Exception $e) {
+			\StatisticClient::report('Hyper-V', 'GetVMList', false, $e->getCode(), $e->getMessage(), 'udp://199.231.187.29:55656');
 			echo 'Error: an error occured while trying to download the WSDL'.PHP_EOL;
 			return;
 		}
