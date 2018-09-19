@@ -232,7 +232,7 @@ class Events
 						$task_connection->send(json_encode(['type' => 'vps_queue_task', 'args' => [
 							'id' => $server_id,
 						]]));
-						$task_connection->onMessage = function (AsyncTcpConnection $task_connection, $task_result) use ($server_id, $server_data) {
+						$task_connection->onMessage = function (\Workerman\Connection\TcpConnection $task_connection, $task_result) use ($server_id, $server_data) {
 							$task_result = json_decode($task_result, true);
 							//Worker::safeEcho("Got Result ".var_export($task_result, true).PHP_EOL);
 							//Worker::safeEcho("Bandwidth Update for ".$_SESSION['name']." content: ".json_encode($message_data['content'])." returned:".var_export($task_result,TRUE).PHP_EOL);
@@ -263,7 +263,7 @@ class Events
 		Gateway::sendToAll(json_encode($new_message));*/
 		$task_connection = new AsyncTcpConnection('Text://127.0.0.1:2208');
 		$task_connection->send(json_encode(['type' => 'async_hyperv_get_list', 'args' => []]));
-		$task_connection->onMessage = function (AsyncTcpConnection $task_connection, $task_result) use ($task_connection) {
+		$task_connection->onMessage = function (\Workerman\Connection\TcpConnection $task_connection, $task_result) use ($task_connection) {
 			//var_dump($task_result);
 			$task_connection->close();
 		};
@@ -284,7 +284,7 @@ class Events
 		Gateway::sendToAll(json_encode($new_message));*/
 		$task_connection = new AsyncTcpConnection('Text://127.0.0.1:2208');
 		$task_connection->send(json_encode(['type' => 'sync_hyperv_queue', 'args' => []]));
-		$task_connection->onMessage = function (AsyncTcpConnection $task_connection, $task_result) use ($task_connection) {
+		$task_connection->onMessage = function (\Workerman\Connection\TcpConnection $task_connection, $task_result) use ($task_connection) {
 			//var_dump($task_result);
 			$task_connection->close();
 		};
@@ -412,7 +412,7 @@ class Events
 				'content' => $message_data['content']
 			]
 		]));
-		$task_connection->onMessage = function (AsyncTcpConnection $task_connection, $task_result) use ($client_id, $message_data) {
+		$task_connection->onMessage = function (\Workerman\Connection\TcpConnection $task_connection, $task_result) use ($client_id, $message_data) {
 			//$task_result = json_decode($task_result, true);
 			//Worker::safeEcho("[{$client_id}] Process VPS List for ".$_SESSION['name']." returned:".$task_result.PHP_EOL);
 			$task_connection->close();
@@ -443,7 +443,7 @@ class Events
 				'content' => $message_data['content']
 			]
 		]));
-		$task_connection->onMessage = function (AsyncTcpConnection $task_connection, $task_result) use ($client_id, $message_data) {
+		$task_connection->onMessage = function (\Workerman\Connection\TcpConnection $task_connection, $task_result) use ($client_id, $message_data) {
 			//$task_result = json_decode($task_result, true);
 			//Worker::safeEcho("[{$client_id}] Process VPS Info for ".$_SESSION['name']." returned:".$task_result.PHP_EOL);
 			$task_connection->close();
@@ -472,7 +472,7 @@ class Events
 				'id' => $id
 			]
 		]));
-		$task_connection->onMessage = function (AsyncTcpConnection $task_connection, $task_result) use ($client_id, $uid, $message_data) {
+		$task_connection->onMessage = function (\Workerman\Connection\TcpConnection $task_connection, $task_result) use ($client_id, $uid, $message_data) {
 			$task_result = json_decode($task_result, true);
 			//Gateway::sendToUid($uid, json_encode([
 			Gateway::sendToClient($client_id, json_encode([
@@ -507,7 +507,7 @@ class Events
 				'content' => $message_data['content']
 			]
 		]));
-		$task_connection->onMessage = function (AsyncTcpConnection $task_connection, $task_result) use ($client_id, $message_data) {
+		$task_connection->onMessage = function (\Workerman\Connection\TcpConnection $task_connection, $task_result) use ($client_id, $message_data) {
 			//Worker::safeEcho("[{$client_id}] Bandwidth Update for ".$_SESSION['name']." content: ".json_encode($message_data['content'])." returned:".var_export($task_result,TRUE).PHP_EOL);
 			$task_connection->close();
 		};
