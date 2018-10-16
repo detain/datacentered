@@ -18,7 +18,7 @@ $globaldata_server = new GlobalData\Server('127.0.0.1', 2207);
 
 $globaldata_server->onConnect = function ($connection) { // When the client is connected, set the connection onWebSocketConnect, that is, when the websocket handshake callback
 	$connection->maxSendBufferSize = 100*1024*1024; // Set the current connection application layer send buffer size of the connection to 100mb, will override the default value
-	$connection::$maxPackageSize = 100*1024*1024; // Set the current connection application layer received packet size to 100mb (default 10mb)
+	$connection->maxPackageSize = 100*1024*1024; // Set the current connection application layer received packet size to 100mb (default 10mb)
 };
 $globaldata_server->onBufferFull = function ($connection) {
 	Worker::safeEcho("GlobalData bufferFull and do not send again\n");
