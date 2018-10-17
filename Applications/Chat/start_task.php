@@ -2,7 +2,7 @@
 use \Workerman\Worker;
 use \GatewayWorker\Lib\Gateway;
 
-require_once __DIR__.'/../../../../vendor/workerman/globaldata/src/Client.php';
+require_once __DIR__.'/../../../../my/vendor/workerman/globaldata/src/Client.php';
 
 if (ini_get('default_socket_timeout') < 1200 && ini_get('default_socket_timeout') > 1) {
 	ini_set('default_socket_timeout', 1200);
@@ -13,8 +13,8 @@ $task_worker->count = 5; 								// number of task processes can be opened more 
 $task_worker->name = 'TaskWorker';
 $task_worker->onWorkerStart = function ($worker) {
 	global $global, $functions, $worker_db, $influx_client, $influx_database;
-	include_once __DIR__.'/../../../../include/config/config.settings.php';
-	$db_config = include __DIR__.'/../../../../include/config/config.db.php';
+	include_once __DIR__.'/../../../../my/include/config/config.settings.php';
+	$db_config = include __DIR__.'/../../../../my/include/config/config.db.php';
 	$loop = Worker::getEventLoop();
 	$worker_db = new \Workerman\MySQL\Connection($db_config['db_host'], $db_config['db_port'], $db_config['db_user'], $db_config['db_pass'], $db_config['db_name'], 'utf8mb4');
 	$influx_client = new \InfluxDB\Client(INFLUX_HOST, INFLUX_PORT, INFLUX_USER, INFLUX_PASS);

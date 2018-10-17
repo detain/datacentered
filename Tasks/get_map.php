@@ -2,7 +2,7 @@
 
 function get_map($args)
 {
-	require_once __DIR__.'/../../../include/functions.inc.php';
+	require_once __DIR__.'/../../../my/include/functions.inc.php';
 	/**
 	* @var \GlobalData\Client
 	*/

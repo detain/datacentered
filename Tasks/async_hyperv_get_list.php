@@ -1,7 +1,7 @@
 <?php
 use Workerman\Connection\AsyncTcpConnection;
 
-require_once __DIR__.'/../../../vendor/workerman/statistics/Applications/Statistics/Clients/StatisticClient.php';
+require_once __DIR__.'/../../../my/vendor/workerman/statistics/Applications/Statistics/Clients/StatisticClient.php';
 
 if (ini_get('default_socket_timeout') < 1200 && ini_get('default_socket_timeout') > 1) {
 	ini_set('default_socket_timeout', 1200);
@@ -78,7 +78,7 @@ function async_hyperv_get_list_server(\Clue\React\Buzz\Browser &$browser, $servi
 
 function async_hyperv_get_list($args)
 {
-	require_once __DIR__.'/../../../include/functions.inc.php';
+	require_once __DIR__.'/../../../my/include/functions.inc.php';
 	$loop = \React\EventLoop\Factory::create();
 	$connector = new \React\Socket\Connector($loop, [
 		//'dns' => '127.0.0.1',

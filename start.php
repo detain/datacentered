@@ -4,7 +4,7 @@
 use Workerman\Worker;
 use Workerman\Connection\TcpConnection;
 
-require_once __DIR__ . '/../../vendor/autoload.php';
+require_once __DIR__ . '/../../my/vendor/autoload.php';
 //require_once __DIR__ . '/vendor/autoload.php';
 
 TcpConnection::$defaultMaxSendBufferSize = 1024*1024*100; // sets the connections send write buffer size to 10mb (default 1mb)

@@ -38,7 +38,7 @@ class Events
 		 */
 		global $global;
 		$global = new GlobalData\Client('127.0.0.1:2207');     // initialize the GlobalData client
-		$db_config = include __DIR__.'/../../../../include/config/config.db.php';
+		$db_config = include __DIR__.'/../../../../my/include/config/config.db.php';
 		$loop = Worker::getEventLoop();
 		self::$db = new \Workerman\MySQL\Connection($db_config['db_host'], $db_config['db_port'], $db_config['db_user'], $db_config['db_pass'], $db_config['db_name'], 'utf8mb4');
 		if ($global->add('running', [])) {

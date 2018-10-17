@@ -12,7 +12,7 @@
  */
 use Workerman\Worker;
 
-require_once __DIR__.'/../../../../vendor/workerman/globaldata/src/Server.php';
+require_once __DIR__.'/../../../../my/vendor/workerman/globaldata/src/Server.php';
 
 $globaldata_server = new GlobalData\Server('127.0.0.1', 2207);
 

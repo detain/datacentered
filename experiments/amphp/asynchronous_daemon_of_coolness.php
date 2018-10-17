@@ -1,5 +1,5 @@
 <?php
-require_once __DIR__.'/../../include/functions.inc.php';
+require_once __DIR__.'/../../my/include/functions.inc.php';
 require_once __DIR__.'/amp_soap.php';
 require_once __DIR__.'/amp_factory.php';
 
