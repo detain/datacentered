@@ -92,7 +92,7 @@ class Events
 		 * @var \GlobalData\Client
 		 */
 		global $global;
-		//Worker::safeEcho("[{$client_id}] client:{$_SERVER['REMOTE_ADDR']}:{$_SERVER['REMOTE_PORT']} gateway:{$_SERVER['GATEWAY_ADDR']}:{$_SERVER['GATEWAY_PORT']} session:".json_encode($_SESSION)." onMessage:".serialize($message).PHP_EOL); // debug
+		//Worker::safeEcho("[{$client_id}] client:{$_SERVER['REMOTE_ADDR']}:{$_SERVER['REMOTE_PORT']} gateway:{$_SERVER['GATEWAY_ADDR']}:{$_SERVER['GATEWAY_PORT']} session:".json_encode($_SESSION)."\n onMessage:".serialize($message).PHP_EOL); // debug
 		$message_data = json_decode($message, true); // Client is passed json data
 		if (!$message_data) {
 			return ;
@@ -499,6 +499,7 @@ class Events
 			Worker::safeEcho("[{$client_id}] error with bandwidth content " . var_export($message_data['content'], true).PHP_EOL);
 			return;
 		}
+        Worker::safeEcho("msgBandwidth called with ($client_id, ".json_encode($message_data).")");
 		$task_connection = new AsyncTcpConnection('Text://127.0.0.1:2208');
 		$task_connection->send(json_encode([
 			'type' => 'bandwidth',
@@ -509,7 +510,7 @@ class Events
 			]
 		]));
 		$task_connection->onMessage = function ($task_connection, $task_result) use ($client_id, $message_data) {
-			//Worker::safeEcho("[{$client_id}] Bandwidth Update for ".$_SESSION['name']." content: ".json_encode($message_data['content'])." returned:".var_export($task_result,TRUE).PHP_EOL);
+			Worker::safeEcho("[{$client_id}] Bandwidth Update for ".$_SESSION['name']." content: ".json_encode($message_data['content'])." returned:".var_export($task_result,TRUE).PHP_EOL);
 			$task_connection->close();
 		};
 		$task_connection->connect();
