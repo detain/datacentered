@@ -1254,12 +1254,12 @@
             "source": {
                 "type": "git",
                 "url": "https://github.com/gitonomy/gitlib.git",
-                "reference": "930885ee1d46f13e56130ab63d177622679f966b"
+                "reference": "dc9e4803e06668e551e0aff8056a11f1adce8b1b"
             },
             "dist": {
                 "type": "zip",
-                "url": "https://api.github.com/repos/gitonomy/gitlib/zipball/930885ee1d46f13e56130ab63d177622679f966b",
-                "reference": "930885ee1d46f13e56130ab63d177622679f966b",
+                "url": "https://api.github.com/repos/gitonomy/gitlib/zipball/dc9e4803e06668e551e0aff8056a11f1adce8b1b",
+                "reference": "dc9e4803e06668e551e0aff8056a11f1adce8b1b",
                 "shasum": ""
             },
             "require": {
@@ -1302,7 +1302,7 @@
             ],
             "description": "Library for accessing git",
             "homepage": "http://gitonomy.com",
-            "time": "2018-04-22T21:11:28+00:00"
+            "time": "2018-11-28T13:28:20+00:00"
         },
         {
             "name": "guzzle/guzzle",
