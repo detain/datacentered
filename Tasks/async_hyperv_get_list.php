@@ -17,7 +17,7 @@ function async_hyperv_get_list_server(\Clue\React\Buzz\Browser &$browser, $servi
 			try {
 				$client = new \Clue\React\Soap\Client($browser, (string)$response->getBody(), ['soap_version' => SOAP_1_2]);
 			} catch (\SoapFault $e) {
-				echo 'Error: ' . $e->getMessage() . PHP_EOL;
+				//echo 'Error: ' . $e->getMessage() . PHP_EOL;
 				return;
 			}
 			$api = new \Clue\React\Soap\Proxy($client);
@@ -57,7 +57,7 @@ function async_hyperv_get_list_server(\Clue\React\Buzz\Browser &$browser, $servi
 					$global->$var = 0;
 				},
 				function (Exception $e) use ($service_master) {
-					echo $service_master['vps_name'].' GetVMList ERROR: ' . $e->getMessage() . PHP_EOL;
+					//echo $service_master['vps_name'].' GetVMList ERROR: ' . $e->getMessage() . PHP_EOL;
 					\StatisticClient::report('Hyper-V', 'GetVMList', false, $e->getCode(), $e->getMessage(), STATISTICS_SERVER);
 					/**
 					* @var \GlobalData\Client
@@ -70,7 +70,7 @@ function async_hyperv_get_list_server(\Clue\React\Buzz\Browser &$browser, $servi
 		},
 		function (\Exception $e) {
 			\StatisticClient::report('Hyper-V', 'GetVMList', false, $e->getCode(), $e->getMessage(), STATISTICS_SERVER);
-			echo 'Error: an error occured while trying to download the WSDL'.PHP_EOL;
+			//echo 'Error: an error occured while trying to download the WSDL'.PHP_EOL;
 			return;
 		}
 	);
@@ -109,8 +109,11 @@ function async_hyperv_get_list($args)
 			$global->$var = 0;
 		}
 		if ($global->cas($var, 0, 1)) {
+            //echo $service_master['vps_name'].' Got Lock for Get List Update' . PHP_EOL;
 			async_hyperv_get_list_server($browser, $service_master);
-		}
+		} else {
+            //echo $service_master['vps_name'].' Cannot get Lock for Get List Update' . PHP_EOL;
+        }
 	}
 	$loop->run();
 }
