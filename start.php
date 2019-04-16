@@ -4,6 +4,7 @@
 use Workerman\Worker;
 use Workerman\Connection\TcpConnection;
 
+require_once __DIR__ . '/vendor/autoload.php';
 require_once __DIR__ . '/../../my/vendor/autoload.php';
 //require_once __DIR__ . '/vendor/autoload.php';
 

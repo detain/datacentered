@@ -12,7 +12,7 @@ if (ini_get('default_socket_timeout') < 1200 && ini_get('default_socket_timeout'
 }
 
 $worker = new BusinessWorker(); // bussinessWorker process
-$worker->name = 'ChatBusinessWorker'; // worker name
+//$worker->name = 'ChatBusinessWorker'; // worker name
 $worker->count = 4; // bussinessWorker number of processes
 $worker->registerAddress = '127.0.0.1:1236'; // Service registration address
 //$worker->maxSendBufferSize = 102400000;

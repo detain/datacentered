@@ -2,7 +2,7 @@
 use \Workerman\Worker;
 use \GatewayWorker\Lib\Gateway;
 
-require_once __DIR__.'/../../../../my/vendor/workerman/globaldata/src/Client.php';
+require_once __DIR__.'/../../vendor/workerman/globaldata/src/Client.php';
 
 if (ini_get('default_socket_timeout') < 1200 && ini_get('default_socket_timeout') > 1) {
 	ini_set('default_socket_timeout', 1200);

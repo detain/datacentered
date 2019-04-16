@@ -4,8 +4,121 @@
         "Read more about it at https://getcomposer.org/doc/01-basic-usage.md#installing-dependencies",
         "This file is @generated automatically"
     ],
-    "content-hash": "bfe8eb5aa0bebf94eb40aabce0ccaf0c",
+    "content-hash": "38099ebd94c3c3944b4180baebd1fd26",
     "packages": [
+        {
+            "name": "clue/buzz-react",
+            "version": "v2.6.0",
+            "source": {
+                "type": "git",
+                "url": "https://github.com/clue/reactphp-buzz.git",
+                "reference": "83cc87d19fdc031cff3ddf3629d52ca95cbfbc92"
+            },
+            "dist": {
+                "type": "zip",
+                "url": "https://api.github.com/repos/clue/reactphp-buzz/zipball/83cc87d19fdc031cff3ddf3629d52ca95cbfbc92",
+                "reference": "83cc87d19fdc031cff3ddf3629d52ca95cbfbc92",
+                "shasum": ""
+            },
+            "require": {
+                "php": ">=5.3",
+                "psr/http-message": "^1.0",
+                "react/event-loop": "^1.0 || ^0.5 || ^0.4 || ^0.3",
+                "react/http-client": "^0.5.8",
+                "react/promise": "^2.2.1 || ^1.2.1",
+                "react/promise-stream": "^1.0 || ^0.1.1",
+                "react/promise-timer": "^1.2",
+                "react/socket": "^1.1",
+                "react/stream": "^1.0 || ^0.7",
+                "ringcentral/psr7": "^1.2"
+            },
+            "require-dev": {
+                "clue/block-react": "^1.0",
+                "clue/http-proxy-react": "^1.3",
+                "clue/reactphp-ssh-proxy": "^1.0",
+                "clue/socks-react": "^1.0",
+                "phpunit/phpunit": "^7.0 || ^6.4 || ^5.7 || ^4.8.35",
+                "react/http": "^0.8"
+            },
+            "type": "library",
+            "autoload": {
+                "psr-4": {
+                    "Clue\\React\\Buzz\\": "src/"
+                }
+            },
+            "notification-url": "https://packagist.org/downloads/",
+            "license": [
+                "MIT"
+            ],
+            "authors": [
+                {
+                    "name": "Christian Lück",
+                    "email": "christian@lueck.tv"
+                }
+            ],
+            "description": "Simple, async PSR-7 HTTP client for concurrently processing any number of HTTP requests, built on top of ReactPHP",
+            "homepage": "https://github.com/clue/reactphp-buzz",
+            "keywords": [
+                "async",
+                "http",
+                "http client",
+                "psr-7",
+                "reactphp"
+            ],
+            "time": "2019-04-03T13:58:40+00:00"
+        },
+        {
+            "name": "clue/soap-react",
+            "version": "dev-master",
+            "source": {
+                "type": "git",
+                "url": "https://github.com/clue/reactphp-soap.git",
+                "reference": "54d1fb94ebb0c8492a3945cef0a461e364086993"
+            },
+            "dist": {
+                "type": "zip",
+                "url": "https://api.github.com/repos/clue/reactphp-soap/zipball/54d1fb94ebb0c8492a3945cef0a461e364086993",
+                "reference": "54d1fb94ebb0c8492a3945cef0a461e364086993",
+                "shasum": ""
+            },
+            "require": {
+                "clue/buzz-react": "^2.5",
+                "ext-soap": "*",
+                "php": ">=5.3",
+                "react/event-loop": "^1.0 || ^0.5 || ^0.4 || ^0.3",
+                "react/promise": "^2.1 || ^1.2"
+            },
+            "require-dev": {
+                "clue/block-react": "^1.0",
+                "phpunit/phpunit": "^6.4 || ^5.7 || ^4.8.35"
+            },
+            "type": "library",
+            "autoload": {
+                "psr-4": {
+                    "Clue\\React\\Soap\\": "src/"
+                }
+            },
+            "notification-url": "https://packagist.org/downloads/",
+            "license": [
+                "MIT"
+            ],
+            "authors": [
+                {
+                    "name": "Christian Lück",
+                    "email": "christian@lueck.tv"
+                }
+            ],
+            "description": "Simple, async SOAP webservice client library, built on top of ReactPHP",
+            "homepage": "https://github.com/clue/reactphp-soap",
+            "keywords": [
+                "reactphp",
+                "soap",
+                "soapclient",
+                "webservice",
+                "wsdl"
+            ],
+            "time": "2019-03-15T13:06:46+00:00"
+        },
         {
             "name": "danielstjules/php-pretty-datetime",
             "version": "dev-master",
@@ -322,16 +435,16 @@
         },
         {
             "name": "react/http-client",
-            "version": "dev-master",
+            "version": "v0.5.9",
             "source": {
                 "type": "git",
                 "url": "https://github.com/reactphp/http-client.git",
-                "reference": "c1472bedf3db6b2c958a51317a4b61045aeb3d2d"
+                "reference": "f8e81a022b61938e0b37c94c6351fc170b7d87f6"
             },
             "dist": {
                 "type": "zip",
-                "url": "https://api.github.com/repos/reactphp/http-client/zipball/c1472bedf3db6b2c958a51317a4b61045aeb3d2d",
-                "reference": "c1472bedf3db6b2c958a51317a4b61045aeb3d2d",
+                "url": "https://api.github.com/repos/reactphp/http-client/zipball/f8e81a022b61938e0b37c94c6351fc170b7d87f6",
+                "reference": "f8e81a022b61938e0b37c94c6351fc170b7d87f6",
                 "shasum": ""
             },
             "require": {
@@ -362,7 +475,53 @@
             "keywords": [
                 "http"
             ],
-            "time": "2019-02-02T20:13:56+00:00"
+            "time": "2018-04-10T11:38:54+00:00"
+        },
+        {
+            "name": "react/mysql",
+            "version": "dev-master",
+            "source": {
+                "type": "git",
+                "url": "https://github.com/friends-of-reactphp/mysql.git",
+                "reference": "c420ca0d199f2867854508473f5eccecbcb692f1"
+            },
+            "dist": {
+                "type": "zip",
+                "url": "https://api.github.com/repos/friends-of-reactphp/mysql/zipball/c420ca0d199f2867854508473f5eccecbcb692f1",
+                "reference": "c420ca0d199f2867854508473f5eccecbcb692f1",
+                "shasum": ""
+            },
+            "require": {
+                "evenement/evenement": "^3.0 || ^2.1 || ^1.1",
+                "php": ">=5.4.0",
+                "react/event-loop": "^1.0 || ^0.5",
+                "react/promise": "^2.7",
+                "react/promise-stream": "^1.1",
+                "react/promise-timer": "^1.5",
+                "react/socket": "^1.1"
+            },
+            "require-dev": {
+                "clue/block-react": "^1.2",
+                "phpunit/phpunit": "^7.0 || ^6.0 || ^5.0 || ^4.8.35"
+            },
+            "type": "library",
+            "autoload": {
+                "psr-4": {
+                    "React\\MySQL\\": "src"
+                }
+            },
+            "notification-url": "https://packagist.org/downloads/",
+            "license": [
+                "MIT"
+            ],
+            "description": "Async MySQL database client for ReactPHP.",
+            "keywords": [
+                "async",
+                "database",
+                "mysql",
+                "reactphp"
+            ],
+            "time": "2019-04-03T12:50:22+00:00"
         },
         {
             "name": "react/promise",
@@ -409,6 +568,62 @@
                 "promises"
             ],
             "time": "2019-01-08T16:10:34+00:00"
+        },
+        {
+            "name": "react/promise-stream",
+            "version": "v1.1.1",
+            "source": {
+                "type": "git",
+                "url": "https://github.com/reactphp/promise-stream.git",
+                "reference": "00e269d611e9c9a29356aef64c07f7e513e73dc9"
+            },
+            "dist": {
+                "type": "zip",
+                "url": "https://api.github.com/repos/reactphp/promise-stream/zipball/00e269d611e9c9a29356aef64c07f7e513e73dc9",
+                "reference": "00e269d611e9c9a29356aef64c07f7e513e73dc9",
+                "shasum": ""
+            },
+            "require": {
+                "php": ">=5.3",
+                "react/promise": "^2.1 || ^1.2",
+                "react/stream": "^1.0 || ^0.7 || ^0.6 || ^0.5 || ^0.4 || ^0.3"
+            },
+            "require-dev": {
+                "clue/block-react": "^1.0",
+                "phpunit/phpunit": "^6.4 || ^5.7 || ^4.8.35",
+                "react/event-loop": "^1.0 || ^0.5 || ^0.4 || ^0.3",
+                "react/promise-timer": "^1.0"
+            },
+            "type": "library",
+            "autoload": {
+                "psr-4": {
+                    "React\\Promise\\Stream\\": "src/"
+                },
+                "files": [
+                    "src/functions_include.php"
+                ]
+            },
+            "notification-url": "https://packagist.org/downloads/",
+            "license": [
+                "MIT"
+            ],
+            "authors": [
+                {
+                    "name": "Christian Lück",
+                    "email": "christian@lueck.tv"
+                }
+            ],
+            "description": "The missing link between Promise-land and Stream-land for ReactPHP",
+            "homepage": "https://github.com/reactphp/promise-stream",
+            "keywords": [
+                "Buffer",
+                "async",
+                "promise",
+                "reactphp",
+                "stream",
+                "unwrap"
+            ],
+            "time": "2017-12-22T12:02:05+00:00"
         },
         {
             "name": "react/promise-timer",
@@ -620,12 +835,12 @@
             "source": {
                 "type": "git",
                 "url": "https://github.com/Roave/SecurityAdvisories.git",
-                "reference": "0698207bf8a9bed212fdde2d8c7cdc77085660c4"
+                "reference": "ff41a9a96718245c7160588928e6d217cfb0393c"
             },
             "dist": {
                 "type": "zip",
-                "url": "https://api.github.com/repos/Roave/SecurityAdvisories/zipball/0698207bf8a9bed212fdde2d8c7cdc77085660c4",
-                "reference": "0698207bf8a9bed212fdde2d8c7cdc77085660c4",
+                "url": "https://api.github.com/repos/Roave/SecurityAdvisories/zipball/ff41a9a96718245c7160588928e6d217cfb0393c",
+                "reference": "ff41a9a96718245c7160588928e6d217cfb0393c",
                 "shasum": ""
             },
             "conflict": {
@@ -645,8 +860,8 @@
                 "codeigniter/framework": "<=3.0.6",
                 "composer/composer": "<=1.0.0-alpha11",
                 "contao-components/mediaelement": ">=2.14.2,<2.21.1",
-                "contao/core": ">=2,<3.5.35",
-                "contao/core-bundle": ">=4,<4.4.18|>=4.5,<4.5.8",
+                "contao/core": ">=2,<3.5.39",
+                "contao/core-bundle": ">=4,<4.4.37|>=4.5,<4.7.3",
                 "contao/listing-bundle": ">=4,<4.4.8",
                 "contao/newsletter-bundle": ">=4,<4.1",
                 "david-garcia/phpwhois": "<=4.3.1",
@@ -660,9 +875,9 @@
                 "doctrine/mongodb-odm-bundle": ">=2,<3.0.1",
                 "doctrine/orm": ">=2,<2.4.8|>=2.5,<2.5.1",
                 "dompdf/dompdf": ">=0.6,<0.6.2",
-                "drupal/core": ">=7,<7.64|>=8,<8.5.13|>=8.6,<8.6.12",
+                "drupal/core": ">=7,<7.65|>=8,<8.5.14|>=8.6,<8.6.13",
                 "drupal/drupal": ">=7,<7.64|>=8,<8.5.13|>=8.6,<8.6.12",
-                "erusev/parsedown": "<1.7",
+                "erusev/parsedown": "<1.7.2",
                 "ezsystems/ezpublish-kernel": ">=5.3,<5.3.12.1|>=5.4,<5.4.13.1|>=6,<6.7.9.1|>=6.8,<6.13.5.1|>=7,<7.2.4.1|>=7.3,<7.3.2.1",
                 "ezsystems/ezpublish-legacy": ">=5.3,<5.3.12.6|>=5.4,<5.4.12.3|>=2011,<2017.12.4.3|>=2018.6,<2018.6.1.4|>=2018.9,<2018.9.1.3",
                 "ezsystems/repository-forms": ">=2.3,<2.3.2.1",
@@ -817,7 +1032,7 @@
                 }
             ],
             "description": "Prevents installation of composer packages with known security vulnerabilities: no API, simply require it",
-            "time": "2019-03-28T22:30:08+00:00"
+            "time": "2019-04-12T16:05:24+00:00"
         },
         {
             "name": "workerman/channel",
@@ -946,12 +1161,12 @@
             "source": {
                 "type": "git",
                 "url": "https://github.com/walkor/mysql.git",
-                "reference": "f88a173bad7c0fd5516ba5b2234b91c09764f95b"
+                "reference": "267134cf33a67cba3e830debe0e577a4eed0ebec"
             },
             "dist": {
                 "type": "zip",
-                "url": "https://api.github.com/repos/walkor/mysql/zipball/f88a173bad7c0fd5516ba5b2234b91c09764f95b",
-                "reference": "f88a173bad7c0fd5516ba5b2234b91c09764f95b",
+                "url": "https://api.github.com/repos/walkor/mysql/zipball/267134cf33a67cba3e830debe0e577a4eed0ebec",
+                "reference": "267134cf33a67cba3e830debe0e577a4eed0ebec",
                 "shasum": ""
             },
             "require": {
@@ -976,7 +1191,7 @@
                 "pdo",
                 "pdo_mysql"
             ],
-            "time": "2019-03-05T02:42:32+00:00"
+            "time": "2019-03-31T01:47:03+00:00"
         },
         {
             "name": "workerman/statistics",
@@ -1009,12 +1224,12 @@
             "source": {
                 "type": "git",
                 "url": "https://github.com/walkor/Workerman.git",
-                "reference": "23ed0c5274523277d9d2f6fc732a54af5630cbda"
+                "reference": "4e5c24073b431fd950287efbfb5cc9b4c0fc7367"
             },
             "dist": {
                 "type": "zip",
-                "url": "https://api.github.com/repos/walkor/Workerman/zipball/23ed0c5274523277d9d2f6fc732a54af5630cbda",
-                "reference": "23ed0c5274523277d9d2f6fc732a54af5630cbda",
+                "url": "https://api.github.com/repos/walkor/Workerman/zipball/4e5c24073b431fd950287efbfb5cc9b4c0fc7367",
+                "reference": "4e5c24073b431fd950287efbfb5cc9b4c0fc7367",
                 "shasum": ""
             },
             "require": {
@@ -1047,7 +1262,7 @@
                 "asynchronous",
                 "event-loop"
             ],
-            "time": "2019-03-20T06:45:25+00:00"
+            "time": "2019-04-05T10:35:31+00:00"
         }
     ],
     "packages-dev": [
@@ -2925,12 +3140,12 @@
             "source": {
                 "type": "git",
                 "url": "https://github.com/symfony/console.git",
-                "reference": "98ae3cdc4bec48fe7ee24afc81dbb4a242186c9e"
+                "reference": "15a9104356436cb26e08adab97706654799d31d8"
             },
             "dist": {
                 "type": "zip",
-                "url": "https://api.github.com/repos/symfony/console/zipball/98ae3cdc4bec48fe7ee24afc81dbb4a242186c9e",
-                "reference": "98ae3cdc4bec48fe7ee24afc81dbb4a242186c9e",
+                "url": "https://api.github.com/repos/symfony/console/zipball/15a9104356436cb26e08adab97706654799d31d8",
+                "reference": "15a9104356436cb26e08adab97706654799d31d8",
                 "shasum": ""
             },
             "require": {
@@ -2989,7 +3204,7 @@
             ],
             "description": "Symfony Console Component",
             "homepage": "https://symfony.com",
-            "time": "2019-03-31T11:33:18+00:00"
+            "time": "2019-04-08T09:29:13+00:00"
         },
         {
             "name": "symfony/debug",
@@ -2997,12 +3212,12 @@
             "source": {
                 "type": "git",
                 "url": "https://github.com/symfony/debug.git",
-                "reference": "adbdd5d66342fb0a0bce7422ba68181842b6610d"
+                "reference": "681afbb26488903c5ac15e63734f1d8ac430c9b9"
             },
             "dist": {
                 "type": "zip",
-                "url": "https://api.github.com/repos/symfony/debug/zipball/adbdd5d66342fb0a0bce7422ba68181842b6610d",
-                "reference": "adbdd5d66342fb0a0bce7422ba68181842b6610d",
+                "url": "https://api.github.com/repos/symfony/debug/zipball/681afbb26488903c5ac15e63734f1d8ac430c9b9",
+                "reference": "681afbb26488903c5ac15e63734f1d8ac430c9b9",
                 "shasum": ""
             },
             "require": {
@@ -3045,7 +3260,7 @@
             ],
             "description": "Symfony Debug Component",
             "homepage": "https://symfony.com",
-            "time": "2019-03-10T17:07:42+00:00"
+            "time": "2019-04-11T09:48:14+00:00"
         },
         {
             "name": "symfony/event-dispatcher",
@@ -3280,12 +3495,12 @@
             "source": {
                 "type": "git",
                 "url": "https://github.com/symfony/process.git",
-                "reference": "009f8dda80930e89e8344a4e310b08f9ff07dd2e"
+                "reference": "a9c4dfbf653023b668c282e4e02609d131f4057a"
             },
             "dist": {
                 "type": "zip",
-                "url": "https://api.github.com/repos/symfony/process/zipball/009f8dda80930e89e8344a4e310b08f9ff07dd2e",
-                "reference": "009f8dda80930e89e8344a4e310b08f9ff07dd2e",
+                "url": "https://api.github.com/repos/symfony/process/zipball/a9c4dfbf653023b668c282e4e02609d131f4057a",
+                "reference": "a9c4dfbf653023b668c282e4e02609d131f4057a",
                 "shasum": ""
             },
             "require": {
@@ -3321,7 +3536,7 @@
             ],
             "description": "Symfony Process Component",
             "homepage": "https://symfony.com",
-            "time": "2019-01-16T13:27:11+00:00"
+            "time": "2019-04-08T16:15:54+00:00"
         },
         {
             "name": "symfony/stopwatch",
@@ -3538,6 +3753,7 @@
     "aliases": [],
     "minimum-stability": "dev",
     "stability-flags": {
+        "clue/soap-react": 20,
         "roave/security-advisories": 20,
         "workerman/channel": 20,
         "workerman/gatewayclient": 20,
