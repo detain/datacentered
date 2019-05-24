@@ -5,6 +5,9 @@ use Workerman\Worker;
 function bandwidth($args)
 {
 	global $worker_db, $influx_database;
+    //Worker::safeEcho("[bandwidth Task] Creating Influx Connection to ".INFLUX_HOST." port ".INFLUX_PORT);
+    //$influx_client = new \InfluxDB\Client(INFLUX_HOST, INFLUX_PORT, INFLUX_USER, INFLUX_PASS, true);
+    //$influx_database = $influx_client->selectDB(INFLUX_DB);
 	$points = [];
 	$veids = [];
 	foreach ($args['content'] as $ip => $data) {
