@@ -14,7 +14,7 @@ function bandwidth($args)
 		if (!isset($data['vps'])) {
 			Worker::safeEcho("[bandwidth Task] Missing VPS for ip {$ip}\n");
 		}
-        Worker::SafeEcho("[bandwidth Task] Loaded VPS {$data['vps']} with Server {$args['uid']}\n");
+        //Worker::SafeEcho("[bandwidth Task] Loaded VPS {$data['vps']} with Server {$args['uid']}\n");
 		if (!isset($veids[$data['vps']])) {
 			$veids[$data['vps']] = $worker_db->select('*')->from('vps')->where('vps_server=:vps_server and (vps_hostname=:hostname or vps_vzid=:vzid)')->bindValues(['vps_server'=>$args['uid'],'hostname'=>$data['vps'],'vzid'=>$data['vps']])->row();
             //Worker::SafeEcho("[bandwidth Task] Loaded VPS {$data['vps']} " : ".json_encode($veids[$data['vps']]).PHP_EOL);
@@ -31,7 +31,7 @@ function bandwidth($args)
 			]);
 		}
 	}
-    Worker::safeEcho("[bandwidth Task] built up points ".json_encode($points).PHP_EOL);
+    //Worker::safeEcho("[bandwidth Task] built up points ".json_encode($points).PHP_EOL);
 	$newPoints = $influx_database->writePoints($points, \InfluxDB\Database::PRECISION_SECONDS);
 	return true;
 }
