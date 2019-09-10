@@ -3608,12 +3608,12 @@
             "source": {
                 "type": "git",
                 "url": "https://github.com/symfony/yaml.git",
-                "reference": "717182d370fe00bf9268f9cd13e492976fa851bb"
+                "reference": "768f817446da74a776a31eea335540f9dcb53942"
             },
             "dist": {
                 "type": "zip",
-                "url": "https://api.github.com/repos/symfony/yaml/zipball/717182d370fe00bf9268f9cd13e492976fa851bb",
-                "reference": "717182d370fe00bf9268f9cd13e492976fa851bb",
+                "url": "https://api.github.com/repos/symfony/yaml/zipball/768f817446da74a776a31eea335540f9dcb53942",
+                "reference": "768f817446da74a776a31eea335540f9dcb53942",
                 "shasum": ""
             },
             "require": {
@@ -3659,7 +3659,7 @@
             ],
             "description": "Symfony Yaml Component",
             "homepage": "https://symfony.com",
-            "time": "2019-08-29T08:16:36+00:00"
+            "time": "2019-09-10T10:38:46+00:00"
         },
         {
             "name": "vlucas/phpdotenv",
@@ -3667,12 +3667,12 @@
             "source": {
                 "type": "git",
                 "url": "https://github.com/vlucas/phpdotenv.git",
-                "reference": "4cd2eaedbbb36378ea4fd48a7babcbfb6b7b2fe1"
+                "reference": "1bdf24f065975594f6a117f0f1f6cabf1333b156"
             },
             "dist": {
                 "type": "zip",
-                "url": "https://api.github.com/repos/vlucas/phpdotenv/zipball/4cd2eaedbbb36378ea4fd48a7babcbfb6b7b2fe1",
-                "reference": "4cd2eaedbbb36378ea4fd48a7babcbfb6b7b2fe1",
+                "url": "https://api.github.com/repos/vlucas/phpdotenv/zipball/1bdf24f065975594f6a117f0f1f6cabf1333b156",
+                "reference": "1bdf24f065975594f6a117f0f1f6cabf1333b156",
                 "shasum": ""
             },
             "require": {
@@ -3686,7 +3686,7 @@
             "type": "library",
             "extra": {
                 "branch-alias": {
-                    "dev-master": "3.5-dev"
+                    "dev-master": "3.6-dev"
                 }
             },
             "autoload": {
@@ -3716,7 +3716,7 @@
                 "env",
                 "environment"
             ],
-            "time": "2019-09-04T23:06:30+00:00"
+            "time": "2019-09-10T21:37:39+00:00"
         },
         {
             "name": "webmozart/assert",
