@@ -264,7 +264,7 @@ class Events
 		Gateway::sendToAll(json_encode($new_message));*/
 		$task_connection = new AsyncTcpConnection('Text://127.0.0.1:2208');
 		$task_connection->send(json_encode(['type' => 'async_hyperv_get_list', 'args' => []]));
-		$task_connection->onMessage = function ($task_connection, $task_result) use ($task_connection) {
+		$task_connection->onMessage = function ($connection, $task_result) use ($task_connection) {
 			//var_dump($task_result);
 			$task_connection->close();
 		};
