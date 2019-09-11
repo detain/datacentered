@@ -23,7 +23,9 @@ if (!extension_loaded('posix')) {
 	exit("Please install posix extension. See http://doc3.workerman.net/appendices/install-extension.html\n");
 }
 define('GLOBAL_START', 1); // The flag is globally activated
-foreach (glob(__DIR__.'/Applications/*/start*.php') as $start_file) {
+//foreach (glob(__DIR__.'/Applications/*/start*.php') as $start_file) {
+foreach (['globaldata', 'task', 'gateway', 'gateway_ssl', 'register', 'businessworker', 'web'] as $start_part) {
+    $start_file = __DIR__.'/Applications/Chat/start_'.$start_part.'.php';
 	require_once $start_file;
 } // Load all Applications/*/start*.php to start all services
 Worker::$stdoutFile = __DIR__.'/stdout.log';
