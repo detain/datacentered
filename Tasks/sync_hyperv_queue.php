@@ -1,5 +1,7 @@
 <?php
 
+use Workerman\Worker;
+
 function sync_hyperv_queue($args)
 {
 	require_once __DIR__.'/../../../my/include/functions.inc.php';

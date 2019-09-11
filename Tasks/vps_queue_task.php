@@ -1,5 +1,7 @@
 <?php
 
+use Workerman\Worker;
+
 function vps_queue_task($args)
 {
 	require_once __DIR__.'/../../../my/include/functions.inc.php';
