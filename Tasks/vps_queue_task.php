@@ -41,11 +41,11 @@ function vps_queue_task($args)
 			if ($global->cas($var, 0, 1)) {
 				function_requirements('vps_queue_handler');
 				if (sizeof($service_master['newvps']) > 0) {
-					Worker::safeEcho("[".date('Y-m-d H:i:s')."] Processing New VPS for {$service_master['vps_name']}\n");
+					myadmin_log('myadmin', 'info', 'Processing New VPS for '.$service_master['vps_name'], __LINE__, __FILE__, 'vps');
 					$output .= vps_queue_handler($service_master, 'get_new_vps', $service_master['newvps']);
 				}
 				if (sizeof($service_master['queue']) > 0) {
-					Worker::safeEcho("[".date('Y-m-d H:i:s')."] Processing VPS Queue for {$service_master['vps_name']}\n");
+                    myadmin_log('myadmin', 'info', 'Processing VPS Queue for '.$service_master['vps_name'], __LINE__, __FILE__, 'vps');
 					$output .= vps_queue_handler($service_master, 'get_queue', $service_master['queue']);
 				}
 				$output .= vps_queue_handler($service_master, 'server_list');
