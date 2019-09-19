@@ -1233,12 +1233,12 @@
             "source": {
                 "type": "git",
                 "url": "https://github.com/walkor/Workerman.git",
-                "reference": "488f108f9e446f31bac4d689bb9f9fe3705862cf"
+                "reference": "9f0322489d6cfe96327cff6a21f7833154f9ba93"
             },
             "dist": {
                 "type": "zip",
-                "url": "https://api.github.com/repos/walkor/Workerman/zipball/488f108f9e446f31bac4d689bb9f9fe3705862cf",
-                "reference": "488f108f9e446f31bac4d689bb9f9fe3705862cf",
+                "url": "https://api.github.com/repos/walkor/Workerman/zipball/9f0322489d6cfe96327cff6a21f7833154f9ba93",
+                "reference": "9f0322489d6cfe96327cff6a21f7833154f9ba93",
                 "shasum": ""
             },
             "require": {
@@ -1271,7 +1271,7 @@
                 "asynchronous",
                 "event-loop"
             ],
-            "time": "2019-09-06T03:42:47+00:00"
+            "time": "2019-09-17T06:50:33+00:00"
         }
     ],
     "packages-dev": [
@@ -3155,12 +3155,12 @@
             "source": {
                 "type": "git",
                 "url": "https://github.com/symfony/console.git",
-                "reference": "11b8611f71d8c53d096f02244faef9561b15206d"
+                "reference": "97b6b558892147dfe4c42ad55822052ccb1921d0"
             },
             "dist": {
                 "type": "zip",
-                "url": "https://api.github.com/repos/symfony/console/zipball/11b8611f71d8c53d096f02244faef9561b15206d",
-                "reference": "11b8611f71d8c53d096f02244faef9561b15206d",
+                "url": "https://api.github.com/repos/symfony/console/zipball/97b6b558892147dfe4c42ad55822052ccb1921d0",
+                "reference": "97b6b558892147dfe4c42ad55822052ccb1921d0",
                 "shasum": ""
             },
             "require": {
@@ -3219,7 +3219,7 @@
             ],
             "description": "Symfony Console Component",
             "homepage": "https://symfony.com",
-            "time": "2019-09-08T17:26:24+00:00"
+            "time": "2019-09-13T12:40:57+00:00"
         },
         {
             "name": "symfony/debug",
@@ -3451,12 +3451,12 @@
             "source": {
                 "type": "git",
                 "url": "https://github.com/symfony/polyfill-mbstring.git",
-                "reference": "b42a2f66e8f1b15ccf25652c3424265923eb4f17"
+                "reference": "a874bbf9135bd76175baa2c26d14312c9ef25543"
             },
             "dist": {
                 "type": "zip",
-                "url": "https://api.github.com/repos/symfony/polyfill-mbstring/zipball/b42a2f66e8f1b15ccf25652c3424265923eb4f17",
-                "reference": "b42a2f66e8f1b15ccf25652c3424265923eb4f17",
+                "url": "https://api.github.com/repos/symfony/polyfill-mbstring/zipball/a874bbf9135bd76175baa2c26d14312c9ef25543",
+                "reference": "a874bbf9135bd76175baa2c26d14312c9ef25543",
                 "shasum": ""
             },
             "require": {
@@ -3502,7 +3502,7 @@
                 "portable",
                 "shim"
             ],
-            "time": "2019-08-06T08:03:45+00:00"
+            "time": "2019-09-17T10:46:08+00:00"
         },
         {
             "name": "symfony/process",
