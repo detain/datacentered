@@ -4,7 +4,7 @@
         "Read more about it at https://getcomposer.org/doc/01-basic-usage.md#installing-dependencies",
         "This file is @generated automatically"
     ],
-    "content-hash": "01dc785ef3f0b188900884a6e2d449ea",
+    "content-hash": "c2d101bd5de633962e8871330073bac5",
     "packages": [
         {
             "name": "clue/buzz-react",
@@ -1228,16 +1228,16 @@
         },
         {
             "name": "workerman/workerman",
-            "version": "v3.5.22",
+            "version": "dev-master",
             "source": {
                 "type": "git",
                 "url": "https://github.com/walkor/Workerman.git",
-                "reference": "488f108f9e446f31bac4d689bb9f9fe3705862cf"
+                "reference": "0acc57e5d5f81c46b33490cb5907849b4c04d52b"
             },
             "dist": {
                 "type": "zip",
-                "url": "https://api.github.com/repos/walkor/Workerman/zipball/488f108f9e446f31bac4d689bb9f9fe3705862cf",
-                "reference": "488f108f9e446f31bac4d689bb9f9fe3705862cf",
+                "url": "https://api.github.com/repos/walkor/Workerman/zipball/0acc57e5d5f81c46b33490cb5907849b4c04d52b",
+                "reference": "0acc57e5d5f81c46b33490cb5907849b4c04d52b",
                 "shasum": ""
             },
             "require": {
@@ -1270,7 +1270,7 @@
                 "asynchronous",
                 "event-loop"
             ],
-            "time": "2019-09-06T03:42:47+00:00"
+            "time": "2019-09-19T10:09:45+00:00"
         }
     ],
     "packages-dev": [
@@ -3090,12 +3090,12 @@
             "source": {
                 "type": "git",
                 "url": "https://github.com/symfony/config.git",
-                "reference": "24a60c0d7ad98a0fa5d1f892e9286095a389404f"
+                "reference": "717ad66b5257e9752ae3c5722b5810bb4c40b236"
             },
             "dist": {
                 "type": "zip",
-                "url": "https://api.github.com/repos/symfony/config/zipball/24a60c0d7ad98a0fa5d1f892e9286095a389404f",
-                "reference": "24a60c0d7ad98a0fa5d1f892e9286095a389404f",
+                "url": "https://api.github.com/repos/symfony/config/zipball/717ad66b5257e9752ae3c5722b5810bb4c40b236",
+                "reference": "717ad66b5257e9752ae3c5722b5810bb4c40b236",
                 "shasum": ""
             },
             "require": {
@@ -3146,7 +3146,7 @@
             ],
             "description": "Symfony Config Component",
             "homepage": "https://symfony.com",
-            "time": "2019-08-26T07:52:57+00:00"
+            "time": "2019-09-19T15:32:51+00:00"
         },
         {
             "name": "symfony/console",
@@ -3226,12 +3226,12 @@
             "source": {
                 "type": "git",
                 "url": "https://github.com/symfony/debug.git",
-                "reference": "0b600300918780001e2821db77bc28b677794486"
+                "reference": "b3e7ce815d82196435d16dc458023f8fb6b36ceb"
             },
             "dist": {
                 "type": "zip",
-                "url": "https://api.github.com/repos/symfony/debug/zipball/0b600300918780001e2821db77bc28b677794486",
-                "reference": "0b600300918780001e2821db77bc28b677794486",
+                "url": "https://api.github.com/repos/symfony/debug/zipball/b3e7ce815d82196435d16dc458023f8fb6b36ceb",
+                "reference": "b3e7ce815d82196435d16dc458023f8fb6b36ceb",
                 "shasum": ""
             },
             "require": {
@@ -3274,7 +3274,7 @@
             ],
             "description": "Symfony Debug Component",
             "homepage": "https://symfony.com",
-            "time": "2019-08-20T13:31:17+00:00"
+            "time": "2019-09-19T15:32:51+00:00"
         },
         {
             "name": "symfony/event-dispatcher",
@@ -3509,12 +3509,12 @@
             "source": {
                 "type": "git",
                 "url": "https://github.com/symfony/process.git",
-                "reference": "d822cb654000a95b7855362c0d5b127f6a6d8baa"
+                "reference": "f143c1efe5a43a11fea4595f3fd8132028049f22"
             },
             "dist": {
                 "type": "zip",
-                "url": "https://api.github.com/repos/symfony/process/zipball/d822cb654000a95b7855362c0d5b127f6a6d8baa",
-                "reference": "d822cb654000a95b7855362c0d5b127f6a6d8baa",
+                "url": "https://api.github.com/repos/symfony/process/zipball/f143c1efe5a43a11fea4595f3fd8132028049f22",
+                "reference": "f143c1efe5a43a11fea4595f3fd8132028049f22",
                 "shasum": ""
             },
             "require": {
@@ -3550,7 +3550,7 @@
             ],
             "description": "Symfony Process Component",
             "homepage": "https://symfony.com",
-            "time": "2019-08-26T07:52:58+00:00"
+            "time": "2019-09-19T15:32:51+00:00"
         },
         {
             "name": "symfony/stopwatch",
@@ -3778,6 +3778,7 @@
         "workerman/gateway-worker": 20,
         "workerman/globaldata": 20,
         "workerman/mysql": 20,
+        "workerman/workerman": 20,
         "workerman/statistics": 20,
         "codeclimate/php-test-reporter": 20,
         "codacy/coverage": 20
