@@ -30,7 +30,7 @@
 		"workerman/gateway-worker" : "dev-master",
 		"workerman/globaldata": "dev-master",
 		"workerman/mysql": "dev-master",
-		"workerman/workerman": "3.5.21",
+		"workerman/workerman": "3.5.22",
 		"workerman/statistics": "dev-master"
 	},
 	"require-dev": {

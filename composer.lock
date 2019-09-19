@@ -4,7 +4,7 @@
         "Read more about it at https://getcomposer.org/doc/01-basic-usage.md#installing-dependencies",
         "This file is @generated automatically"
     ],
-    "content-hash": "4e28d99505e7b82ec7e6644d40b0a2a4",
+    "content-hash": "01dc785ef3f0b188900884a6e2d449ea",
     "packages": [
         {
             "name": "clue/buzz-react",
@@ -1228,16 +1228,16 @@
         },
         {
             "name": "workerman/workerman",
-            "version": "v3.5.21",
+            "version": "v3.5.22",
             "source": {
                 "type": "git",
                 "url": "https://github.com/walkor/Workerman.git",
-                "reference": "c528197ef7b44e387e33f5cc0d9d2e0ee7bcf843"
+                "reference": "488f108f9e446f31bac4d689bb9f9fe3705862cf"
             },
             "dist": {
                 "type": "zip",
-                "url": "https://api.github.com/repos/walkor/Workerman/zipball/c528197ef7b44e387e33f5cc0d9d2e0ee7bcf843",
-                "reference": "c528197ef7b44e387e33f5cc0d9d2e0ee7bcf843",
+                "url": "https://api.github.com/repos/walkor/Workerman/zipball/488f108f9e446f31bac4d689bb9f9fe3705862cf",
+                "reference": "488f108f9e446f31bac4d689bb9f9fe3705862cf",
                 "shasum": ""
             },
             "require": {
@@ -1270,7 +1270,7 @@
                 "asynchronous",
                 "event-loop"
             ],
-            "time": "2019-08-28T09:36:14+00:00"
+            "time": "2019-09-06T03:42:47+00:00"
         }
     ],
     "packages-dev": [
