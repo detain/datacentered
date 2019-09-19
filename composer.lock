@@ -4,7 +4,7 @@
         "Read more about it at https://getcomposer.org/doc/01-basic-usage.md#installing-dependencies",
         "This file is @generated automatically"
     ],
-    "content-hash": "6d74d60f3ee99abe5896268f4b04fee3",
+    "content-hash": "4e28d99505e7b82ec7e6644d40b0a2a4",
     "packages": [
         {
             "name": "clue/buzz-react",
@@ -392,28 +392,27 @@
         },
         {
             "name": "react/event-loop",
-            "version": "v1.1.0",
+            "version": "v0.5.3",
             "source": {
                 "type": "git",
                 "url": "https://github.com/reactphp/event-loop.git",
-                "reference": "a0ecac955c67b57c40fe4a1b88a7cca1b58c982d"
+                "reference": "228178a947de1f7cd9296d691878569628288c6f"
             },
             "dist": {
                 "type": "zip",
-                "url": "https://api.github.com/repos/reactphp/event-loop/zipball/a0ecac955c67b57c40fe4a1b88a7cca1b58c982d",
-                "reference": "a0ecac955c67b57c40fe4a1b88a7cca1b58c982d",
+                "url": "https://api.github.com/repos/reactphp/event-loop/zipball/228178a947de1f7cd9296d691878569628288c6f",
+                "reference": "228178a947de1f7cd9296d691878569628288c6f",
                 "shasum": ""
             },
             "require": {
                 "php": ">=5.3.0"
             },
             "require-dev": {
-                "phpunit/phpunit": "^7.0 || ^6.4 || ^5.7 || ^4.8.35"
+                "phpunit/phpunit": "~4.8.35 || ^5.7 || ^6.4"
             },
             "suggest": {
                 "ext-event": "~1.0 for ExtEventLoop",
-                "ext-pcntl": "For signal handling support when using the StreamSelectLoop",
-                "ext-uv": "* for ExtUvLoop"
+                "ext-pcntl": "For signal handling support when using the StreamSelectLoop"
             },
             "type": "library",
             "autoload": {
@@ -430,7 +429,7 @@
                 "asynchronous",
                 "event-loop"
             ],
-            "time": "2019-02-07T16:19:49+00:00"
+            "time": "2018-07-09T13:51:04+00:00"
         },
         {
             "name": "react/http-client",
@@ -1229,16 +1228,16 @@
         },
         {
             "name": "workerman/workerman",
-            "version": "dev-master",
+            "version": "v3.5.21",
             "source": {
                 "type": "git",
                 "url": "https://github.com/walkor/Workerman.git",
-                "reference": "9f0322489d6cfe96327cff6a21f7833154f9ba93"
+                "reference": "c528197ef7b44e387e33f5cc0d9d2e0ee7bcf843"
             },
             "dist": {
                 "type": "zip",
-                "url": "https://api.github.com/repos/walkor/Workerman/zipball/9f0322489d6cfe96327cff6a21f7833154f9ba93",
-                "reference": "9f0322489d6cfe96327cff6a21f7833154f9ba93",
+                "url": "https://api.github.com/repos/walkor/Workerman/zipball/c528197ef7b44e387e33f5cc0d9d2e0ee7bcf843",
+                "reference": "c528197ef7b44e387e33f5cc0d9d2e0ee7bcf843",
                 "shasum": ""
             },
             "require": {
@@ -1271,7 +1270,7 @@
                 "asynchronous",
                 "event-loop"
             ],
-            "time": "2019-09-17T06:50:33+00:00"
+            "time": "2019-08-28T09:36:14+00:00"
         }
     ],
     "packages-dev": [
@@ -3779,7 +3778,6 @@
         "workerman/gateway-worker": 20,
         "workerman/globaldata": 20,
         "workerman/mysql": 20,
-        "workerman/workerman": 20,
         "workerman/statistics": 20,
         "codeclimate/php-test-reporter": 20,
         "codacy/coverage": 20
