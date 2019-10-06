@@ -1,5 +1,5 @@
 {
-	"name": "detain/vps-host-service",
+	"name": "detain/datacentered",
 	"description": "Service providing Asynchronous communication and updates to the host servers vps related stuff.",
 	"type": "project",
 	"keywords": [
