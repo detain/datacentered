@@ -15,8 +15,10 @@ use GatewayWorker\Lib\Gateway;
 use Workerman\Connection\AsyncTcpConnection;
 use Workerman\Connection\TcpConnection;
 use Workerman\Lib\Timer;
+use Workerman\GlobalTimer;
 
 require_once __DIR__.'/Process.php';
+require_once __DIR__.'/../../vendor/workerman/global-timer/src/GlobalTimer.php';
 
 class Events
 {
@@ -38,6 +40,7 @@ class Events
 		 */
 		global $global;
 		$global = new GlobalData\Client('127.0.0.1:2207');     // initialize the GlobalData client
+        //GlobalTimer::init('127.0.0.1','3333');
 		$db_config = include __DIR__.'/../../../../my/include/config/config.db.php';
 		$loop = Worker::getEventLoop();
 		self::$db = new \Workerman\MySQL\Connection($db_config['db_host'], $db_config['db_port'], $db_config['db_user'], $db_config['db_pass'], $db_config['db_name'], 'utf8mb4');
@@ -53,10 +56,13 @@ class Events
 				]
 			];
 			Events::hyperv_update_list_timer();
-			Timer::add(3600, ['Events', 'hyperv_update_list_timer']);
-			Timer::add(30, ['Events', 'hyperv_queue_timer']);
-			Timer::add(30, ['Events', 'vps_queue_timer']);
 		}
+        if ($worker->id == 0 ) {
+            $args = [];
+            Timer::add(3600, ['Events', 'hyperv_update_list_timer'], $args);
+            Timer::add(30, ['Events', 'hyperv_queue_timer'], $args);
+            Timer::add(30, ['Events', 'vps_queue_timer'], $args);
+        }
 	}
 
 	/**

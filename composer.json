@@ -29,6 +29,7 @@
 		"workerman/gatewayclient": "dev-master",
 		"workerman/gateway-worker" : "dev-master",
 		"workerman/globaldata": "dev-master",
+		"workerman/global-timer": "dev-master",
 		"workerman/mysql": "dev-master",
 		"workerman/workerman": "3.5.22",
 		"workerman/statistics": "dev-master"
@@ -44,6 +45,25 @@
 		"ext-event": "*",
 		"ext-ev": "*"
 	},
+	"config": {
+		"minimum-stability": "dev",
+		"optimize-autoloader": true,
+		"sort-packages": true
+	},
+	"repositories": [
+		{
+			"type": "package",
+			"package": {
+				"name": "workerman/global-timer",
+				"version": "master",
+				"source": {
+					"url": "https://github.com/walkor/global-timer.git",
+					"type": "git",
+					"reference": "master"
+				}
+			}
+		}
+	],
 	"autoload": {
 		"psr-4": {
 			"MyAdmin\\VpsHost\\": "src/"

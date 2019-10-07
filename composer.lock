@@ -4,7 +4,7 @@
         "Read more about it at https://getcomposer.org/doc/01-basic-usage.md#installing-dependencies",
         "This file is @generated automatically"
     ],
-    "content-hash": "ac9a487576ebc53f19ad845bb19a542a",
+    "content-hash": "8110b51fa9a7cdec1e63bed83e8888a3",
     "packages": [
         {
             "name": "clue/buzz-react",
@@ -1129,6 +1129,17 @@
             ],
             "homepage": "http://www.workerman.net",
             "time": "2019-03-20T06:43:26+00:00"
+        },
+        {
+            "name": "workerman/global-timer",
+            "version": "master",
+            "source": {
+                "type": "git",
+                "url": "https://github.com/walkor/global-timer.git",
+                "reference": "master"
+            },
+            "type": "library",
+            "time": "2019-10-06T11:55:00+00:00"
         },
         {
             "name": "workerman/globaldata",
@@ -4149,6 +4160,7 @@
         "workerman/gatewayclient": 20,
         "workerman/gateway-worker": 20,
         "workerman/globaldata": 20,
+        "workerman/global-timer": 20,
         "workerman/mysql": 20,
         "workerman/statistics": 20,
         "codeclimate/php-test-reporter": 20,
