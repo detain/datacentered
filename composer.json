@@ -21,7 +21,7 @@
 		"clue/soap-react": "dev-master",
 		"roave/security-advisories": "dev-master",
 		"react/child-process": "*",
-		"react/event-loop": "0.5.3",
+		"react/event-loop": "*",
 		"react/http-client": "*",
 		"react/mysql": "*",
 		"danielstjules/php-pretty-datetime": "*",
@@ -31,7 +31,7 @@
 		"workerman/globaldata": "dev-master",
 		"workerman/global-timer": "dev-master",
 		"workerman/mysql": "dev-master",
-		"workerman/workerman": "3.5.22",
+		"workerman/workerman": "dev-master",
 		"workerman/statistics": "dev-master"
 	},
 	"require-dev": {
