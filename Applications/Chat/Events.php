@@ -40,7 +40,7 @@ class Events
 		 */
 		global $global;
 		$global = new GlobalData\Client('127.0.0.1:2207');     // initialize the GlobalData client
-        //GlobalTimer::init('127.0.0.1','3333');
+		//GlobalTimer::init('127.0.0.1','3333');
 		$db_config = include __DIR__.'/../../../../my/include/config/config.db.php';
 		$loop = Worker::getEventLoop();
 		self::$db = new \Workerman\MySQL\Connection($db_config['db_host'], $db_config['db_port'], $db_config['db_user'], $db_config['db_pass'], $db_config['db_name'], 'utf8mb4');
@@ -57,12 +57,12 @@ class Events
 			];
 			Events::hyperv_update_list_timer();
 		}
-        if ($worker->id == 0 ) {
-            $args = [];
-            Timer::add(3600, ['Events', 'hyperv_update_list_timer'], $args);
-            Timer::add(30, ['Events', 'hyperv_queue_timer'], $args);
-            Timer::add(30, ['Events', 'vps_queue_timer'], $args);
-        }
+		if ($worker->id == 0 ) {
+			$args = [];
+			Timer::add(3600, ['Events', 'hyperv_update_list_timer'], $args);
+			Timer::add(30, ['Events', 'hyperv_queue_timer'], $args);
+			Timer::add(30, ['Events', 'vps_queue_timer'], $args);
+		}
 	}
 
 	/**
@@ -505,7 +505,7 @@ class Events
 			Worker::safeEcho("[{$client_id}] error with bandwidth content " . var_export($message_data['content'], true).PHP_EOL);
 			return;
 		}
-        Worker::safeEcho("msgBandwidth called with ($client_id, ".json_encode($message_data).")");
+		//Worker::safeEcho("msgBandwidth called with ($client_id, ".json_encode($message_data).")");
 		$task_connection = new AsyncTcpConnection('Text://127.0.0.1:2208');
 		$task_connection->send(json_encode([
 			'type' => 'bandwidth',
@@ -516,7 +516,7 @@ class Events
 			]
 		]));
 		$task_connection->onMessage = function ($connection, $task_result) use ($task_connection, $client_id, $message_data) {
-			Worker::safeEcho("[{$client_id}] Bandwidth Update for ".$_SESSION['name']." content: ".json_encode($message_data['content'])." returned:".var_export($task_result,TRUE).PHP_EOL);
+			//Worker::safeEcho("[{$client_id}] Bandwidth Update for ".$_SESSION['name']." content: ".json_encode($message_data['content'])." returned:".var_export($task_result,TRUE).PHP_EOL);
 			$task_connection->close();
 		};
 		$task_connection->connect();
