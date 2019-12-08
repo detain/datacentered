@@ -16,14 +16,22 @@ $context = [																						// Certificate is best to apply for a certific
 	]
 ];
 $web = new WebServer("http://0.0.0.0:55151", $context); // WebServer
-$web->count = 2; // WebServer number of processes
-$web->transport = 'ssl';
+$web->count = 10; // WebServer number of processes
+//$web->transport = 'ssl';
 $web->addRoot(isset($_SERVER['HOSTNAME']) ? $_SERVER['HOSTNAME'] : trim(`hostname -f`), __DIR__.'/../../Web'); // Set the site root
 
 if (!defined('GLOBAL_START')) { // If it is not started in the root directory, run the runAll method
 	Worker::runAll();
 }
 
+$web->onWorkerStart = function ($worker) {
+	global $memcache;
+	$memcache = new \Memcached();
+	$memcache->addServer('localhost', 11211);
+};
+	
+$web->onWorkerStop = function ($worker) {
+};
 	
 $web->onConnect = function ($connection) {
 	$connection->maxSendBufferSize = 50663296;

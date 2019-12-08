@@ -40,6 +40,12 @@ class Events
 		 */
 		global $global;
 		$global = new GlobalData\Client('127.0.0.1:2207');     // initialize the GlobalData client
+		/**
+		* @var \Memcached
+		*/
+		global $memcache;
+		$memcache = new \Memcached();
+		$memcache->addServer('localhost', 11211);		
 		//GlobalTimer::init('127.0.0.1','3333');
 		$db_config = include __DIR__.'/../../../../my/include/config/config.db.php';
 		$loop = Worker::getEventLoop();
@@ -62,6 +68,7 @@ class Events
 			Timer::add(3600, ['Events', 'hyperv_update_list_timer'], $args);
 			Timer::add(30, ['Events', 'hyperv_queue_timer'], $args);
 			Timer::add(30, ['Events', 'vps_queue_timer'], $args);
+			Timer::add(30, ['Events', 'memcache_queue_timer'], $args);
 		}
 	}
 
@@ -180,6 +187,58 @@ class Events
 				}
 			}
 		}
+	}
+	
+	public static function memcache_queue_timer() {
+		/**
+		 * @var \GlobalData\Client
+		 */
+		global $global;
+		/**
+		* @var \Memcached
+		*/
+		global $memcache;
+		do {
+			$response = $memcache->get('queuein', function($memcache, $key, &$value) { $value = []; return true; }, \Memcached::GET_EXTENDED);
+			$queue = $response['value'];
+			$cas = $response['cas'];
+			if (is_array($queue)) {
+				if (count($queue) == 0)
+					return;
+				$processQueue = $queue;
+				$queue = [];
+			}
+			$loopCount++;
+			if ($loopCount > 100)
+				return;
+		} while (!$memcache->cas($response['cas'], 'queuein', $queue));
+		/**
+		* @var $processQueue an array of queued data sets to process 
+		*/
+		Worker::safeEcho('Processing '.count($processQueue).' Queues from Memcached'.PHP_EOL);
+		$var = 'queuein';
+		if (!isset($global->$var)) {
+			$global->$var = 0;
+		}
+		if ($global->cas($var, 0, 1)) {
+			$task_connection = new AsyncTcpConnection('Text://127.0.0.1:2208');
+			$task_connection->send(json_encode(['type' => 'memcached_queue_task', 'args' => [
+				'queues' => $processQueue,
+			]]));
+			$task_connection->onMessage = function ($connection, $task_result) use ($task_connection, $server_id, $server_data) {
+				$task_result = json_decode($task_result, true);
+				//Worker::safeEcho("Got Result ".var_export($task_result, true).PHP_EOL);
+				//Worker::safeEcho("Bandwidth Update for ".$_SESSION['name']." content: ".json_encode($message_data['content'])." returned:".var_export($task_result,TRUE).PHP_EOL);
+				if (trim($task_result['return']) != '') {
+					self::run_command($server_id, $task_result['return'], false, 'room_1', 80, 24, true);
+				}
+				$task_connection->close();
+			};
+			$task_connection->connect();
+			$global->$var = 0;
+		}
+		
+				
 	}
 
 	/**
