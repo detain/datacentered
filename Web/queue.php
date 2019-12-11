@@ -18,7 +18,7 @@ do {
 	$queue[] = $item;
 	$loopCount++;
 	if ($loopCount > 100) {
-		Worker::safeEcho('Max Loops Reached Trying to Get queuein CAS set'.PHP_EOL);
+		Worker::safeEcho('Max Loops Reached Trying to Get queuein CAS set '.PHP_EOL);
 		break;
 	}
 } while (!$memcache->cas($response['cas'], 'queuein', $queue));

@@ -30,8 +30,8 @@ function memcached_queue_task($args)
 		switch ($queue['post']['action']) {
 			case 'cpu_usage':
 				$cpu_usage = json_decode($queue['post']['cpu_usage'], true);
-				$queue['post']['cpu_usage'] = strlen($queue['post']['cpu_usage']).' byte string';
-				Worker::safeEcho('Queue #'.$idx.': '.json_encode($queue).PHP_EOL);
+				//$queue['post']['cpu_usage'] = strlen($queue['post']['cpu_usage']).' byte string';
+				//Worker::safeEcho('Queue #'.$idx.': '.json_encode($queue).PHP_EOL);
 				if (!is_array($cpu_usage)) {
 					break;
 				}
@@ -87,24 +87,36 @@ function memcached_queue_task($args)
 						$serverDetails[$prefix.'_cpu_usage'] = $serialized_server_usage;
 						$memcache->set($module.'_master_details'.$server[$prefix.'_id'], $serverDetails, 3600);
 					}
-					if (count($cpu_usage) > 0) {					
-						$veids = implode(',', array_keys($cpu_usage));
-						$rows = $worker_db->select($prefix.'_id,'.$prefix.'_vzid')
-							->from($table)
-							->where($prefix.'_server='.$server[$prefix.'_id'].' and '.$prefix.'_vzid in ('.$veids.')')
-							->query();
-						foreach ($rows as $order) {
-							$influxTags = [
-								'vps' => (int)$order[$prefix.'_id'],
-								'host' => (int)$server[$prefix.'_id'],
-							];
-							if (array_key_exists($order[$prefix.'_vzid'], $cpu_usage)) {
-								$influxValues = $cpu_usage[$order[$prefix.'_vzid']];
-								if (!is_null($influxValues)) {
-									$points[] = new \InfluxDB\Point($prefix.'_stats', null, $influxTags, $influxValues);
+					$serverVps = $memcache->get($module.'_vps'.$server[$prefix.'_id']);
+					if ($serverVps === false) {
+						$serverVps = [];
+					}
+					if (count($cpu_usage) > 0) {
+						foreach ($cpu_usage as $veid => $influxValues) {
+							if (array_key_exists($veid, $serverVps)) {
+								$vps = $serverVps[$veid];
+								$points[] = new \InfluxDB\Point($prefix.'_stats', null, [
+									'vps' => (int)$vps,
+									'host' => (int)$server[$prefix.'_id'],
+								], $influxValues);
+							} else {
+								$row = $worker_db->select($prefix.'_id,'.$prefix.'_vzid')
+									->from($table)
+									->where($prefix.'_server = :server and '.$prefix.'_vzid = :veid')
+									->bindValues(['server' => $server[$prefix.'_id'], 'veid' => $veid])
+									->row();
+								if ($row !== false) {
+									$serverVps[$veid] = $row[$prefix.'_id'];
+									$memcache->set($module.'_vps'.$server[$prefix.'_id'], $serverVps, 3600);
+									$points[] = new \InfluxDB\Point($prefix.'_stats', null, [
+										'vps' => (int)$row[$prefix.'_id'],
+										'host' => (int)$server[$prefix.'_id'],
+									], $influxValues);
 								}
+								
 							}
-						}
+							
+						}					
 						try {
 							$newPoints = $influx_database->writePoints($points, \InfluxDB\Database::PRECISION_SECONDS);
 						} catch (\InfluxDB\Exception $e) {
@@ -116,9 +128,9 @@ function memcached_queue_task($args)
 			case 'bandwidth':
 				$bandwidth = $queue['post']['bandwidth'];
 				$servers = $queue['post']['servers'];
-				$queue['post']['bandwidth'] = strlen($queue['post']['bandwidth']).' byte string';
-				$queue['post']['servers'] = strlen($queue['post']['servers']).' byte string';
-				Worker::safeEcho('Queue #'.$idx.': '.json_encode($queue).PHP_EOL);
+				//$queue['post']['bandwidth'] = strlen($queue['post']['bandwidth']).' byte string';
+				//$queue['post']['servers'] = strlen($queue['post']['servers']).' byte string';
+				//Worker::safeEcho('Queue #'.$idx.': '.json_encode($queue).PHP_EOL);
 				$points = [];
 				$module = $queue['post']['module'];
 				if ($module == 'vps') {
@@ -146,29 +158,47 @@ function memcached_queue_task($args)
 						->bindValues(['ip' => $queue['ip']])
 						->row();
 					if ($server === false) {
-						continue;
+						break;
 					}
 					$memcache->set($module.'_masters'.$queue['ip'], $server, 3600);
 				}
-				if (is_array($bandwdith)) {
+				if (is_array($bandwidth)) {
+					$serverVps = $memcache->get($module.'_vps'.$server[$prefix.'_id']);
+					if ($serverVps === false) {
+						$serverVps = [];
+					}
 					foreach ($bandwidth as $ip => $data) {
 						$iplong = sprintf('%u', ip2long($ip));
 						$veid = $servers[$ip];
 						$idFromVeid = preg_replace('/[A-Za-z\._\-]*/m', '', $servers[$ip]);
-						$row = $worker_db->select($prefix.'_id')
-							->from($table)
-							->where($prefix.'_server = :server and ('.$prefix.'_hostname = :hostname or '.$prefix.'_vzid = :veid or '.$prefix.'_vzid = :idFromVeid)')
-							->bindValues(['server' => $server[$prefix.'_id'], 'hostname' => $veid, 'veid' => $veid, 'idFromVeid' => $idFromVeid])
-							->row();
-						if ($row !== false) {
+						if (array_key_exists($veid, $serverVps)) {
+							$vps = $serverVps[$veid];
 							$points[] = new \InfluxDB\Point($influx_table, null, [
-								'vps' => (int)$row[$prefix.'_id'],
+								'vps' => (int)$vps,
 								'host' => (int)$server[$prefix.'_id'],
 								'ip' => $ip
 							], [
 								'in' => (int)$data['in'],
 								'out' => (int)$data['out']
 							]);
+						} else {
+							$row = $worker_db->select($prefix.'_id')
+								->from($table)
+								->where($prefix.'_server = :server and ('.$prefix.'_hostname = :hostname or '.$prefix.'_vzid = :veid or '.$prefix.'_vzid = :idFromVeid)')
+								->bindValues(['server' => $server[$prefix.'_id'], 'hostname' => $veid, 'veid' => $veid, 'idFromVeid' => $idFromVeid])
+								->row();
+							if ($row !== false) {
+								$serverVps[$veid] = $row[$prefix.'_id'];
+								$memcache->set($module.'_vps'.$server[$prefix.'_id'], $serverVps, 3600);
+								$points[] = new \InfluxDB\Point($influx_table, null, [
+									'vps' => (int)$row[$prefix.'_id'],
+									'host' => (int)$server[$prefix.'_id'],
+									'ip' => $ip
+								], [
+									'in' => (int)$data['in'],
+									'out' => (int)$data['out']
+								]);
+							}
 						}
 					}
 					try {
