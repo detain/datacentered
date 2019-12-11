@@ -68,7 +68,7 @@ class Events
 			Timer::add(3600, ['Events', 'hyperv_update_list_timer'], $args);
 			Timer::add(30, ['Events', 'hyperv_queue_timer'], $args);
 			Timer::add(30, ['Events', 'vps_queue_timer'], $args);
-			Timer::add(15, ['Events', 'memcache_queue_timer'], $args);
+			Timer::add(30, ['Events', 'memcache_queue_timer'], $args);
 		}
 	}
 
@@ -219,7 +219,7 @@ class Events
 			$cas = $response['cas'];
 			if (count($queue) == 0) {
 				$global->$var = 0;
-				Worker::safeEcho('Empty Queue, Returning after '.(time() - $memcached_start).' seconds'.PHP_EOL);
+				//Worker::safeEcho('Empty Queue, Returning after '.(time() - $memcached_start).' seconds'.PHP_EOL);
 				return;
 			}
 			$processQueue = $queue;
@@ -233,7 +233,7 @@ class Events
 		} while (!$memcache->cas($response['cas'], $var, $queue));
 		if (count($processQueue) == 0) {
 			$global->$var = 0;
-			Worker::safeEcho('Empty Queue, Returning after '.(time() - $memcached_start).' seconds'.PHP_EOL);
+			//Worker::safeEcho('Empty Queue, Returning after '.(time() - $memcached_start).' seconds'.PHP_EOL);
 			return;
 		}
 		/**

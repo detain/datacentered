@@ -22,5 +22,5 @@ do {
 		break;
 	}
 } while (!$memcache->cas($response['cas'], 'queuein', $queue));
-Worker::safeEcho('CAS set queuein to  '.var_export($queue, true).PHP_EOL); 
+//Worker::safeEcho('CAS set queuein to  '.json_encode($queue).PHP_EOL); 
 //\Workerman\Protocols\Http::end($output);

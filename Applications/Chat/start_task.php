@@ -12,7 +12,7 @@ $task_worker = new Worker('Text://127.0.0.1:2208');		// task worker, using the T
 $task_worker->count = 5; 								// number of task processes can be opened more than needed
 $task_worker->name = 'TaskWorker';
 $task_worker->onWorkerStart = function ($worker) {
-	global $global, $functions, $worker_db, $influx_client, $influx_database;
+	global $global, $functions, $worker_db, $influx_client, $influx_database, $memcache;
 	include_once __DIR__.'/../../../../my/include/config/config.settings.php';
 	$db_config = include __DIR__.'/../../../../my/include/config/config.db.php';
 	$loop = Worker::getEventLoop();
@@ -20,6 +20,8 @@ $task_worker->onWorkerStart = function ($worker) {
 	$influx_client = new \InfluxDB\Client(INFLUX_HOST, INFLUX_PORT, INFLUX_USER, INFLUX_PASS, true);
 	$influx_database = $influx_client->selectDB(INFLUX_DB);
 	$global = new \GlobalData\Client('127.0.0.1:2207');
+	$memcache = new \Memcached();
+	$memcache->addServer('localhost', 11211);		
 	$functions = [];
 	foreach (glob(__DIR__.'/../../Tasks/*.php') as $file) {
 		$function = basename($file, '.php');
