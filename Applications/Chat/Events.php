@@ -198,47 +198,77 @@ class Events
 		* @var \Memcached
 		*/
 		global $memcache;
-		do {
-			$response = $memcache->get('queuein', function($memcache, $key, &$value) { $value = []; return true; }, \Memcached::GET_EXTENDED);
-			$queue = $response['value'];
-			$cas = $response['cas'];
-			if (is_array($queue)) {
-				if (count($queue) == 0)
-					return;
-				$processQueue = $queue;
-				$queue = [];
-			}
-			$loopCount++;
-			if ($loopCount > 100)
-				return;
-		} while (!$memcache->cas($response['cas'], 'queuein', $queue));
-		/**
-		* @var $processQueue an array of queued data sets to process 
-		*/
-		Worker::safeEcho('Processing '.count($processQueue).' Queues from Memcached'.PHP_EOL);
 		$var = 'queuein';
 		if (!isset($global->$var)) {
 			$global->$var = 0;
 		}
+		if (!$global->cas($var, 0, 1)) {
+			Worker::safeEcho('Cannot Get '.$var.' Lock, Returning'.PHP_EOL);
+			return;
+		}
+		$loopCount = 0;
+		do {
+			$response = $memcache->get($var, function($memcache, $key, &$value) { $value = []; return true; }, \Memcached::GET_EXTENDED);
+			$queue = $response['value'];
+			$cas = $response['cas'];
+			if (is_array($queue)) {
+				if (count($queue) == 0) {
+					$global->$var = 0;
+					return;
+				}
+				$processQueue = $queue;
+				$queue = [];
+			}
+			$loopCount++;
+			if ($loopCount > 100) {
+				$global->$var = 0;
+				return;
+			}
+		} while (!$memcache->cas($response['cas'], $var, $queue));
+		/**
+		* @var $processQueue an array of queued data sets to process 
+		*/
+		Worker::safeEcho('Processing '.count($processQueue).' Queues from Memcached'.PHP_EOL);
 		if ($global->cas($var, 0, 1)) {
 			$task_connection = new AsyncTcpConnection('Text://127.0.0.1:2208');
 			$task_connection->send(json_encode(['type' => 'memcached_queue_task', 'args' => [
 				'queues' => $processQueue,
 			]]));
-			$task_connection->onMessage = function ($connection, $task_result) use ($task_connection, $server_id, $server_data) {
+			$task_connection->onMessage = function ($connection, $task_result) use ($task_connection, $var) {
+				/**
+				 * @var \GlobalData\Client
+				 */
+				global $global;
+				/**
+				* @var \Memcached
+				*/
+				global $memcache;
 				$task_result = json_decode($task_result, true);
 				//Worker::safeEcho("Got Result ".var_export($task_result, true).PHP_EOL);
 				//Worker::safeEcho("Bandwidth Update for ".$_SESSION['name']." content: ".json_encode($message_data['content'])." returned:".var_export($task_result,TRUE).PHP_EOL);
-				if (trim($task_result['return']) != '') {
-					self::run_command($server_id, $task_result['return'], false, 'room_1', 80, 24, true);
+				if (count($task_result['return']) > 0) {
+					$loopCount = 0;
+					do {
+						$response = $memcache->get('queueout', function($memcache, $key, &$value) { $value = []; return true; }, \Memcached::GET_EXTENDED);
+						$queue = $response['value'];
+						$cas = $response['cas'];
+						if (is_array($queue)) {
+							foreach ($task_result['return'] as $return)
+								$queue[] = $return;
+						}
+						$loopCount++;
+						if ($loopCount > 100) {
+							$global->$var = 0;
+							$task_connection->close();
+							return;
+						}
+					} while (!$memcache->cas($response['cas'], 'queueout', $queue));
+					$global->$var = 0;
 				}
 				$task_connection->close();
 			};
 			$task_connection->connect();
-			$global->$var = 0;
 		}
-		
-				
 	}
 
 	/**
