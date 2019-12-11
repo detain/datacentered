@@ -23,9 +23,49 @@ function memcached_queue_task($args)
 	*/
 	global $memcache;
 	$memcached_start = time();
-	Worker::safeEcho('Task handler Started memcached_queue_task'.PHP_EOL);
+	//Worker::safeEcho('Task handler Started memcached_queue_task'.PHP_EOL);
+	if (!isset($global->queuein)) {
+		$global->queuein = 0;
+	}
+	if (!$global->cas('queuein', 0, 1)) {
+		Worker::safeEcho('Cannot Get queuein Lock, Returning after '.(time() - $memcached_start).' seconds'.PHP_EOL);
+		return;
+	}
+	$loopCount = 0;
+	do {
+		$response = $memcache->get('queuein', function($memcache, $key, &$value) { $value = []; return true; }, \Memcached::GET_EXTENDED);
+		if ($response === false) {
+			$memcache->set('queuein', []);
+			$response = $memcache->get('queuein', function($memcache, $key, &$value) { $value = []; return true; }, \Memcached::GET_EXTENDED);
+		}
+		$queue = $response['value'];
+		$cas = $response['cas'];
+		if (count($queue) == 0) {
+			$global->queuein = 0;
+			//Worker::safeEcho('Empty Queue, Returning after '.(time() - $memcached_start).' seconds'.PHP_EOL);
+			return;
+		}
+		$processQueue = $queue;
+		$queue = [];
+		$loopCount++;
+		if ($loopCount > 100) {
+			$global->queuein = 0;
+			Worker::SafeEcho('Hit 100 Attempts at CAS updating the queuein after '.(time() - $memcached_start).' seconds'.PHP_EOL);
+			return;
+		}
+	} while (!$memcache->cas($response['cas'], 'queuein', $queue));
+	if (count($processQueue) == 0) {
+		$global->queuein = 0;
+		//Worker::safeEcho('Empty Queue, Returning after '.(time() - $memcached_start).' seconds'.PHP_EOL);
+		return;
+	}
+	/**
+	* @var $processQueue an array of queued data sets to process 
+	*/
+	//Worker::safeEcho('Processing '.count($processQueue).' Queues from Memcached after '.(time() - $memcached_start).' seconds'.PHP_EOL);
+	
 	$return = [];
-	foreach ($args['queues'] as $idx => $queue) {
+	foreach ($processQueue as $idx => $queue) {
 		
 		switch ($queue['post']['action']) {
 			case 'cpu_usage':
@@ -213,6 +253,25 @@ function memcached_queue_task($args)
 				break;
 		}
 	}
-	Worker::safeEcho('Finished Task memcached_queue_task after '.(time() - $memcached_start).' seconds'.PHP_EOL);
-	return $return;
+	if (count($return) > 0) {
+		$loopCount = 0;
+		do {
+			$response = $memcache->get('queueout', function($memcache, $key, &$value) { $value = []; return true; }, \Memcached::GET_EXTENDED);
+			$queue = $response['value'];
+			$cas = $response['cas'];
+			if (count($queue) > 0) {
+				foreach ($return as $row)
+					$queue[] = $row;
+			}
+			$loopCount++;
+			if ($loopCount > 100) {
+				$global->queuein = 0;
+				Worker::SafeEcho('Hit 100 Attempts at CAS updating the queuein to 0 after '.(time() - $memcached_start).' seconds'.PHP_EOL);
+				return;
+			}
+		} while (!$memcache->cas($response['cas'], 'queueout', $queue));
+	}
+	$global->queuein = 0;			
+	Worker::safeEcho('memcached_queue_task finished processing '.count($processQueue).' queues after '.(time() - $memcached_start).' seconds'.PHP_EOL);
+	return;
 }
