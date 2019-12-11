@@ -25,6 +25,7 @@
 		"react/http-client": "*",
 		"react/mysql": "*",
 		"danielstjules/php-pretty-datetime": "*",
+		"influxdb/influxdb-php": "dev-master",
 		"workerman/channel": "dev-master",
 		"workerman/gatewayclient": "dev-master",
 		"workerman/gateway-worker" : "dev-master",
