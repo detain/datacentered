@@ -9,6 +9,8 @@ function memcached_queue_task($args)
 	* @var \GlobalData\Client
 	*/
 	global $global, $worker_db, $influx_client, $influx_database;
+	$memcached_start = time();
+	Worker::safeEcho('Task handler Started memcached_queue_task'.PHP_EOL);
 	$return = [];
 	foreach ($args['queues'] as $queue) {
 		Worker::safeEcho('Queue: '.print_r($queue, true).PHP_EOL);
@@ -43,27 +45,28 @@ function memcached_queue_task($args)
 						if ($row[$prefix.'_cpu_usage'] != $serialized_server_usage || $row[$prefix.'_cpu_avg'] != $cpu_avg) {
 							$worker_db->update($prefix.'_master_details')
 								->cols([$prefix.'_cpu_avg', $prefix.'_cpu_usage'])
-								->where('ID='.$row[$prefix.'_id'])
+								->where($prefix.'_id='.$row[$prefix.'_id'])
 								->bindValues([$prefix.'_cpu_avg' => $cpu_avg, $prefix.'_cpu_usage' => $serialized_server_usage])
 								->query();
 						}
-					}					
-					$veids = implode(',', array_keys($cpu_usage));
-					$rows = $worker_db->select($prefix.'_id,',$prefix.'_vzid')
-						->from($table)
-						->where($prefix.'_server='.$row[$prefix.'_id'].' and '.$prefix.'_vzid in ('.$veids.')')
-						->query();
-					foreach ($rows as $order) {
-						$influxTags = [
-							'vps' => (int)$order[$prefix.'_id'],
-							'host' => (int)$row[$prefix.'_id'],
-						];
-						$influxValues = $cpu_usage[$order[$prefix.'_vzid']];
-						if (!is_null($influxValues)) {
-							$points[] = new \InfluxDB\Point($prefix.'_stats', null, $influxTags, $influxValues);
-						}
 					}
-					
+					if ($count($cpu_usage) > 0) {					
+						$veids = implode(',', array_keys($cpu_usage));
+						$rows = $worker_db->select($prefix.'_id,'.$prefix.'_vzid')
+							->from($table)
+							->where($prefix.'_server='.$row[$prefix.'_id'].' and '.$prefix.'_vzid in ('.$veids.')')
+							->query();
+						foreach ($rows as $order) {
+							$influxTags = [
+								'vps' => (int)$order[$prefix.'_id'],
+								'host' => (int)$row[$prefix.'_id'],
+							];
+							$influxValues = $cpu_usage[$order[$prefix.'_vzid']];
+							if (!is_null($influxValues)) {
+								$points[] = new \InfluxDB\Point($prefix.'_stats', null, $influxTags, $influxValues);
+							}
+						}
+					}					
 				}
 				break;
 			default:
@@ -71,5 +74,6 @@ function memcached_queue_task($args)
 				break;
 		}
 	}
+	Worker::safeEcho('Finished Task memcacheD_queue_task after '.(time() - $memcached_start).' seconds'.PHP_EOL);
 	return $return;
 }
