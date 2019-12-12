@@ -235,7 +235,7 @@ function memcached_queue_task($args)
 				$servers = $queue['post']['servers'];
 				$servers = base64_decode($servers);
 				$servers = json_decode($servers, true);
-				Worker::safeEcho('server_info got servers: '.var_export($servers,true).PHP_EOL);
+				//Worker::safeEcho('server_info got servers: '.var_export($servers,true).PHP_EOL);
 				$fields = ['load', 'hdfree', 'iowait', 'hdsize', 'bits', 'ram', 'cpu_model', 'cpu_mhz', 'kernel', 'raid_building', 'cores', 'raid_status', 'mounts', 'drive_type'];
 				if ($module == 'quickservers' && isset($servers['ram']))
 					$servers['ram'] = floor($servers['ram'] * 0.90);
@@ -266,84 +266,6 @@ function memcached_queue_task($args)
 						->bindValues($values)
 						->query();
 				break;
-			case 'get_maps':
-				$maps = [
-					'slice' => '',
-					'ip' => '',
-					'vnc' => '',
-					'main' => ''
-				];
-				$map = '';
-				$rows = $worker_db->select('*')
-					->from($table)
-					->where($prefix.'_server= :server and '.$prefix.'_status= :status')
-					->bindValues(['server' => $server[$prefix.'_id'], 'status' => 'active'])
-					->query();
-				foreach ($rows as $row) {
-					$maps['slice'] .= $row[$prefix.'_vzid'].':'.$row[$prefix.'_slices'].PHP_EOL;
-					$maps['vnc'] .= $row[$prefix.'_vzid'].':'.$row[$prefix.'_vnc'].PHP_EOL;
-					$maps['main'] .= $row[$prefix.'_vzid'].':'.$row[$prefix.'_ip'].PHP_EOL;
-					$repeatInvoices = $worker_db->select('*')
-						->from('repeat_invoices')
-						->where('repeat_invoices_module= :module and repeat_invoices_service= :service and repeat_invoices_description like :like and repeat_invoices_deleted=0')
-						->bindValues(['module' => $module, 'service' => $row[$prefix.'_id'], 'like' => 'Additional IP % for '.$tblname.' '.$row[$prefix.'_id']])
-						->query();
-					foreach ($repeatInvoices as $repeatInvoice) {
-						if (preg_match('/^Additional IP (.*) for '.$tblname.' '.$row[$prefix.'_id'].'$/', $repeatInvoice['repeat_invoices_description'], $matches)) {
-							$ip = $matches[1];
-							$maps['ip'] .= $row[$prefix.'_ip'].':'.$ip.PHP_EOL;
-							$ipRow = $worker_db->select('*')
-								->from($prefix.'_ips')
-								->where('ips_ip = :ip')
-								->bindValue('ip', $ip)
-								->row();
-							$uptext = [];
-							$update_ips = false;
-							if ($ipRow['ips_used'] != 1) {
-								$uptext[] = 'Changing Used to 1';
-							}
-							if ($ipRow['ips_main'] != 0) {
-								$uptext[] = 'Changing Main to 0';
-							}
-							if ($ipRow['ips_'.$prefix] != $row[$prefix.'_id']) {
-								$uptext[] = "Changing {$tblname} {$ipRow['ips_'.$prefix]} to {$row[$prefix.'_id']}";
-							}
-							if (count($uptext) > 0) {
-								myadmin_log($this->serviceQueueHandler->module, 'info', 'Updating vps_ips '.$ip.' '.implode(', ', $uptext), __LINE__, __FILE__, $this->serviceQueueHandler->module);
-								$db3->query("update {$prefix}_ips set ips_used=1,ips_main=0,ips_{$prefix}={$row[$prefix.'_id']} where ips_ip='{$ip}'", __LINE__, __FILE__);
-							}
-						}
-						
-					}
-				}
-				$output = "echo '{$map}' > /root/cpaneldirect/vps.slicemap;";
-				break;
-				/*
-			case 'ip_map':
-				$output .= 'oldm="$(md5sum /root/cpaneldirect/vps.ipmap)";';
-				$output .= "echo '{$ipmap}' > /root/cpaneldirect/vps.ipmap;";
-				$output .= 'newm="$(md5sum /root/cpaneldirect/vps.ipmap)";';
-				$output .= 'if [ "$newm" != "$oldm" ]; then bash /root/cpaneldirect/run_buildebtables.sh; fi;';
-				break;
-			case 'vnc_map':
-				$output = "echo '{$map}' > /root/cpaneldirect/vps.vncmap;
-if [ \"\$(which virsh)\" != \"\" ]; then
-	for vps in \$(virsh list | grep -v -e \"State\$\" -e \"------\$\" -e \"^\$\" | awk \"{ print \\\$2 }\"); do
-		ip=\"\$(grep \"\$vps:\" /root/cpaneldirect/vps.vncmap | cut -d: -f2)\";
-		if [ \"\$ip\" = \"\" ]; then
-		ip=\"66.45.228.100\";
-		fi;
-		if [ ! -e /etc/xinetd.d/\$vps ]; then
-		sh /root/cpaneldirect/vps_kvm_setup_vnc.sh \$vps \$ip;
-		fi;
-	done;
-fi;
-";
-				break;
-			case 'main_ips':
-				$output = "echo '{$map}' > /root/cpaneldirect/vps.mainips;";
-				break;
-				*/			
 			default:
 				Worker::safeEcho('Dont know how to handel this Queued Entry: '.json_encode($queue, true).PHP_EOL);
 				break;
