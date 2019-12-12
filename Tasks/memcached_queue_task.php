@@ -66,7 +66,30 @@ function memcached_queue_task($args)
 	
 	$return = [];
 	foreach ($processQueue as $idx => $queue) {
-		
+		$module = isset($queue['post']['module']) ? $queue['post']['module'] : 'vps';
+		if ($module == 'vps') {
+			$tblname ='VPS';
+			$table = 'vps';
+			$prefix = 'vps';
+			$influx_table = 'bandwidth';
+		} else {
+			$tblname = 'Rapid Deploy Servers';
+			$table = 'quickservers';
+			$prefix = 'qs';
+			$influx_table = $prefix.'_bandwidth';
+		}		
+		$server = $memcache->get($module.'_masters'.$queue['ip']);
+		if ($server === false) {
+			$server = $worker_db->select($prefix.'_id')
+				->from($prefix.'_masters')
+				->where($prefix.'_ip = :ip')
+				->bindValues(['ip' => $queue['ip']])
+				->row();
+			if ($server === false) {
+				break;
+			}
+			$memcache->set($module.'_masters'.$queue['ip'], $server, 3600);
+		}
 		switch ($queue['post']['action']) {
 			case 'cpu_usage':
 				$cpu_usage = json_decode($queue['post']['cpu_usage'], true);
@@ -79,91 +102,73 @@ function memcached_queue_task($args)
 				$cpu_avg = $server_usage['cpu'];
 				$serialized_server_usage = json_encode($server_usage);
 				$points = [];
-				//foreach (['vps' => 'vps', 'quickservers' => 'qs'] as $module => $prefix) {
-				{
-					$module = 'vps';
-					$prefix = 'vps';
-					$table = $module;
-					$server = $memcache->get($module.'_masters'.$queue['ip']);
-					if ($server === false) {
-						$server = $worker_db->select($prefix.'_id')
-							->from($prefix.'_masters')
-							->where($prefix.'_ip = :ip')
-							->bindValues(['ip' => $queue['ip']])
-							->row();
-						if ($server === false) {
-							break;
-						}
-						$memcache->set($module.'_masters'.$queue['ip'], $server, 3600);
-					}
-					$serverDetails = $memcache->get($module.'_master_details'.$server[$prefix.'_id']);
+				$serverDetails = $memcache->get($module.'_master_details'.$server[$prefix.'_id']);
+				if ($serverDetails === false) {
+					$serverDetails = $worker_db->select($prefix.'_cpu_avg,'.$prefix.'_cpu_usage')
+						->from($prefix.'_master_details')
+						->where($prefix.'_id = :id')
+						->bindValues(['id' => $server[$prefix.'_id']])
+						->row();
 					if ($serverDetails === false) {
-						$serverDetails = $worker_db->select($prefix.'_cpu_avg,'.$prefix.'_cpu_usage')
-							->from($prefix.'_master_details')
-							->where($prefix.'_id = :id')
-							->bindValues(['id' => $server[$prefix.'_id']])
-							->row();
-						if ($serverDetails === false) {
-							$worker_db->insert($prefix.'_master_details')
-								->cols([
-									$prefix.'_id' => $server[$prefix.'_id'],
-									$prefix.'_cpu_avg' => $cpu_avg,
-									$prefix.'_cpu_usage' => $serialized_server_usage
-								])->query();
-							$serverDetails = [
+						$worker_db->insert($prefix.'_master_details')
+							->cols([
+								$prefix.'_id' => $server[$prefix.'_id'],
 								$prefix.'_cpu_avg' => $cpu_avg,
 								$prefix.'_cpu_usage' => $serialized_server_usage
-							];
-							$memcache->set($module.'_master_details'.$server[$prefix.'_id'], $serverDetails, 3600);
-						}
-					}
-					if ($serverDetails[$prefix.'_cpu_usage'] != $serialized_server_usage || $serverDetails[$prefix.'_cpu_avg'] != $cpu_avg) {
-						$worker_db->update($prefix.'_master_details')
-							->cols([$prefix.'_cpu_avg', $prefix.'_cpu_usage'])
-							->where($prefix.'_id='.$server[$prefix.'_id'])
-							->bindValues([$prefix.'_cpu_avg' => $cpu_avg, $prefix.'_cpu_usage' => $serialized_server_usage])
-							->query();
-						$serverDetails[$prefix.'_cpu_avg'] = $cpu_avg;
-						$serverDetails[$prefix.'_cpu_usage'] = $serialized_server_usage;
+							])->query();
+						$serverDetails = [
+							$prefix.'_cpu_avg' => $cpu_avg,
+							$prefix.'_cpu_usage' => $serialized_server_usage
+						];
 						$memcache->set($module.'_master_details'.$server[$prefix.'_id'], $serverDetails, 3600);
 					}
-					$serverVps = $memcache->get($module.'_vps'.$server[$prefix.'_id']);
-					if ($serverVps === false) {
-						$serverVps = [];
-					}
-					if (count($cpu_usage) > 0) {
-						foreach ($cpu_usage as $veid => $influxValues) {
-							if (array_key_exists($veid, $serverVps)) {
-								$vps = $serverVps[$veid];
+				}
+				if ($serverDetails[$prefix.'_cpu_usage'] != $serialized_server_usage || $serverDetails[$prefix.'_cpu_avg'] != $cpu_avg) {
+					$worker_db->update($prefix.'_master_details')
+						->cols([$prefix.'_cpu_avg', $prefix.'_cpu_usage'])
+						->where($prefix.'_id='.$server[$prefix.'_id'])
+						->bindValues([$prefix.'_cpu_avg' => $cpu_avg, $prefix.'_cpu_usage' => $serialized_server_usage])
+						->query();
+					$serverDetails[$prefix.'_cpu_avg'] = $cpu_avg;
+					$serverDetails[$prefix.'_cpu_usage'] = $serialized_server_usage;
+					$memcache->set($module.'_master_details'.$server[$prefix.'_id'], $serverDetails, 3600);
+				}
+				$serverVps = $memcache->get($module.'_vps'.$server[$prefix.'_id']);
+				if ($serverVps === false) {
+					$serverVps = [];
+				}
+				if (count($cpu_usage) > 0) {
+					foreach ($cpu_usage as $veid => $influxValues) {
+						if (array_key_exists($veid, $serverVps)) {
+							$vps = $serverVps[$veid];
+							$points[] = new \InfluxDB\Point($prefix.'_stats', null, [
+								'vps' => (int)$vps,
+								'host' => (int)$server[$prefix.'_id'],
+							], $influxValues);
+						} else {
+							$row = $worker_db->select($prefix.'_id,'.$prefix.'_vzid')
+								->from($table)
+								->where($prefix.'_server = :server and '.$prefix.'_vzid = :veid')
+								->bindValues(['server' => $server[$prefix.'_id'], 'veid' => $veid])
+								->row();
+							if ($row !== false) {
+								$serverVps[$veid] = $row[$prefix.'_id'];
+								$memcache->set($module.'_vps'.$server[$prefix.'_id'], $serverVps, 3600);
 								$points[] = new \InfluxDB\Point($prefix.'_stats', null, [
-									'vps' => (int)$vps,
+									'vps' => (int)$row[$prefix.'_id'],
 									'host' => (int)$server[$prefix.'_id'],
 								], $influxValues);
-							} else {
-								$row = $worker_db->select($prefix.'_id,'.$prefix.'_vzid')
-									->from($table)
-									->where($prefix.'_server = :server and '.$prefix.'_vzid = :veid')
-									->bindValues(['server' => $server[$prefix.'_id'], 'veid' => $veid])
-									->row();
-								if ($row !== false) {
-									$serverVps[$veid] = $row[$prefix.'_id'];
-									$memcache->set($module.'_vps'.$server[$prefix.'_id'], $serverVps, 3600);
-									$points[] = new \InfluxDB\Point($prefix.'_stats', null, [
-										'vps' => (int)$row[$prefix.'_id'],
-										'host' => (int)$server[$prefix.'_id'],
-									], $influxValues);
-								}
-								
 							}
 							
-						}					
-						try {
-							$newPoints = $influx_database->writePoints($points, \InfluxDB\Database::PRECISION_SECONDS);
-						} catch (\InfluxDB\Exception $e) {
-							Worker::safeEcho('InfluxDB got Exception '.$e->getMessage(). ' while writing bandwidth points to DB'.PHP_EOL);
 						}
+						
 					}					
-				}
+					try {
+						$newPoints = $influx_database->writePoints($points, \InfluxDB\Database::PRECISION_SECONDS);
+					} catch (\InfluxDB\Exception $e) {
+						Worker::safeEcho('InfluxDB got Exception '.$e->getMessage(). ' while writing bandwidth points to DB'.PHP_EOL);
+					}
+				}					
 				break;
 			case 'bandwidth':
 				$bandwidth = $queue['post']['bandwidth'];
@@ -172,16 +177,6 @@ function memcached_queue_task($args)
 				//$queue['post']['servers'] = strlen($queue['post']['servers']).' byte string';
 				//Worker::safeEcho('Queue #'.$idx.': '.json_encode($queue).PHP_EOL);
 				$points = [];
-				$module = $queue['post']['module'];
-				if ($module == 'vps') {
-					$table = 'vps';
-					$prefix = 'vps';
-					$influx_table = 'bandwidth';
-				} else {
-					$table = 'quickservers';
-					$prefix = 'qs';
-					$influx_table = $prefix.'_bandwidth';
-				}
 				$bandwidth = base64_decode($bandwidth);
 				$bandwidth = gzuncompress($bandwidth);
 				$bandwidth = json_decode($bandwidth,true);
@@ -190,18 +185,6 @@ function memcached_queue_task($args)
 				$servers = json_decode($servers,true);
 				//Worker::safeEcho(print_r($bandwidth, true).PHP_EOL);
 				//Worker::safeEcho(print_r($servers, true).PHP_EOL);
-				$server = $memcache->get($module.'_masters'.$queue['ip']);
-				if ($server === false) {
-					$server = $worker_db->select($prefix.'_id')
-						->from($prefix.'_masters')
-						->where($prefix.'_ip = :ip')
-						->bindValues(['ip' => $queue['ip']])
-						->row();
-					if ($server === false) {
-						break;
-					}
-					$memcache->set($module.'_masters'.$queue['ip'], $server, 3600);
-				}
 				if (is_array($bandwidth)) {
 					$serverVps = $memcache->get($module.'_vps'.$server[$prefix.'_id']);
 					if ($serverVps === false) {
@@ -248,6 +231,119 @@ function memcached_queue_task($args)
 					}
 				}
 				break;
+			case 'server_info':
+				$servers = $queue['post']['servers'];
+				$servers = base64_decode($servers);
+				$servers = json_decode($servers, true);
+				Worker::safeEcho('server_info got servers: '.var_export($servers,true).PHP_EOL);
+				$fields = ['load', 'hdfree', 'iowait', 'hdsize', 'bits', 'ram', 'cpu_model', 'cpu_mhz', 'kernel', 'raid_building', 'cores', 'raid_status', 'mounts', 'drive_type'];
+				if ($module == 'quickservers' && isset($servers['ram']))
+					$servers['ram'] = floor($servers['ram'] * 0.90);
+				$detailfields = ['ioping'];
+				$skipfields = ['load', 'hdfree', 'iowait', 'cpu_mhz'];
+				foreach ($skipfields as $field) {
+					$key = $module.'|host|'.$server[$prefix.'_id'].'|'.$field;
+					if (isset($server[$field]))
+						$memcache->set($key, $servers[$field]);
+				}
+				foreach ($detailfields as $field) {
+					$key = '|'.$module.'|hostd|'.$server[$prefix.'_id'].'|'.$field;
+					if (isset($servers[$field]))
+						$memcache->set($key, $servers[$field]);
+				}
+				$cols = [];
+				$values = [];
+				foreach ($fields as $field) {
+					if (!in_array($field, $skipfields) && isset($servers[$field]) && isset($server[$prefix.'_'.$field]) && $server[$prefix.'_'.$field] != $servers[$field]) {
+						$cols[] = $prefix.'_'.$field;
+						$values[$prefix.'_'.$field] = $servers[$field];  
+					}
+				}
+				if (count($cols) > 0)
+					$worker_db->update($prefix.'_masters')
+						->cols($cols)
+						->where($prefix.'_id='.$server[$prefix.'_id'])
+						->bindValues($values)
+						->query();
+				break;
+			case 'get_maps':
+				$maps = [
+					'slice' => '',
+					'ip' => '',
+					'vnc' => '',
+					'main' => ''
+				];
+				$map = '';
+				$rows = $worker_db->select('*')
+					->from($table)
+					->where($prefix.'_server= :server and '.$prefix.'_status= :status')
+					->bindValues(['server' => $server[$prefix.'_id'], 'status' => 'active'])
+					->query();
+				foreach ($rows as $row) {
+					$maps['slice'] .= $row[$prefix.'_vzid'].':'.$row[$prefix.'_slices'].PHP_EOL;
+					$maps['vnc'] .= $row[$prefix.'_vzid'].':'.$row[$prefix.'_vnc'].PHP_EOL;
+					$maps['main'] .= $row[$prefix.'_vzid'].':'.$row[$prefix.'_ip'].PHP_EOL;
+					$repeatInvoices = $worker_db->select('*')
+						->from('repeat_invoices')
+						->where('repeat_invoices_module= :module and repeat_invoices_service= :service and repeat_invoices_description like :like and repeat_invoices_deleted=0')
+						->bindValues(['module' => $module, 'service' => $row[$prefix.'_id'], 'like' => 'Additional IP % for '.$tblname.' '.$row[$prefix.'_id']])
+						->query();
+					foreach ($repeatInvoices as $repeatInvoice) {
+						if (preg_match('/^Additional IP (.*) for '.$tblname.' '.$row[$prefix.'_id'].'$/', $repeatInvoice['repeat_invoices_description'], $matches)) {
+							$ip = $matches[1];
+							$maps['ip'] .= $row[$prefix.'_ip'].':'.$ip.PHP_EOL;
+							$ipRow = $worker_db->select('*')
+								->from($prefix.'_ips')
+								->where('ips_ip = :ip')
+								->bindValue('ip', $ip)
+								->row();
+							$uptext = [];
+							$update_ips = false;
+							if ($ipRow['ips_used'] != 1) {
+								$uptext[] = 'Changing Used to 1';
+							}
+							if ($ipRow['ips_main'] != 0) {
+								$uptext[] = 'Changing Main to 0';
+							}
+							if ($ipRow['ips_'.$prefix] != $row[$prefix.'_id']) {
+								$uptext[] = "Changing {$tblname} {$ipRow['ips_'.$prefix]} to {$row[$prefix.'_id']}";
+							}
+							if (count($uptext) > 0) {
+								myadmin_log($this->serviceQueueHandler->module, 'info', 'Updating vps_ips '.$ip.' '.implode(', ', $uptext), __LINE__, __FILE__, $this->serviceQueueHandler->module);
+								$db3->query("update {$prefix}_ips set ips_used=1,ips_main=0,ips_{$prefix}={$row[$prefix.'_id']} where ips_ip='{$ip}'", __LINE__, __FILE__);
+							}
+						}
+						
+					}
+				}
+				$output = "echo '{$map}' > /root/cpaneldirect/vps.slicemap;";
+				break;
+				/*
+			case 'ip_map':
+				$output .= 'oldm="$(md5sum /root/cpaneldirect/vps.ipmap)";';
+				$output .= "echo '{$ipmap}' > /root/cpaneldirect/vps.ipmap;";
+				$output .= 'newm="$(md5sum /root/cpaneldirect/vps.ipmap)";';
+				$output .= 'if [ "$newm" != "$oldm" ]; then bash /root/cpaneldirect/run_buildebtables.sh; fi;';
+				break;
+			case 'vnc_map':
+				$output = "echo '{$map}' > /root/cpaneldirect/vps.vncmap;
+if [ \"\$(which virsh)\" != \"\" ]; then
+	for vps in \$(virsh list | grep -v -e \"State\$\" -e \"------\$\" -e \"^\$\" | awk \"{ print \\\$2 }\"); do
+		ip=\"\$(grep \"\$vps:\" /root/cpaneldirect/vps.vncmap | cut -d: -f2)\";
+		if [ \"\$ip\" = \"\" ]; then
+		ip=\"66.45.228.100\";
+		fi;
+		if [ ! -e /etc/xinetd.d/\$vps ]; then
+		sh /root/cpaneldirect/vps_kvm_setup_vnc.sh \$vps \$ip;
+		fi;
+	done;
+fi;
+";
+				break;
+			case 'main_ips':
+				$output = "echo '{$map}' > /root/cpaneldirect/vps.mainips;";
+				break;
+				*/			
 			default:
 				Worker::safeEcho('Dont know how to handel this Queued Entry: '.json_encode($queue, true).PHP_EOL);
 				break;
