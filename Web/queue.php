@@ -44,7 +44,7 @@ fi;
 		$cas = $response['cas'];
 		// modify queue
 		if (!is_array($queue)) {
-			Worker::safeEcho('Queue isnt an array its '.var_export($queue,true).' forcing it to an array'.PHP_EOL);
+			//Worker::safeEcho('Queue isnt an array its '.var_export($queue,true).' forcing it to an array'.PHP_EOL);
 			$queue = [];
 		}
 		$queue[] = $item;
