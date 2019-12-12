@@ -13,12 +13,12 @@ if (isset($_POST['action']) && $_POST['action'] == 'map') {
 			echo 'oldm="$(md5sum /root/cpaneldirect/vps.ipmap)";'.PHP_EOL;
 			echo "echo '{$map['ip']}' > /root/cpaneldirect/vps.ipmap;".PHP_EOL;
 			echo 'newm="$(md5sum /root/cpaneldirect/vps.ipmap)";'.PHP_EOL;
-			echo 'if [ $(which virsh) != "" ] && [ $newm" != "$oldm" ]; then bash /root/cpaneldirect/run_buildebtables.sh; fi;'.PHP_EOL;
+			echo 'if [ $(which virsh) != "" ] && [ "$newm" != "$oldm" ]; then bash /root/cpaneldirect/run_buildebtables.sh; fi;'.PHP_EOL;
 		}
 		if (array_key_exists('vnc', $map)) {
 			echo "echo '{$map['vnc']}' > /root/cpaneldirect/vps.vncmap;".PHP_EOL;
 			echo 'if [ "$(which virsh)" != "" ]; then
-	for vps in $(virsh list | grep -v -e "State$" -e "------$" -e "^$" | awk "{ print \\$2 }"); do
+	for vps in $(virsh list | grep -v -e "State$" -e "------$" -e "^$" | awk \'{ print $2 }\'); do
 		ip="$(grep "$vps:" /root/cpaneldirect/vps.vncmap | cut -d: -f2)";
 		if [ "$ip" = "" ]; then
 			ip="66.45.228.100";
