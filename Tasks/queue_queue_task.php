@@ -23,9 +23,11 @@ function queue_queue_task($args)
 	$db = $GLOBALS['tf']->db;
 	$db2 = clone $db;
 	$masters = [];
-	$newvps = [];
-	$queue = [];
-	$output = '';
+	$output = [
+		'queue' => [],
+		'new' => []
+	];
+	$queued = 0;
 	foreach (['vps', 'quickservers'] as $module) {
 		if ($module == 'vps') {
 			$tblname ='VPS';
@@ -39,49 +41,54 @@ function queue_queue_task($args)
 			$influx_table = $prefix.'_bandwidth';
 		}
 		$masters[$module] = [];
-		$newvps[$module] = [];
-		$queue[$module] = [];		
-		$db->query("select * from vps where vps_status='pending-setup' and vps_type != 54", __LINE__, __FILE__);
+		/*
+		$db->query("select * from {$table} where {$prefix}_status='pending-setup' and {$prefix}_type != 54", __LINE__, __FILE__);
 		if ($db->num_rows() > 0) {
 			while ($db->next_record(MYSQL_ASSOC)) {
-				if (!array_key_exists($db->Record['vps_server'], $masters[$module])) {
-					$db2->query("select * from vps_masters left join vps_master_details using (vps_id) where vps_id={$db->Record['vps_server']}");
+				if (!array_key_exists($db->Record[$prefix.'_server'], $masters[$module])) {
+					$db2->query("select * from {$prefix}_masters left join {$prefix}_master_details using ({$prefix}_id) where {$prefix}_id={$db->Record[$prefix.'_server']}");
 					$db2->next_record(MYSQL_ASSOC);
-					$masters[$module][$db->Record['vps_server']] = $db->Record;
-					//$queue[$module][$db->Record['vps_server']] = [];
+					$masters[$module][$db->Record[$prefix.'_server']] = $db2->Record;
 				}
-				if (!array_key_exists($db->Record['vps_server'], $newvps[$module])) {
-					$newvps[$module][$db->Record['vps_server']] = [];
+				$hostIp = $masters[$module][$db->Record[$prefix.'_server']];
+				if (!array_key_exists($hostIp, $output['new'])) {
+					$output['new'][$hostIp] = [];
 				}
-				$newvps[$module][$db->Record['vps_server']][] = $db->Record;
+				$output['new'][$hostIp][$db->Record[$prefix.'_id']] = $db->Record;
+				$queued++;
 			}
 		}
-		$db->query("select vps.*, hl1.* from vps, queue_log as hl1 left join queue_log as hl2 on hl2.history_type=hl1.history_id and hl2.history_section='vpsqueuedone' where hl1.history_section='vpsqueue' and hl1.history_type=vps_id and hl2.history_id is null and vps_type != 54", __LINE__, __FILE__);
+		*/
+		$db->query("select {$table}.*, hl1.* from {$table}, queue_log as hl1 left join queue_log as hl2 on hl2.history_type=hl1.history_id and hl2.history_section='{$table}queuedone' where hl1.history_section='{$table}queue' and hl1.history_type={$prefix}_id and hl2.history_id is null and {$prefix}_type != 54", __LINE__, __FILE__);
 		if ($db->num_rows() > 0) {
 			while ($db->next_record(MYSQL_ASSOC)) {
-				if (!array_key_exists($db->Record['vps_server'], $masters[$module])) {
-					$db2->query("select * from vps_masters left join vps_master_details using (vps_id) where vps_id={$db->Record['vps_server']}");
+				if (!array_key_exists($db->Record[$prefix.'_server'], $masters[$module])) {
+					$db2->query("select * from {$prefix}_masters left join {$prefix}_master_details using ({$prefix}_id) where {$prefix}_id={$db->Record[$prefix.'_server']}");
 					$db2->next_record(MYSQL_ASSOC);
-					$masters[$module][$db->Record['vps_server']] = $db->Record;
+					$masters[$module][$db->Record[$prefix.'_server']] = $db2->Record;
 				}
-				if (!array_key_exists($db->Record['vps_server'], $queue[$module])) {
-					$queue[$module][$db->Record['vps_server']] = [];
+				$hostIp = $masters[$module][$db->Record[$prefix.'_server']];
+				if (!array_key_exists($hostIp, $output['queue'])) {
+					$output['queue'][$hostIp] = [];
 				}
-				$queue[$module][$db->Record['vps_server']][] = $db->Record;
+				$output['queue'][$hostIp][$db->Record[$prefix.'_id']] = $db->Record;
+				$queued++;
 			}
 		}
 		foreach ($masters[$module] as $host_id => $serviceMaster) {
+			/*
 			if (count($newvps[$module][$host_id]) > 0) {
-				function_requirements('vps_queue_handler');
+				function_requirements($prefix.'_queue_handler');
 				if (sizeof($serviceMaster['newvps']) > 0) {
-					myadmin_log('myadmin', 'info', 'Processing New VPS for '.$serviceMaster['vps_name'], __LINE__, __FILE__, 'vps');
+					myadmin_log('myadmin', 'info', 'Processing New '.$tblname.' for '.$serviceMaster[$prefix.'_name'], __LINE__, __FILE__, $module);
 					$output .= vps_queue_handler($serviceMaster, 'get_new_vps', $serviceMaster['newvps']);
 				}
 			}
+			*/
 			if (count($queue[$module][$host_id]) > 0) {
-				function_requirements('vps_queue_handler');
+				function_requirements($prefix.'_queue_handler');
 				if (sizeof($serviceMaster['queue']) > 0) {
-					myadmin_log('myadmin', 'info', 'Processing VPS Queue for '.$serviceMaster['vps_name'], __LINE__, __FILE__, 'vps');
+					myadmin_log('myadmin', 'info', 'Processing '.$tblname.' Queue for '.$serviceMaster[$prefix.'_name'], __LINE__, __FILE__, $module);
 					$output .= vps_queue_handler($serviceMaster, 'get_queue', $serviceMaster['queue']);
 				}
 			}

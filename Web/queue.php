@@ -34,6 +34,28 @@ fi;
 			echo "echo '{$map['main']}' > /root/cpaneldirect/vps.mainips;".PHP_EOL;
 		}
 	}	
+} elseif (isset($_POST['action']) && $_POST['action'] == 'queue') {
+	$queueArray = $memcache->get('queue');
+	if (is_array($queueArray)) {
+		/*if (array_key_exists($_SERVER['REMOTE_ADDR'], $queueArray['new']) && count($queueArray['new'][$_SERVER['REMOTE_ADDR']]) > 0) {
+			echo implode(PHP_EOL, $queueArray['new'][$_SERVER['REMOTE_ADDR']]).PHP_EOL;			
+		}*/
+		if (array_key_exists($_SERVER['REMOTE_ADDR'], $queueArray['queue']) && count($queueArray['queue'][$_SERVER['REMOTE_ADDR']]) > 0) {
+			echo implode(PHP_EOL, $queueArray['queue'][$_SERVER['REMOTE_ADDR']]).PHP_EOL;
+			$loopCount = 0;
+			do {
+				$response = $memcache->get('queue', function($memcache, $key, &$value) { $value = []; return true; }, \Memcached::GET_EXTENDED);
+				$queue = $response['value'];
+				$cas = $response['cas'];
+				$queue['queue'][$_SERVER['REMOTE_ADDR']] = [];
+				$loopCount++;
+				if ($loopCount > 100) {
+					Worker::safeEcho('Max Loops Reached Trying to Get queue CAS set '.PHP_EOL);
+					break;
+				}
+			} while (!$memcache->cas($response['cas'], 'queue', $queue));
+		}
+	}	
 } else {
 	$item = ['get' => $_GET, 'post' => $_POST, 'ip' => $_SERVER['REMOTE_ADDR']];
 	$loopCount = 0;
