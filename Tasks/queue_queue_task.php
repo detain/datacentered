@@ -23,10 +23,13 @@ function queue_queue_task($args)
 	$db = $GLOBALS['tf']->db;
 	$db2 = clone $db;
 	$masters = [];
-	$output = [
-		'queue' => [],
-		'new' => []
-	];
+	$output = $memcache->get('queue');
+	if (!is_array($output) || !array_key_exists('queue', $output)) {
+		$output = [
+			'queue' => [],
+			'new' => []
+		];
+	}
 	$queued = 0;
 	foreach (['vps', 'quickservers'] as $module) {
 		if ($module == 'vps') {
@@ -59,7 +62,7 @@ function queue_queue_task($args)
 			}
 		}
 		*/
-		$db->query("select {$table}.*, hl1.* from {$table}, queue_log as hl1 left join queue_log as hl2 on hl2.history_type=hl1.history_id and hl2.history_section='{$table}queuedone' where hl1.history_section='{$table}queue' and hl1.history_type={$prefix}_id and hl2.history_id is null and {$prefix}_type != 54", __LINE__, __FILE__);
+		$db->query("select {$table}.*, hl1.* from {$table}, queue_log as hl1 left join queue_log as hl2 on hl2.history_type=hl1.history_id and hl2.history_section='{$table}queuedone' where hl1.history_section='{$table}queue' and hl1.history_type={$prefix}_id and hl2.history_id is null and {$prefix}_type != 54 and {$prefix}_id=484", __LINE__, __FILE__);
 		if ($db->num_rows() > 0) {
 			while ($db->next_record(MYSQL_ASSOC)) {
 				if (!array_key_exists($db->Record[$prefix.'_server'], $masters[$module])) {
@@ -67,34 +70,33 @@ function queue_queue_task($args)
 					$db2->next_record(MYSQL_ASSOC);
 					$masters[$module][$db->Record[$prefix.'_server']] = $db2->Record;
 				}
-				$hostIp = $masters[$module][$db->Record[$prefix.'_server']];
-				if (!array_key_exists($hostIp, $output['queue'])) {
-					$output['queue'][$hostIp] = [];
-				}
-				$output['queue'][$hostIp][$db->Record[$prefix.'_id']] = $db->Record;
+				$hostIp = $masters[$module][$db->Record[$prefix.'_server']][$prefix.'_ip'];
+				$queueCommand = vps_queue_handler($masters[$module][$db->Record[$prefix.'_server']], 'get_queue', $db->Record);
+				$loopCount = 0;
+				do {
+					$response = $memcache->get('queue', function($memcache, $key, &$value) { $value = []; return true; }, \Memcached::GET_EXTENDED);
+					$output = $response['value'];
+					$cas = $response['cas'];
+					if (!is_array($output) || !array_key_exists('queue', $output)) {
+						$output = [
+							'queue' => [],
+							'new' => []
+						];
+					}
+					if (!array_key_exists($hostIp, $output['queue'])) {
+						$output['queue'][$hostIp] = [];
+					}
+					$output['queue'][$hostIp][] = $queueCommand;
+					$loopCount++;
+					if ($loopCount > 100) {
+						Worker::safeEcho('Max Loops Reached Trying to Get queue CAS set '.PHP_EOL);
+						break;
+					}
+				} while (!$memcache->cas($response['cas'], 'queue', $queue));				
 				$queued++;
 			}
 		}
-		foreach ($masters[$module] as $host_id => $serviceMaster) {
-			/*
-			if (count($newvps[$module][$host_id]) > 0) {
-				function_requirements($prefix.'_queue_handler');
-				if (sizeof($serviceMaster['newvps']) > 0) {
-					myadmin_log('myadmin', 'info', 'Processing New '.$tblname.' for '.$serviceMaster[$prefix.'_name'], __LINE__, __FILE__, $module);
-					$output .= vps_queue_handler($serviceMaster, 'get_new_vps', $serviceMaster['newvps']);
-				}
-			}
-			*/
-			if (count($queue[$module][$host_id]) > 0) {
-				function_requirements($prefix.'_queue_handler');
-				if (sizeof($serviceMaster['queue']) > 0) {
-					myadmin_log('myadmin', 'info', 'Processing '.$tblname.' Queue for '.$serviceMaster[$prefix.'_name'], __LINE__, __FILE__, $module);
-					$output .= vps_queue_handler($serviceMaster, 'get_queue', $serviceMaster['queue']);
-				}
-			}
-		}
-		$memcache->set('queue'.$module.$server[$prefix.'_ip'], $output);
 	}
-	Worker::safeEcho('queue_queue_task finished processing '.$hosts.' after '.(time() - $memcached_start).' seconds'.PHP_EOL);
+	Worker::safeEcho('queue_queue_task finished processing '.$queued.' after '.(time() - $memcached_start).' seconds'.PHP_EOL);
 	return;
 }
