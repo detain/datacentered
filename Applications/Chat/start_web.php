@@ -16,7 +16,7 @@ $context = [																						// Certificate is best to apply for a certific
 	]
 ];
 $web = new WebServer("http://0.0.0.0:55151", $context); // WebServer
-$web->count = 10; // WebServer number of processes
+$web->count = 5; // WebServer number of processes
 //$web->transport = 'ssl';
 $web->addRoot(isset($_SERVER['HOSTNAME']) ? $_SERVER['HOSTNAME'] : trim(`hostname -f`), __DIR__.'/../../Web'); // Set the site root
 

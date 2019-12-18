@@ -70,7 +70,7 @@ class Events
 			Timer::add(30, ['Events', 'vps_queue_timer'], $args);
 			Timer::add(30, ['Events', 'memcache_queue_timer'], $args);
 			Timer::add(60, ['Events', 'map_queue_timer'], $args);
-			Timer::add(60, ['Events', 'queue_queue_timer'], $args);
+			//Timer::add(60, ['Events', 'queue_queue_timer'], $args);
 		}
 	}
 

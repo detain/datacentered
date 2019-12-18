@@ -194,35 +194,30 @@ function memcached_queue_task($args)
 						$iplong = sprintf('%u', ip2long($ip));
 						$veid = $servers[$ip];
 						$idFromVeid = preg_replace('/[A-Za-z\._\-]*/m', '', $servers[$ip]);
-						if (array_key_exists($veid, $serverVps)) {
-							$vps = $serverVps[$veid];
-							$points[] = new \InfluxDB\Point($influx_table, null, [
-								'vps' => (int)$vps,
-								'host' => (int)$server[$prefix.'_id'],
-								'ip' => $ip
-							], [
-								'in' => (int)$data['in'],
-								'out' => (int)$data['out']
-							]);
-						} else {
+						if (!array_key_exists($veid, $serverVps)) {
 							$row = $worker_db->select($prefix.'_id')
 								->from($table)
 								->where($prefix.'_server = :server and ('.$prefix.'_hostname = :hostname or '.$prefix.'_vzid = :veid or '.$prefix.'_vzid = :idFromVeid)')
 								->bindValues(['server' => $server[$prefix.'_id'], 'hostname' => $veid, 'veid' => $veid, 'idFromVeid' => $idFromVeid])
 								->row();
-							if ($row !== false) {
-								$serverVps[$veid] = $row[$prefix.'_id'];
-								$memcache->set($module.'_vps'.$server[$prefix.'_id'], $serverVps, 3600);
-								$points[] = new \InfluxDB\Point($influx_table, null, [
-									'vps' => (int)$row[$prefix.'_id'],
-									'host' => (int)$server[$prefix.'_id'],
-									'ip' => $ip
-								], [
-									'in' => (int)$data['in'],
-									'out' => (int)$data['out']
-								]);
+							if ($row === false) {
+								continue;
 							}
+							$serverVps[$veid] = $row[$prefix.'_id'];
+							$memcache->set($module.'_vps'.$server[$prefix.'_id'], $serverVps, 3600);
 						}
+						$vps = $serverVps[$veid];
+						$pointTags = [
+							'vps' => (int)$vps,
+							'host' => (int)$server[$prefix.'_id'],
+							'ip' => $ip
+						];
+						$pointData = [
+							'in' => (int)$data['in'],
+							'out' => (int)$data['out']
+						];
+						//Worker::safeEcho('VEID '.$veid.' ID '.$vps.' Line Tags '.json_encode($pointTags).' Data '.json_encode($pointData).__LINE__.PHP_EOL);
+						$points[] = new \InfluxDB\Point($influx_table, null, $pointTags, $pointData);
 					}
 					try {
 						$newPoints = $influx_database->writePoints($points, \InfluxDB\Database::PRECISION_SECONDS);
