@@ -68,8 +68,9 @@ class Events
 			Timer::add(3600, ['Events', 'hyperv_update_list_timer'], $args);
 			Timer::add(30, ['Events', 'hyperv_queue_timer'], $args);
 			Timer::add(30, ['Events', 'vps_queue_timer'], $args);
-			Timer::add(15, ['Events', 'memcache_queue_timer'], $args);
+			Timer::add(30, ['Events', 'memcache_queue_timer'], $args);
 			Timer::add(60, ['Events', 'map_queue_timer'], $args);
+			//Timer::add(60, ['Events', 'queue_queue_timer'], $args);
 		}
 	}
 
@@ -188,6 +189,15 @@ class Events
 				}
 			}
 		}
+	}
+	
+	public static function queue_queue_timer() {
+		$task_connection = new AsyncTcpConnection('Text://127.0.0.1:2208');
+		$task_connection->send(json_encode(['type' => 'queue_queue_task', 'args' => []]));
+		$task_connection->onMessage = function ($connection, $task_result) use ($task_connection) {
+			$task_connection->close();
+		};
+		$task_connection->connect();
 	}
 	
 	public static function map_queue_timer() {
