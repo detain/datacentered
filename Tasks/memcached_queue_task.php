@@ -79,8 +79,9 @@ function memcached_queue_task($args)
 			$influx_table = $prefix.'_bandwidth';
 		}		
 		$server = $memcache->get($module.'_masters'.$queue['ip']);
+		//Worker::safeEcho('Action '.$queue['post']['action'].' Module '.$module.' IP '.$queue['ip'].PHP_EOL);
 		if ($server === false) {
-			$server = $worker_db->select($prefix.'_id')
+			$server = $worker_db->select($prefix.'_id,'.$prefix.'_name,'.$prefix.'_hdsize,'.$prefix.'_bits,'.$prefix.'_ram,'.$prefix.'_cpu_model,'.$prefix.'_kernel,'.$prefix.'_cores,'.$prefix.'_raid_status,'.$prefix.'_raid_building,'.$prefix.'_mounts,'.$prefix.'_drive_type')
 				->from($prefix.'_masters')
 				->where($prefix.'_ip = :ip')
 				->bindValues(['ip' => $queue['ip']])
@@ -97,7 +98,7 @@ function memcached_queue_task($args)
 				//$queue['post']['cpu_usage'] = strlen($queue['post']['cpu_usage']).' byte string';
 				//Worker::safeEcho('Queue #'.$idx.': '.json_encode($queue).PHP_EOL);
 				if (!is_array($cpu_usage)) {
-					break;
+					continue;
 				}
 				$server_usage = array_shift($cpu_usage);
 				$cpu_avg = $server_usage['cpu'];
@@ -230,7 +231,7 @@ function memcached_queue_task($args)
 				$servers = $queue['post']['servers'];
 				$servers = base64_decode($servers);
 				$servers = json_decode($servers, true);
-				//Worker::safeEcho('server_info got servers: '.var_export($servers,true).PHP_EOL);
+				//Worker::safeEcho('server_info '.$server[$prefix.'_name'].'got servers: '.var_export($servers,true).PHP_EOL);
 				$fields = ['load', 'hdfree', 'iowait', 'hdsize', 'bits', 'ram', 'cpu_model', 'cpu_mhz', 'kernel', 'raid_building', 'cores', 'raid_status', 'mounts', 'drive_type'];
 				if ($module == 'quickservers' && isset($servers['ram']))
 					$servers['ram'] = floor($servers['ram'] * 0.90);
@@ -238,8 +239,10 @@ function memcached_queue_task($args)
 				$skipfields = ['load', 'hdfree', 'iowait', 'cpu_mhz'];
 				foreach ($skipfields as $field) {
 					$key = $module.'|host|'.$server[$prefix.'_id'].'|'.$field;
-					if (isset($server[$field]))
+					if (isset($servers[$field])) {
+						//Worker::safeEcho('server_info setting '.$key.'='.$servers[$field].PHP_EOL);
 						$memcache->set($key, $servers[$field]);
+					}
 				}
 				foreach ($detailfields as $field) {
 					$key = '|'.$module.'|hostd|'.$server[$prefix.'_id'].'|'.$field;
@@ -251,7 +254,8 @@ function memcached_queue_task($args)
 				foreach ($fields as $field) {
 					if (!in_array($field, $skipfields) && isset($servers[$field]) && isset($server[$prefix.'_'.$field]) && $server[$prefix.'_'.$field] != $servers[$field]) {
 						$cols[] = $prefix.'_'.$field;
-						$values[$prefix.'_'.$field] = $servers[$field];  
+						$values[$prefix.'_'.$field] = $servers[$field];
+						$server[$prefix.'_'.$field] = $servers[$field];  
 					}
 				}
 				if (count($cols) > 0)
@@ -260,6 +264,7 @@ function memcached_queue_task($args)
 						->where($prefix.'_id='.$server[$prefix.'_id'])
 						->bindValues($values)
 						->query();
+					$memcache->set($module.'_masters'.$queue['ip'], $server, 3600);
 				break;
 			default:
 				Worker::safeEcho('Dont know how to handel this Queued Entry: '.json_encode($queue, true).PHP_EOL);
