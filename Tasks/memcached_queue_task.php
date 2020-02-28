@@ -290,6 +290,6 @@ function memcached_queue_task($args)
 		} while (!$memcache->cas($response['cas'], 'queueout', $queue));
 	}
 	$global->queuein = 0;			
-	Worker::safeEcho('memcached_queue_task finished processing '.count($processQueue).' queues after '.(time() - $memcached_start).' seconds'.PHP_EOL);
+	//Worker::safeEcho('memcached_queue_task finished processing '.count($processQueue).' queues after '.(time() - $memcached_start).' seconds'.PHP_EOL);
 	return;
 }
