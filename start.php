@@ -13,6 +13,12 @@ ini_set('display_errors', 'on');
 ini_set('post_max_size', '100M');
 ini_set('upload_max_filesize', '100M');
 ini_set('memory_limit', '4096M');
+// Reporting all.
+error_reporting(E_ALL);
+// Reset opcache.
+if (function_exists('opcache_reset')) {
+    opcache_reset();
+}
 if (strpos(strtolower(PHP_OS), 'win') === 0) {
 	exit("start.php not support windows, please use start_for_win.bat\n");
 }
@@ -28,5 +34,6 @@ foreach (['globaldata', 'task', 'gateway', 'gateway_ssl', 'register', 'businessw
 	$start_file = __DIR__.'/Applications/Chat/start_'.$start_part.'.php';
 	require_once $start_file;
 } // Load all Applications/*/start*.php to start all services
+
 Worker::$stdoutFile = __DIR__.'/../../my/logs/billingd.log';
 Worker::runAll(); // Run all services

@@ -16,7 +16,7 @@
 		}
 	],
 	"require": {
-		"php": ">=5.3.0",
+		"php": ">=5.6.0",
 		"ext-curl": "*",
 		"clue/soap-react": "dev-master",
 		"roave/security-advisories": "dev-master",
@@ -60,6 +60,18 @@
 				"version": "master",
 				"source": {
 					"url": "https://github.com/walkor/global-timer.git",
+					"type": "git",
+					"reference": "master"
+				}
+			}
+		},
+		{
+			"type": "package",
+			"package": {
+				"name": "workerman/statistics",
+				"version": "master",
+				"source": {
+					"url": "https://github.com/detain/workerman-statistics.git",
 					"type": "git",
 					"reference": "master"
 				}
