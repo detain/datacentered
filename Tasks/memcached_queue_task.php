@@ -42,7 +42,7 @@ function memcached_queue_task($args)
 		$cas = $response['cas'];
 		if (count($queue) == 0) {
 			$global->queuein = 0;
-			//Worker::safeEcho('Empty Queue, Returning after '.(time() - $memcached_start).' seconds'.PHP_EOL);
+			Worker::safeEcho('Empty Queue, Returning after '.(time() - $memcached_start).' seconds'.PHP_EOL);
 			return;
 		}
 		$processQueue = $queue;
@@ -56,7 +56,7 @@ function memcached_queue_task($args)
 	} while (!$memcache->cas($response['cas'], 'queuein', $queue));
 	if (count($processQueue) == 0) {
 		$global->queuein = 0;
-		//Worker::safeEcho('Empty Queue, Returning after '.(time() - $memcached_start).' seconds'.PHP_EOL);
+		Worker::safeEcho('Empty Queue, Returning after '.(time() - $memcached_start).' seconds'.PHP_EOL);
 		return;
 	}
 	/**
@@ -79,7 +79,6 @@ function memcached_queue_task($args)
 			$influx_table = $prefix.'_bandwidth';
 		}		
 		$server = $memcache->get($module.'_masters'.$queue['ip']);
-		//Worker::safeEcho('Action '.$queue['post']['action'].' Module '.$module.' IP '.$queue['ip'].PHP_EOL);
 		if ($server === false) {
 			$server = $worker_db->select($prefix.'_id,'.$prefix.'_name,'.$prefix.'_hdsize,'.$prefix.'_bits,'.$prefix.'_ram,'.$prefix.'_cpu_model,'.$prefix.'_kernel,'.$prefix.'_cores,'.$prefix.'_raid_status,'.$prefix.'_raid_building,'.$prefix.'_mounts,'.$prefix.'_drive_type')
 				->from($prefix.'_masters')
@@ -192,6 +191,8 @@ function memcached_queue_task($args)
 						$serverVps = [];
 					}
 					foreach ($bandwidth as $ip => $data) {
+						if ($ip == '')
+							continue;
 						$iplong = sprintf('%u', ip2long($ip));
 						$veid = $servers[$ip];
 						$idFromVeid = preg_replace('/[A-Za-z\._\-]*/m', '', $servers[$ip]);
@@ -202,6 +203,7 @@ function memcached_queue_task($args)
 								->bindValues(['server' => $server[$prefix.'_id'], 'hostname' => $veid, 'veid' => $veid, 'idFromVeid' => $idFromVeid])
 								->row();
 							if ($row === false) {
+								Worker::safeEcho('Bandwidth Data with no matching IP '.$ip.'. Server '.$server[$prefix.'_id'].' VEID '.$veid.' IdFromVeid '.$idFromVeid.PHP_EOL);
 								continue;
 							}
 							$serverVps[$veid] = $row[$prefix.'_id'];

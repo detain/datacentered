@@ -22,9 +22,13 @@ $web->name = 'WebServer';
 $web->count = 10; // WebServer number of processes
 //$web->transport = 'ssl';
 
-define('WEBROOT', __DIR__.'/../../Web');
+define('WEBROOT', realpath(__DIR__.'/../../Web'));
 
 $web->onMessage = function (TcpConnection $connection, Request $request) {
+	$addr = explode(':', $connection->getRemoteAddress());
+	$_SERVER['REMOTE_ADDR'] = $addr[0];
+	$_GET = $request->get();
+	$_POST = $request->post();
 	$path = $request->path();
 	if ($path === '/') {
 		$connection->send(exec_php_file(WEBROOT.'/index.html'));
@@ -44,7 +48,6 @@ $web->onMessage = function (TcpConnection $connection, Request $request) {
 		$connection->send(exec_php_file($file));
 		return;
 	}
-
 	if (!empty($if_modified_since = $request->header('if-modified-since'))) {
 		// Check 304.
 		$info = \stat($file);
