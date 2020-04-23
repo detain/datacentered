@@ -184,7 +184,6 @@ function memcached_queue_task($args)
 				$servers = base64_decode($servers);
 				$servers = gzuncompress($servers);
 				$servers = json_decode($servers,true);
-				//Worker::safeEcho('IP '.$queue['ip'].PHP_EOL.'  Bandwidth '.print_r($bandwidth, true).PHP_EOL.'  Servers: '.print_r($servers, true).PHP_EOL);
 				if (is_array($bandwidth)) {
 					$serverVps = $memcache->get($module.'_vps'.$server[$prefix.'_id']);
 					if ($serverVps === false) {
