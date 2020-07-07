@@ -66,7 +66,7 @@ function map_queue_task($args)
 							->bindValue('ip', $ip)
 							->row();
                         if ($ipRow === false) {
-                            Worker::safeEcho('Cannot find IP '.$ip.' In '.$prefix.' IPs Table'.PHP_EOL);
+                            Worker::safeEcho('Cannot find IP '.$ip.' On Server #'.$server[$prefix.'_id'].' '.$server[$prefix.'_name'].' In '.$prefix.' IPs Table'.PHP_EOL);
                         } else {
 						    $uptext = [];
 						    $update_ips = false;
