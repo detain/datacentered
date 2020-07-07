@@ -65,25 +65,29 @@ function map_queue_task($args)
 							->where('ips_ip = :ip')
 							->bindValue('ip', $ip)
 							->row();
-						$uptext = [];
-						$update_ips = false;
-						if ($ipRow['ips_used'] != 1) {
-							$uptext[] = 'Changing Used to 1';
-						}
-						if ($ipRow['ips_main'] != 0) {
-							$uptext[] = 'Changing Main to 0';
-						}
-						if ($ipRow['ips_'.$prefix] != $row[$prefix.'_id']) {
-							$uptext[] = "Changing {$tblname} {$ipRow['ips_'.$prefix]} to {$row[$prefix.'_id']}";
-						}
-						if (count($uptext) > 0) {
-							Worker::safeEcho('Updating '.$prefix.'_ips '.$ip.' '.implode(', ', $uptext).PHP_EOL);
-							$worker_db->update($prefix.'_ips')
-								->cols(['ips_used', 'ips_main', 'ips_'.$prefix])
-								->where("ips_ip='{$ip}'")
-								->bindValues(['ips_used' => 1, 'ips_main' => 0, 'ips_'.$prefix => $row[$prefix.'_id']])
-								->query();
-						}
+                        if ($ipRow === false) {
+                            Worker::safeEcho('Cannot find IP '.$ip.' In '.$prefix.' IPs Table'.PHP_EOL);
+                        } else {
+						    $uptext = [];
+						    $update_ips = false;
+						    if ($ipRow['ips_used'] != 1) {
+							    $uptext[] = 'Changing Used to 1';
+						    }
+						    if ($ipRow['ips_main'] != 0) {
+							    $uptext[] = 'Changing Main to 0';
+						    }
+						    if ($ipRow['ips_'.$prefix] != $row[$prefix.'_id']) {
+							    $uptext[] = "Changing {$tblname} {$ipRow['ips_'.$prefix]} to {$row[$prefix.'_id']}";
+						    }
+						    if (count($uptext) > 0) {
+							    Worker::safeEcho('Updating '.$prefix.'_ips '.$ip.' '.implode(', ', $uptext).PHP_EOL);
+							    $worker_db->update($prefix.'_ips')
+								    ->cols(['ips_used', 'ips_main', 'ips_'.$prefix])
+								    ->where("ips_ip='{$ip}'")
+								    ->bindValues(['ips_used' => 1, 'ips_main' => 0, 'ips_'.$prefix => $row[$prefix.'_id']])
+								    ->query();
+						    }
+                        }
 					}
 					
 				}
