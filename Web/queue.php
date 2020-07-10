@@ -84,7 +84,8 @@ fi;
         }
 		$loopCount++;
 		if ($loopCount > 100) {
-			Worker::safeEcho('Max Loops Reached Trying to Get queuein CAS set '.PHP_EOL);
+			Worker::safeEcho('Max Loops Reached Trying to Get '.$casKey.' CAS set '.count($response['value']).' and '.count($responseAlt['value']).' # items in each
+            '.PHP_EOL);
 			break;
 		}
 	} while (!$memcache->cas($cas, $casKey, $queue));

@@ -55,7 +55,7 @@ function memcached_queue_task($args)
                 Worker::SafeEcho('Hit 100 Attempts at CAS updating the queuein after '.(time() - $memcached_start).' seconds'.PHP_EOL);
                 return;
             }
-        } while ($loopCount < 100 && !$memcache->cas($response['cas'], 'queuein', $queue));        
+        } while ($loopCount < 100 && !$memcache->cas($response['cas'], 'queuein'.$suffix, $queue));        
     }
 	if (count($processQueue) == 0) {
 		$global->queuein = 0;
