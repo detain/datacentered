@@ -21,7 +21,8 @@ $task_worker->onWorkerStart = function ($worker) {
 	$influx_database = $influx_client->selectDB(INFLUX_DB);
 	$global = new \GlobalData\Client('127.0.0.1:2207');
 	$memcache = new \Memcached();
-	$memcache->addServer('localhost', 11211);		
+	$memcache->addServer('localhost', 11211);
+    $memcache->set('queuehosts', ['queues' => [], 'hosts' => []]);;
 	$functions = [];
 	foreach (glob(__DIR__.'/../../Tasks/*.php') as $file) {
 		$function = basename($file, '.php');
