@@ -2,7 +2,7 @@
 
 use Workerman\Worker;
 
-function memcached_queue_task($args)
+function memcached_queue_task_old($args)
 {
 	//require_once __DIR__.'/../../../my/include/functions.inc.php';
 	/**
