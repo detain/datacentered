@@ -61,21 +61,33 @@ fi;
 	$loopCount = 0;
 	$output = '';
 	do {
-		$response = $memcache->get('queuein', function($memcache, $key, &$value) { $value = []; return true; }, \Memcached::GET_EXTENDED);
-		$queue = $response['value'];
-		$cas = $response['cas'];
-		// modify queue
-		if (!is_array($queue)) {
-			//Worker::safeEcho('Queue isnt an array its '.var_export($queue,true).' forcing it to an array'.PHP_EOL);
-			$queue = [];
-		}
-		$queue[] = $item;
+        $response = $memcache->get('queuein', function($memcache, $key, &$value) { $value = []; return true; }, \Memcached::GET_EXTENDED);
+        if ($response === false) {
+            $memcache->set('queuein', []);
+            $response = $memcache->get('queuein', function($memcache, $key, &$value) { $value = []; return true; }, \Memcached::GET_EXTENDED);
+        }
+        $responseAlt = $memcache->get('queueinb', function($memcache, $key, &$value) { $value = []; return true; }, \Memcached::GET_EXTENDED);
+        if ($responseAlt === false) {
+            $memcache->set('queueinb', []);
+            $responseAlt = $memcache->get('queueinb', function($memcache, $key, &$value) { $value = []; return true; }, \Memcached::GET_EXTENDED);
+        }
+        if (count($response['value']) <= count($responseAlt['value'])) {
+            $casKey = 'queuein';
+            $queue = $response['value'];
+            $cas = $response['cas'];
+            $queue[] = $item;                        
+        } else {
+            $casKey = 'queueinb';
+            $queue = $responseAlt['value'];
+            $cas = $responseAlt['cas'];
+            $queue[] = $item;
+        }
 		$loopCount++;
 		if ($loopCount > 100) {
 			Worker::safeEcho('Max Loops Reached Trying to Get queuein CAS set '.PHP_EOL);
 			break;
 		}
-	} while (!$memcache->cas($response['cas'], 'queuein', $queue));
+	} while (!$memcache->cas($cas, $casKey, $queue));
 	//Worker::safeEcho('CAS set queuein to  '.json_encode($queue).PHP_EOL); 
 }
 //\Workerman\Protocols\Http::end($output);
