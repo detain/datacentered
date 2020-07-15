@@ -22,7 +22,8 @@ $task_worker->onWorkerStart = function ($worker) {
 	$global = new \GlobalData\Client('127.0.0.1:2207');
 	$memcache = new \Memcached();
 	$memcache->addServer('localhost', 11211);
-    $memcache->set('queuehosts', ['queues' => [], 'hosts' => []]);;
+	$queuehosts = [];
+	$memcache->set('queuehosts', $queuehosts);
 	$functions = [];
 	foreach (glob(__DIR__.'/../../Tasks/*.php') as $file) {
 		$function = basename($file, '.php');
