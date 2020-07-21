@@ -124,11 +124,21 @@ function memcached_queue_task($args)
 					}
 				}
 				if ($serverDetails[$prefix.'_cpu_usage'] != $serialized_server_usage || $serverDetails[$prefix.'_cpu_avg'] != $cpu_avg) {
-					$worker_db->update($prefix.'_master_details')
-						->cols([$prefix.'_cpu_avg', $prefix.'_cpu_usage'])
-						->where($prefix.'_id='.$server[$prefix.'_id'])
-						->bindValues([$prefix.'_cpu_avg' => $cpu_avg, $prefix.'_cpu_usage' => $serialized_server_usage])
-						->query();
+					try {
+						$worker_db->update($prefix.'_master_details')
+							->cols([$prefix.'_cpu_avg', $prefix.'_cpu_usage'])
+							->where($prefix.'_id='.$server[$prefix.'_id'])
+							->bindValues([$prefix.'_cpu_avg' => $cpu_avg, $prefix.'_cpu_usage' => $serialized_server_usage])
+							->query();
+					} catch (\PDOException $e) {
+						if ($e->getCode() == 3101) {
+							$worker_db->update($prefix.'_master_details')
+								->cols([$prefix.'_cpu_avg', $prefix.'_cpu_usage'])
+								->where($prefix.'_id='.$server[$prefix.'_id'])
+								->bindValues([$prefix.'_cpu_avg' => $cpu_avg, $prefix.'_cpu_usage' => $serialized_server_usage])
+								->query();                            
+						}
+					}
 					$serverDetails[$prefix.'_cpu_avg'] = $cpu_avg;
 					$serverDetails[$prefix.'_cpu_usage'] = $serialized_server_usage;
 					$memcache->set($module.'_master_details'.$server[$prefix.'_id'], $serverDetails, 3600);
@@ -259,11 +269,21 @@ function memcached_queue_task($args)
 					}
 				}
 				if (count($cols) > 0)
-					$worker_db->update($prefix.'_masters')
-						->cols($cols)
-						->where($prefix.'_id='.$server[$prefix.'_id'])
-						->bindValues($values)
-						->query();
+					try {
+						$worker_db->update($prefix.'_masters')
+							->cols($cols)
+							->where($prefix.'_id='.$server[$prefix.'_id'])
+							->bindValues($values)
+							->query();
+					} catch (\PDOException $e) {
+						if ($e->getCode() == 3101) {
+							$worker_db->update($prefix.'_masters')
+								->cols($cols)
+								->where($prefix.'_id='.$server[$prefix.'_id'])
+								->bindValues($values)
+								->query();                            
+						}                        
+					}
 					$memcache->set($module.'_masters'.$queue['ip'], $server, 3600);
 				break;
 			default:
