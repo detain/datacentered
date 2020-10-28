@@ -24,6 +24,7 @@
 		"react/event-loop": "*",
 		"react/http-client": "*",
 		"react/mysql": "*",
+		"guzzlehttp/guzzle": "^6.0",
 		"danielstjules/php-pretty-datetime": "*",
 		"influxdb/influxdb-php": "dev-master",
 		"cache/memcached-adapter": "dev-master",
