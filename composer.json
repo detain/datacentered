@@ -18,6 +18,7 @@
 	"require": {
 		"php": ">=5.6.0",
 		"ext-curl": "*",
+		"corneltek/cliframework": "*",
 		"clue/soap-react": "dev-master",
 		"roave/security-advisories": "dev-master",
 		"react/child-process": "*",

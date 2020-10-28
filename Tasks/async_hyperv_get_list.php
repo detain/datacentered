@@ -7,7 +7,7 @@ if (ini_get('default_socket_timeout') < 1200 && ini_get('default_socket_timeout'
 	ini_set('default_socket_timeout', 1200);
 }
 
-function async_hyperv_get_list_server(\Clue\React\Buzz\Browser &$browser, $service_master)
+function async_hyperv_get_list_server(\React\Http\Browser &$browser, $service_master)
 {
 	$url = "https://{$service_master['vps_ip']}/HyperVService/HyperVService.asmx?WSDL";
 	//echo "Creating Client for {$service_master['vps_name']} @ {$url}\n";
@@ -90,7 +90,7 @@ function async_hyperv_get_list($args)
 			'verify_peer_name' => false
 		]
 	]);
-	$browser = new \Clue\React\Buzz\Browser($loop, $connector);
+	$browser = new \React\Http\Browser($loop, $connector);
 	/**
 	* @var \GlobalData\Client
 	*/
@@ -109,11 +109,11 @@ function async_hyperv_get_list($args)
 			$global->$var = 0;
 		}
 		if ($global->cas($var, 0, 1)) {
-            //echo $service_master['vps_name'].' Got Lock for Get List Update' . PHP_EOL;
+			//echo $service_master['vps_name'].' Got Lock for Get List Update' . PHP_EOL;
 			async_hyperv_get_list_server($browser, $service_master);
 		} else {
-            //echo $service_master['vps_name'].' Cannot get Lock for Get List Update' . PHP_EOL;
-        }
+			//echo $service_master['vps_name'].' Cannot get Lock for Get List Update' . PHP_EOL;
+		}
 	}
 	$loop->run();
 }
