@@ -15,6 +15,8 @@ if (!isset($_GET['table'])) {
 $table = $_GET['table'];
 $unsetFields = ['tls'];
 $foldFields = ['from', 'to'];
+//if ($table == 'senderdelivered')
+//	return;
 /*
 Generated with:
 for t in logentry messagestore senderdelivered; do
@@ -44,6 +46,9 @@ foreach ($post as $field => $data) {
 			} 			
 		} 
 	}
+}
+if (isset($out['time'])) {
+	$out['time'] = (int)$out['time'] / 1000;
 }
 if (count($doc) > 0) {
 	if ($table != 'senderdelivered') {

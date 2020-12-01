@@ -24,6 +24,7 @@
 		"react/child-process": "*",
 		"react/event-loop": "*",
 		"react/http-client": "*",
+		"react/http": "*",
 		"react/mysql": "*",
 		"guzzlehttp/guzzle": "^6.0",
 		"danielstjules/php-pretty-datetime": "*",
