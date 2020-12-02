@@ -48,7 +48,7 @@ foreach ($post as $field => $data) {
 	}
 }
 if (isset($out['time'])) {
-	$out['time'] = (int)$out['time'] / 1000;
+	$out['time'] = floor((int)$out['time'] / 1000);
 }
 if (count($doc) > 0) {
 	if ($table != 'senderdelivered') {
