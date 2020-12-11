@@ -13,7 +13,7 @@ if (!isset($_GET['table'])) {
 	return;
 }
 $table = $_GET['table'];
-$unsetFields = ['tls'];
+$unsetFields = ['tls', 'parsedEnvelope', 'disabledAddresses', 'envelope', 'dnsOptions', 'dkim'];
 $foldFields = ['from', 'to'];
 //if ($table == 'senderdelivered')
 //	return;
@@ -31,6 +31,21 @@ $tableFields = [
 $post = json_decode($_POST['data'], true);
 $out = [];
 $doc = [];
+if ($table == 'senderdelivered') {
+	if (isset($post['spam'])) {
+		$post['spam']['score'] = $post['spam']['default']['score'];
+		unset($post['spam']['default']);
+	}
+	if (isset($post['headers'])) {
+		$lines = [];
+		foreach ($post['headers']['lines'] as $line) {
+			$lines[] = $line['line'];
+		}
+		//$post['headers']['lines'] = $lines;
+		//unset($post['headers']['libmime']);
+		$post['headers'] = implode(PHP_EOL, $lines);
+	}
+}
 foreach ($post as $field => $data) {
 	if (!in_array($field, $unsetFields) && ($table != 'messagestore' || $field != 'dkim')) {
 		if (in_array($field, $foldFields)) {
