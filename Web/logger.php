@@ -2,8 +2,10 @@
 
 use Workerman\Worker;
 
-/**
-* 
+//Worker::safeEcho('running zonemta insert query for '.$_GET['table'].PHP_EOL);
+//return;
+
+/** 
 * @var {\Workerman\MySQL\Connection}
 */
 global $mysql_db;
@@ -12,25 +14,27 @@ if (!isset($_GET['table'])) {
 	Worker::safeEcho("logger url missing Table Data\n");
 	return;
 }
-$table = $_GET['table'];
-$unsetFields = ['tls', 'parsedEnvelope', 'disabledAddresses', 'envelope', 'dnsOptions', 'dkim'];
-$foldFields = ['from', 'to'];
-//if ($table == 'senderdelivered')
-//	return;
-/*
-Generated with:
+/* Generated with:
 for t in logentry messagestore senderdelivered; do
   echo "'$t' => ['$(mysqldump -d zonemta mail_$t 2>/dev/null|grep "^  \`"|cut -d\` -f2|tr "\n" " "|sed -e s#" *$"#""#g -e s#" "#"','"#g)'],";
-done
-*/
+done */
 $tableFields = [
 	'logentry' => ['_id','id','seq','action','category','zone','from','returnPath','to','mx','host','ip','response','size','timer','start','reason','result','score','tests'],
 	'messagestore' => ['_id','id','interface','from','to','origin','originhost','transhost','transtype','user','time','messageId','date','sendingZone','bodySize','sourceMd5','doc'],
 	'senderdelivered' => ['_id','id','seq','domain','sendingZone','recipient','locked','lockTime','assigned','queued','created','_lock','interface','from','to','origin','originhost','transhost','transtype','user','time','messageId','date','bodySize','sourceMd5','logger','mxPort','connectionKey','localAddress','localHostname','localPort','mxHostname','sentBodyHash','sentBodySize','md5Match','poolDisabled','fbl','doc'],
 ];
+$table = $_GET['table'];
+$unsetFields = ['tls', 'parsedEnvelope', 'disabledAddresses', 'envelope', 'dnsOptions', 'dkim'];
+$foldFields = ['from', 'to'];
 $post = json_decode($_POST['data'], true);
 $out = [];
 $doc = [];
+$fieldCharLimits = [
+	'to' => 300,
+	'from' => 300,
+];
+//if ($table == 'senderdelivered')
+//	return;
 if ($table == 'senderdelivered') {
 	if (isset($post['spam'])) {
 		$post['spam']['score'] = $post['spam']['default']['score'];
@@ -44,6 +48,13 @@ if ($table == 'senderdelivered') {
 		//$post['headers']['lines'] = $lines;
 		//unset($post['headers']['libmime']);
 		$post['headers'] = implode(PHP_EOL, $lines);
+	}
+}
+if ($table == 'messagestore') {
+	foreach ($fieldCharLimits as $field => $limit) {
+		if (isset($post[$field]) && mb_strlen($post[$field]) > $limit) {
+			$post[$field] = mb_substr($post[$field], -$limit);
+		}
 	}
 }
 foreach ($post as $field => $data) {

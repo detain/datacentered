@@ -17,7 +17,7 @@ ini_set('memory_limit', '4096M');
 error_reporting(E_ALL);
 // Reset opcache.
 if (function_exists('opcache_reset')) {
-    opcache_reset();
+	opcache_reset();
 }
 if (strpos(strtolower(PHP_OS), 'win') === 0) {
 	exit("start.php not support windows, please use start_for_win.bat\n");
@@ -30,7 +30,7 @@ if (!extension_loaded('posix')) {
 }
 define('GLOBAL_START', 1); // The flag is globally activated
 //foreach (glob(__DIR__.'/Applications/*/start*.php') as $start_file) {
-foreach (['globaldata', 'task', 'gateway', 'gateway_ssl', 'register', 'businessworker', 'web'] as $start_part) {
+foreach (['globaltimer', 'globaldata', 'task', 'gateway', 'gateway_ssl', 'register', 'businessworker', 'web'] as $start_part) {
 	$start_file = __DIR__.'/Applications/Chat/start_'.$start_part.'.php';
 	require_once $start_file;
 } // Load all Applications/*/start*.php to start all services
