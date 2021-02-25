@@ -15,10 +15,13 @@ use GatewayWorker\Lib\Gateway;
 use Workerman\Connection\AsyncTcpConnection;
 use Workerman\Connection\TcpConnection;
 use Workerman\Lib\Timer;
-use Workerman\GlobalTimer;
+//use Workerman\GlobalTimer;
 
 require_once __DIR__.'/Process.php';
-require_once __DIR__.'/../../vendor/workerman/global-timer/src/GlobalTimer.php';
+require_once __DIR__.'/Timer.php';
+require_once __DIR__.'/ChannelClient.php';
+//require_once __DIR__.'/../../vendor/workerman/global-timer/src/GlobalTimer.php';
+require_once __DIR__.'/GlobalTimer.php';
 
 class Events
 {
@@ -46,7 +49,7 @@ class Events
 		global $memcache;
 		$memcache = new \Memcached();
 		$memcache->addServer('localhost', 11211);		
-		//GlobalTimer::init('127.0.0.1','3333');
+		GlobalTimer::init('127.0.0.1','3333');
 		$db_config = include __DIR__.'/../../../../my/include/config/config.db.php';
 		$loop = Worker::getEventLoop();
 		self::$db = new \Workerman\MySQL\Connection($db_config['db_host'], $db_config['db_port'], $db_config['db_user'], $db_config['db_pass'], $db_config['db_name'], 'utf8mb4');
@@ -65,12 +68,22 @@ class Events
 		}
 		if ($worker->id == 0 ) {
 			$args = [];
-			Timer::add(3600, ['Events', 'hyperv_update_list_timer'], $args);
-			Timer::add(30, ['Events', 'hyperv_queue_timer'], $args);
-			Timer::add(30, ['Events', 'vps_queue_timer'], $args);
-			Timer::add(30, ['Events', 'memcache_queue_timer'], $args);
-			Timer::add(60, ['Events', 'map_queue_timer'], $args);
-			//Timer::add(60, ['Events', 'queue_queue_timer'], $args);
+			/*
+			Workerman\Lib\Timer::add(3600, ['Events', 'hyperv_update_list_timer'], $args);
+			Workerman\Lib\Timer::add(30, ['Events', 'hyperv_queue_timer'], $args);
+			Workerman\Lib\Timer::add(30, ['Events', 'vps_queue_timer'], $args);
+			Workerman\Lib\Timer::add(30, ['Events', 'memcache_queue_timer'], $args);
+			Workerman\Lib\Timer::add(60, ['Events', 'map_queue_timer'], $args);
+			//Workerman\Lib\Timer::add(60, ['Events', 'queue_queue_timer'], $args);
+			*/
+			$timers = [];
+			$timers[] = GlobalTimer::add(3600, ['Events', 'hyperv_update_list_timer'], $args);
+			$timers[] = GlobalTimer::add(30, ['Events', 'hyperv_queue_timer'], $args);
+			$timers[] = GlobalTimer::add(30, ['Events', 'vps_queue_timer'], $args);
+			$timers[] = GlobalTimer::add(30, ['Events', 'memcache_queue_timer'], $args);
+			$timers[] = GlobalTimer::add(60, ['Events', 'map_queue_timer'], $args);
+			//$timers[] = GlobalTimer::add(60, ['Events', 'queue_queue_timer'], $args);
+			//$timer_id = GlobalTimer::add(1, function() use (&$timer_id, $timers) { echo "worker[0] tick timer_id:$timer_id:'".print_r($timers,true)."\n"; });
 		}
 	}
 
@@ -192,6 +205,7 @@ class Events
 	}
 	
 	public static function queue_queue_timer() {
+		Worker::safeEcho('Timer running for '.__METHOD__);
 		$task_connection = new AsyncTcpConnection('Text://127.0.0.1:2208');
 		$task_connection->send(json_encode(['type' => 'queue_queue_task', 'args' => []]));
 		$task_connection->onMessage = function ($connection, $task_result) use ($task_connection) {
@@ -201,6 +215,7 @@ class Events
 	}
 	
 	public static function map_queue_timer() {
+		Worker::safeEcho('Timer running for '.__METHOD__);
 		$task_connection = new AsyncTcpConnection('Text://127.0.0.1:2208');
 		$task_connection->send(json_encode(['type' => 'map_queue_task', 'args' => []]));
 		$task_connection->onMessage = function ($connection, $task_result) use ($task_connection) {
@@ -210,6 +225,7 @@ class Events
 	}
 	
 	public static function memcache_queue_timer() {
+		Worker::safeEcho('Timer running for '.__METHOD__);
 		$task_connection = new AsyncTcpConnection('Text://127.0.0.1:2208');
 		$task_connection->send(json_encode(['type' => 'memcached_queue_task', 'args' => []]));
 		$task_connection->onMessage = function ($connection, $task_result) use ($task_connection) {
@@ -304,6 +320,7 @@ class Events
 			'time' => date('Y-m-d H:i:s'),
 		];
 		Gateway::sendToAll(json_encode($new_message));*/
+		Worker::safeEcho("timer starting hyperv update list");
 		$task_connection = new AsyncTcpConnection('Text://127.0.0.1:2208');
 		$task_connection->send(json_encode(['type' => 'async_hyperv_get_list', 'args' => []]));
 		$task_connection->onMessage = function ($connection, $task_result) use ($task_connection) {
@@ -325,6 +342,7 @@ class Events
 			'time' => date('Y-m-d H:i:s'),
 		];
 		Gateway::sendToAll(json_encode($new_message));*/
+		Worker::safeEcho("timer starting hyperv queue check");
 		$task_connection = new AsyncTcpConnection('Text://127.0.0.1:2208');
 		$task_connection->send(json_encode(['type' => 'sync_hyperv_queue', 'args' => []]));
 		$task_connection->onMessage = function ($connection, $task_result) use ($task_connection) {
@@ -606,6 +624,66 @@ class Events
 			];
 			Worker::safeEcho("[{$client_id}] Loaded Clients, Request Length:".strlen(json_encode($new_message)).PHP_EOL);
 			Gateway::sendToCurrentClient(json_encode($new_message));
+		}
+		return;
+	}
+
+
+	/**
+	 * list timers
+	 *
+	 * @param int $client_id
+	 * @param array $message_data
+	 */
+	public static function msgTimers($client_id, $message_data)
+	{
+		/**
+		* @var \GlobalData\Client
+		*/
+		global $global;
+		if ($_SESSION['login'] == true && $_SESSION['ima'] == 'admin') {
+			$message_data = [
+				'type' => 'timers',
+				'channel' => ChannelClient::getStatus(),
+				'status' => GlobalTimer::getStatus(),
+			];
+			Gateway::sendToCurrentClient(json_encode($message_data));
+			/*
+			$sessions = Gateway::getAllClientSessions();
+			$clients = [];
+			foreach ($sessions as $session_id => $session_data) {
+				if (isset($session_data['uid'])) {
+					$client = [
+						'id' => $session_data['uid'],
+						'name' => $session_data['name'],
+						'ima' => $session_data['ima'],
+						'online' => $session_data['online'],
+						'messages' => [],
+					];
+					if ($session_data['ima'] == 'host') {
+						$client['type'] = $session_data['type'];
+					} else {
+						$client['img'] = $session_data['img'];
+					}
+					$clients[] = $client;
+				}
+			}
+			$rooms = $global->rooms;
+			foreach ($rooms as $room) {
+				$members = [];
+				foreach ($room['members'] as $member) {
+					$members[] = ['contact' => $member];
+				}
+				$room['members'] = $members;
+				$clients[] = $room;
+			}
+			$new_message = [ // Send the error response
+				'type' => 'clients',
+				'content' => base64_encode(gzcompress(json_encode($clients), 9)),
+			];
+			Worker::safeEcho("[{$client_id}] Loaded Clients, Request Length:".strlen(json_encode($new_message)).PHP_EOL);
+			Gateway::sendToCurrentClient(json_encode($new_message));
+			*/
 		}
 		return;
 	}

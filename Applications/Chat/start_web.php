@@ -10,21 +10,24 @@ use Workerman\Autoloader;
 
 $context = [																						// Certificate is best to apply for a certificate
 	'ssl' => [																						// use the absolute/full paths
-		'local_cert' => '/home/my/files/apache_setup/interserver.net.crt',							// can also be a crt file
-		'local_pk' => '/home/my/files/apache_setup/interserver.net.key',
-		'cafile' => '/home/my/files/apache_setup/AlphaSSL.root.crt',
+		//'local_cert' => '/home/my/files/apache_setup/interserver.net.crt',							// can also be a crt file
+		//'local_pk' => '/home/my/files/apache_setup/interserver.net.key',
+		//'cafile' => '/home/my/files/apache_setup/AlphaSSL.root.crt',
+		'local_cert' => '/etc/letsencrypt/live/mynew.interserver.net/fullchain.pem',
+		'local_pk' => '/etc/letsencrypt/live/mynew.interserver.net/privkey.pem',
 		'verify_peer' => false,
 		'verify_peer_name' => false,
 	]
 ];
 $web = new Worker('http://0.0.0.0:55151', $context);
-$web->name = 'WebServer';
+$web->name	 = 'WebServer';
 $web->count = 10; // WebServer number of processes
 //$web->transport = 'ssl';
 
 define('WEBROOT', realpath(__DIR__.'/../../Web'));
 
 $web->onMessage = function (TcpConnection $connection, Request $request) {
+	global $_GET, $_POST;
 	$addr = explode(':', $connection->getRemoteAddress());
 	$_SERVER['REMOTE_ADDR'] = $addr[0];
 	$_GET = $request->get();
@@ -61,6 +64,7 @@ $web->onMessage = function (TcpConnection $connection, Request $request) {
 };
 
 function exec_php_file($file) {
+	global $request;
 	\ob_start();
 	// Try to include php file.
 	try {
@@ -79,6 +83,10 @@ $web->onWorkerStart = function ($worker) {
 	global $memcache;
 	$memcache = new \Memcached();
 	$memcache->addServer('localhost', 11211);
+	global $mysql_db;
+	//$db_config = include __DIR__.'/../../../../my/include/config/config.db.php';
+	//$mysql_db = new \Workerman\MySQL\Connection($db_config['db_host'], $db_config['db_port'], $db_config['db_user'], $db_config['db_pass'], $db_config['db_name'], 'utf8mb4');
+	$mysql_db = new \Workerman\MySQL\Connection('66.45.240.70', 3306, 'zonemta', 'Z0n3mt4!', 'zonemta', 'utf8mb4');	
 };
 	
 $web->onWorkerStop = function ($worker) {
