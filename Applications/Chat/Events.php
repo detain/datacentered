@@ -22,12 +22,14 @@ require_once __DIR__.'/Timer.php';
 require_once __DIR__.'/ChannelClient.php';
 //require_once __DIR__.'/../../vendor/workerman/global-timer/src/GlobalTimer.php';
 require_once __DIR__.'/GlobalTimer.php';
+require_once __DIR__.'/stdObject.php';
 
 class Events
 {
 	public static $process_handle = null;
 	public static $process_pipes = null;
 	public static $db = null;
+	public static $running = [];
 
 	/**
 	 * when the workerman thread starts
@@ -94,6 +96,9 @@ class Events
 	 */
 	public static function onWorkerStop($worker)
 	{
+		foreach($worker->connections as $connection) {
+			$connection->close();
+		}
 		if ($worker->id == 0) {
 			/*@shell_exec('killall vmstat');
 			@pclose(self::process_handle);*/
@@ -350,6 +355,42 @@ class Events
 			$task_connection->close();
 		};
 		$task_connection->connect();
+	}
+	
+	/**
+	 * runs a command on a given host.
+	 *
+	 * @param string $cmd the command to run
+	 * @param bool $interact defaults false, if true the host will open up the process for stdin and handle forwarding i/o
+	 * @param mixed $for null for nobody, or a uid or reserved word to indicate how the response if any should be handled
+	 * @return void
+	 */
+	public static function run_local($client_id, $cmd, $tag) {
+		$process = new Process($client_id, $cmd, $tag);
+		self::$running[] = $run;
+		/*		
+		$worker->onMessage = function($connection, $data) {
+			if(ALLOW_CLIENT_INPUT) {
+				fwrite($connection->pipes[0], $data);
+			}
+		};
+		$worker->onClose = function($connection) {
+			$connection->process_stdin->close();
+			$connection->process_stdout->close();
+			fclose($connection->pipes[0]);
+			$connection->pipes = null;
+			proc_terminate($connection->process);
+			proc_close($connection->process);
+			$connection->process = null;
+		};
+		$worker->onWorkerStop = function($worker) {
+			foreach($worker->connections as $connection) {
+				$connection->close();
+			}
+		};
+		*/
+		
+				
 	}
 
 	/**
@@ -741,6 +782,27 @@ class Events
 			Gateway::sendToCurrentClient(json_encode($new_message));
 			Gateway::closeClient($client_id);
 		}
+		return;
+	}
+
+	/**
+	 * handler for when receiving a run message.
+	 *
+	 * @param int $client_id
+	 * @param array $message_data
+	 */
+	public static function msgRunLocal($client_id, $message_data)
+	{
+		Worker::safeEcho("[{$client_id}] Got Run Command ".json_encode($message_data).PHP_EOL);
+		if ($_SESSION['login'] == true) {
+			if ($_SESSION['ima'] == 'admin') {
+				Worker::safeEcho("[{$client_id}] running command {$message_data['command']}".PHP_EOL);
+				return self::run_local($client_id, $message_data['cmd'], isset($message_data['tag']) ? $message_data['tag'] : '');
+			} else {
+				Worker::safeEcho("[{$client_id}] ima: {$_SESSION['ima']}".PHP_EOL);
+			}
+		}
+		Worker::safeEcho("[{$client_id}] But not running it".PHP_EOL);
 		return;
 	}
 

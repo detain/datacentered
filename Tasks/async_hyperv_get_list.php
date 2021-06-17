@@ -33,7 +33,7 @@ function async_hyperv_get_list_server(\React\Http\Browser &$browser, $service_ma
 					if (isset($result->GetVMListResult->Success)) {
 						$result = $result->GetVMListResult;
 					}
-					if (isset($result->Success) && $result->Success == 'true' && isset($result->VMList) && isset($result->VMList->VirtualMachineSummary)) {
+					if (isset($result->Success) && ($result->Success == 'true' || $result->Success == 1) && isset($result->VMList) && isset($result->VMList->VirtualMachineSummary)) {
 						\StatisticClient::report('Hyper-V', 'GetVMList', true, 0, '', STATISTICS_SERVER);
 						if (isset($result->VMList->VirtualMachineSummary->VmId)) {
 							$result->VMList->VirtualMachineSummary = [0 => $result->VMList->VirtualMachineSummary];

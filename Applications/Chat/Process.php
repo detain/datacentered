@@ -8,31 +8,35 @@ class Process
 	public $client_id;
 	public $cmd = '';
 	public $fd;
+	public $tag = '';
 	public $process_stdout;
 	public $process_stdin;
 	public $process_stderr;
-	/*
-		//To do this, PHP_CAN_DO_PTS must be enabled. See ext/standard/proc_open.c in PHP directory.
-		public $descriptorspec = [
-			0 => ['pty'],
-			1 => ['pty'],
-			2 => ['pty']
-		];
-	*/
-	//Pipe can not do PTY. Thus, many features of PTY can not be used. e.g. sudo, w3m, luit, all C programs using termios.h, etc.
+	// To do this, PHP_CAN_DO_PTS must be enabled. See ext/standard/proc_open.c in PHP directory.
 	public $descriptorspec = [
+		0 => ['pty'],
+		1 => ['pty'],
+		2 => ['pty']
+	];
+	//Pipe can not do PTY. Thus, many features of PTY can not be used. e.g. sudo, w3m, luit, all C programs using termios.h, etc.
+	/* public $descriptorspec = [
 		0 => ['pipe','r'],
 		1 => ['pipe','w'],
 		2 => ['pipe','w']
-	];
+	]; */
 	public $pipes;
 	public $env;
 
-	public function __construct($client_id, $cmd)
+	public function __construct($client_id, $cmd, $tag = '')
 	{
 		$this->client_id = $client_id;
 		$this->cmd = $cmd;
-		$this->env = array_merge(['TERM' => 'xterm', 'COLUMNS' => 130, 'LINES' => 40], $_SERVER);
+		$this->tag = $tag;
+		$this->env = [
+			'TERM' => 'xterm', 
+			'COLUMNS' => 80, 
+			'LINES' => 24
+		];
 	}
 
 	public function start_process()

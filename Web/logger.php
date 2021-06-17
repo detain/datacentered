@@ -5,11 +5,12 @@ use Workerman\Worker;
 //Worker::safeEcho('running zonemta insert query for '.$_GET['table'].PHP_EOL);
 //return;
 
-/** 
+/**
 * @var {\Workerman\MySQL\Connection}
 */
 global $mysql_db;
 global $_GET, $_POST;
+//error_log('Logger called for table '.$_GET['table']);
 if (!isset($_GET['table'])) {
 	Worker::safeEcho("logger url missing Table Data\n");
 	return;
@@ -52,8 +53,16 @@ if ($table == 'senderdelivered') {
 }
 if ($table == 'messagestore') {
 	foreach ($fieldCharLimits as $field => $limit) {
-		if (isset($post[$field]) && mb_strlen($post[$field]) > $limit) {
-			$post[$field] = mb_substr($post[$field], -$limit);
+		if (isset($post[$field])) {
+			if (is_array($post[$field])) {
+				foreach ($post[$field] as $fieldKey => $fieldValue) {
+					if (!is_array($fieldValue) && mb_strlen($fieldValue) > $limit) {
+						$post[$field][$fieldKey] = mb_substr($fieldValue, -$limit);
+					}
+				}
+			} elseif (mb_strlen($post[$field]) > $limit) {
+				$post[$field] = mb_substr($post[$field], -$limit);
+			}
 		}
 	}
 }
@@ -69,8 +78,8 @@ foreach ($post as $field => $data) {
 				$doc[$field] = $post[$field];
 			} else {
 				$out[$field] = $data;
-			} 			
-		} 
+			}
+		}
 	}
 }
 if (isset($out['time'])) {
@@ -79,7 +88,7 @@ if (isset($out['time'])) {
 if (count($doc) > 0) {
 	if ($table != 'senderdelivered') {
 		$out['doc'] = json_encode($doc);
-	}	
+	}
 }
 $insertId = $mysql_db
 	->insert('mail_'.$table)
@@ -95,5 +104,5 @@ if (count($doc) > 0) {
 			->insert('mail_'.$table.'_extra')
 			->cols($extra)
 			->query();
-	}	
+	}
 }
