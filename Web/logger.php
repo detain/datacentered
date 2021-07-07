@@ -30,10 +30,7 @@ $foldFields = ['from', 'to'];
 $post = json_decode($_POST['data'], true);
 $out = [];
 $doc = [];
-$fieldCharLimits = [
-	'to' => 300,
-	'from' => 300,
-];
+$fieldCharLimits = ['to' => 300, 'from' => 300];
 //if ($table == 'senderdelivered')
 //	return;
 if ($table == 'senderdelivered') {
@@ -106,3 +103,4 @@ if (count($doc) > 0) {
 			->query();
 	}
 }
+
