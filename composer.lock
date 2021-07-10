@@ -4,7 +4,7 @@
         "Read more about it at https://getcomposer.org/doc/01-basic-usage.md#installing-dependencies",
         "This file is @generated automatically"
     ],
-    "content-hash": "4178fb5c6c0eedb80103ee1222cae1ec",
+    "content-hash": "833a825208054e37d8a72e8ed76d1f6b",
     "packages": [
         {
             "name": "cache/adapter-common",
@@ -506,7 +506,7 @@
             "version": "dev-master",
             "source": {
                 "type": "git",
-                "url": "https://github.com/danielstjules/php-pretty-datetime.git",
+                "url": "git@github.com:danielstjules/php-pretty-datetime.git",
                 "reference": "c489c9052a2d2202e13f899fff98c043f6297910"
             },
             "dist": {
@@ -1707,66 +1707,6 @@
                 }
             ],
             "time": "2021-04-11T18:07:28+00:00"
-        },
-        {
-            "name": "react/http-client",
-            "version": "dev-master",
-            "source": {
-                "type": "git",
-                "url": "https://github.com/reactphp/http-client.git",
-                "reference": "23dddb415b9bd36c81d1c78df63143e65702aa4b"
-            },
-            "dist": {
-                "type": "zip",
-                "url": "https://api.github.com/repos/reactphp/http-client/zipball/23dddb415b9bd36c81d1c78df63143e65702aa4b",
-                "reference": "23dddb415b9bd36c81d1c78df63143e65702aa4b",
-                "shasum": ""
-            },
-            "require": {
-                "evenement/evenement": "^3.0 || ^2.0 || ^1.0",
-                "php": ">=5.3.0",
-                "react/event-loop": "^1.0 || ^0.5 || ^0.4 || ^0.3",
-                "react/promise": "^2.1 || ^1.2.1",
-                "react/socket": "^1.0 || ^0.8.4",
-                "react/stream": "^1.0 || ^0.7.1",
-                "ringcentral/psr7": "^1.2"
-            },
-            "require-dev": {
-                "clue/block-react": "^1.2",
-                "phpunit/phpunit": "^7.0 || ^6.4 || ^5.7 || ^4.8.35",
-                "react/promise-stream": "^1.1"
-            },
-            "default-branch": true,
-            "type": "library",
-            "autoload": {
-                "psr-4": {
-                    "React\\HttpClient\\": "src"
-                }
-            },
-            "notification-url": "https://packagist.org/downloads/",
-            "license": [
-                "MIT"
-            ],
-            "description": "Event-driven, streaming HTTP client for ReactPHP",
-            "keywords": [
-                "http"
-            ],
-            "support": {
-                "issues": "https://github.com/reactphp/http-client/issues",
-                "source": "https://github.com/reactphp/http-client/tree/v0.5.11"
-            },
-            "funding": [
-                {
-                    "url": "https://github.com/WyriHaximus",
-                    "type": "github"
-                },
-                {
-                    "url": "https://github.com/clue",
-                    "type": "github"
-                }
-            ],
-            "abandoned": "react/http",
-            "time": "2021-04-07T16:49:17+00:00"
         },
         {
             "name": "react/mysql",
@@ -3113,12 +3053,12 @@
             "source": {
                 "type": "git",
                 "url": "https://github.com/twigphp/Twig.git",
-                "reference": "760532fdbaf45828272aecb1a2f68327d6fd96d4"
+                "reference": "feeaba3fea01ca2e8125600421c9b207c735c83e"
             },
             "dist": {
                 "type": "zip",
-                "url": "https://api.github.com/repos/twigphp/Twig/zipball/760532fdbaf45828272aecb1a2f68327d6fd96d4",
-                "reference": "760532fdbaf45828272aecb1a2f68327d6fd96d4",
+                "url": "https://api.github.com/repos/twigphp/Twig/zipball/feeaba3fea01ca2e8125600421c9b207c735c83e",
+                "reference": "feeaba3fea01ca2e8125600421c9b207c735c83e",
                 "shasum": ""
             },
             "require": {
@@ -3184,7 +3124,7 @@
                     "type": "tidelift"
                 }
             ],
-            "time": "2021-07-07T07:07:54+00:00"
+            "time": "2021-07-08T11:01:04+00:00"
         },
         {
             "name": "universal/universal",
@@ -6875,12 +6815,12 @@
             "source": {
                 "type": "git",
                 "url": "https://github.com/symfony/stopwatch.git",
-                "reference": "80d9ae0c8a02bd291abf372764c0fc68cbd06c42"
+                "reference": "c85d997af06a58ba83e2d2538e335b894c24523d"
             },
             "dist": {
                 "type": "zip",
-                "url": "https://api.github.com/repos/symfony/stopwatch/zipball/80d9ae0c8a02bd291abf372764c0fc68cbd06c42",
-                "reference": "80d9ae0c8a02bd291abf372764c0fc68cbd06c42",
+                "url": "https://api.github.com/repos/symfony/stopwatch/zipball/c85d997af06a58ba83e2d2538e335b894c24523d",
+                "reference": "c85d997af06a58ba83e2d2538e335b894c24523d",
                 "shasum": ""
             },
             "require": {
@@ -6929,7 +6869,7 @@
                     "type": "tidelift"
                 }
             ],
-            "time": "2021-05-26T17:39:37+00:00"
+            "time": "2021-07-10T08:41:57+00:00"
         },
         {
             "name": "symfony/yaml",

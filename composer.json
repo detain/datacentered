@@ -23,7 +23,6 @@
 		"roave/security-advisories": "dev-master",
 		"react/child-process": "*",
 		"react/event-loop": "*",
-		"react/http-client": "*",
 		"react/http": "*",
 		"react/mysql": "*",
 		"guzzlehttp/guzzle": "^6.0",
