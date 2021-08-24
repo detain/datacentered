@@ -18,7 +18,6 @@ use Workerman\Lib\Timer;
 //use Workerman\GlobalTimer;
 
 require_once __DIR__.'/Process.php';
-require_once __DIR__.'/Timer.php';
 require_once __DIR__.'/ChannelClient.php';
 //require_once __DIR__.'/../../vendor/workerman/global-timer/src/GlobalTimer.php';
 require_once __DIR__.'/GlobalTimer.php';

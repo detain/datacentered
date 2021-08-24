@@ -51,7 +51,7 @@ function memcached_queue_task($args)
 				Worker::SafeEcho('Hit 100 Attempts at CAS updating the queuein after '.(time() - $memcached_start).' seconds'.PHP_EOL);
 				return;
 			}
-		} while ($loopCount < 100 && !$memcache->cas($response['cas'], 'queuein'.$suffix, $queue));        
+		} while ($loopCount < 100 && !$memcache->cas($response['cas'], 'queuein'.$suffix, $queue));
 	}
 	if (count($processQueue) == 0) {
 		$global->queuein = 0;
@@ -59,10 +59,10 @@ function memcached_queue_task($args)
 		return;
 	}
 	/**
-	* @var $processQueue an array of queued data sets to process 
+	* @var $processQueue an array of queued data sets to process
 	*/
 	//Worker::safeEcho('Processing '.count($processQueue).' Queues from Memcached after '.(time() - $memcached_start).' seconds'.PHP_EOL);
-	
+
 	$return = [];
 	foreach ($processQueue as $idx => $queue) {
 		$module = isset($queue['post']['module']) ? $queue['post']['module'] : 'vps';
@@ -76,7 +76,7 @@ function memcached_queue_task($args)
 			$table = 'quickservers';
 			$prefix = 'qs';
 			$influx_table = $prefix.'_bandwidth';
-		}		
+		}
 		$server = $memcache->get($module.'_masters'.$queue['ip']);
 		if ($server === false) {
 			$server = $worker_db->select($prefix.'_id,'.$prefix.'_name,'.$prefix.'_hdsize,'.$prefix.'_bits,'.$prefix.'_ram,'.$prefix.'_cpu_model,'.$prefix.'_kernel,'.$prefix.'_cores,'.$prefix.'_raid_status,'.$prefix.'_raid_building,'.$prefix.'_mounts,'.$prefix.'_drive_type')
@@ -136,7 +136,7 @@ function memcached_queue_task($args)
 								->cols([$prefix.'_cpu_avg', $prefix.'_cpu_usage'])
 								->where($prefix.'_id='.$server[$prefix.'_id'])
 								->bindValues([$prefix.'_cpu_avg' => $cpu_avg, $prefix.'_cpu_usage' => $serialized_server_usage])
-								->query();                            
+								->query();
 						}
 					}
 					$serverDetails[$prefix.'_cpu_avg'] = $cpu_avg;
@@ -151,10 +151,28 @@ function memcached_queue_task($args)
 					foreach ($cpu_usage as $veid => $influxValues) {
 						if (array_key_exists($veid, $serverVps)) {
 							$vps = $serverVps[$veid];
-							$points[] = new \InfluxDB\Point($prefix.'_stats', null, [
-								'vps' => (int)$vps,
-								'host' => (int)$server[$prefix.'_id'],
-							], $influxValues);
+							if (INFLUX_V2 === true) {
+								/*$point = \InfluxDB2\Point::measurement($prefix.'_stats')
+								    ->addTag('vps', (int)$vps)
+								    ->addTag('host', (int)$server[$prefix.'_id'])
+								    ->time(time());*/
+								$point = [];
+								foreach ($influxValues as $key => $value) {
+									//$point->addField($key, $value);
+									if (is_numeric($value)) {
+										$point[] = $key.'='.$value;
+									} else {
+										$point[] = $key.'="'.$value.'"';
+									}
+								}
+								$point = $prefix.'_stats,vps='.(int)$vps.',host='.(int)$server[$prefix.'_id'].' '.implode(',',$point);
+								$influx_database->write($point);
+							} else {
+								$points[] = new \InfluxDB\Point($prefix.'_stats', null, [
+									'vps' => (int)$vps,
+									'host' => (int)$server[$prefix.'_id'],
+								], $influxValues);
+							}
 						} else {
 							$row = $worker_db->select($prefix.'_id,'.$prefix.'_vzid')
 								->from($table)
@@ -164,21 +182,41 @@ function memcached_queue_task($args)
 							if ($row !== false) {
 								$serverVps[$veid] = $row[$prefix.'_id'];
 								$memcache->set($module.'_vps'.$server[$prefix.'_id'], $serverVps, 3600);
-								$points[] = new \InfluxDB\Point($prefix.'_stats', null, [
-									'vps' => (int)$row[$prefix.'_id'],
-									'host' => (int)$server[$prefix.'_id'],
-								], $influxValues);
+								if (INFLUX_V2 === true) {
+									/*$point = \InfluxDB2\Point::measurement($prefix.'_stats')
+									    ->addTag('vps', (int)$row[$prefix.'_id'])
+									    ->addTag('host', (int)$server[$prefix.'_id'])
+									    ->time(time());*/
+									$point = [];
+									foreach ($influxValues as $key => $value) {
+										//$point->addField($key, $value);
+										if (is_numeric($value)) {
+											$point[] = $key.'='.$value;
+										} else {
+											$point[] = $key.'="'.$value.'"';
+										}
+									}
+									$point = $prefix.'_stats,vps='.(int)$row[$prefix.'_id'].',host='.(int)$server[$prefix.'_id'].' '.implode(',',$point);
+									$influx_database->write($point);
+								} else {
+									$points[] = new \InfluxDB\Point($prefix.'_stats', null, [
+										'vps' => (int)$row[$prefix.'_id'],
+										'host' => (int)$server[$prefix.'_id'],
+									], $influxValues);
+								}
 							}
-							
 						}
-						
-					}					
+					}
 					try {
-						$newPoints = $influx_database->writePoints($points, \InfluxDB\Database::PRECISION_SECONDS);
-					} catch (\InfluxDB\Exception $e) {
+						if (INFLUX_V2 === true) {
+							$influx_database->close();
+						} else {
+							$newPoints = $influx_database->writePoints($points, \InfluxDB\Database::PRECISION_SECONDS);
+						}
+					} catch (\Exception $e) {
 						Worker::safeEcho('InfluxDB got Exception '.$e->getMessage(). ' while writing bandwidth points to DB'.PHP_EOL);
 					}
-				}					
+				}
 				break;
 			case 'bandwidth':
 				$bandwidth = $queue['post']['bandwidth'];
@@ -218,21 +256,37 @@ function memcached_queue_task($args)
 							$memcache->set($module.'_vps'.$server[$prefix.'_id'], $serverVps, 3600);
 						}
 						$vps = $serverVps[$veid];
-						$pointTags = [
-							'vps' => (int)$vps,
-							'host' => (int)$server[$prefix.'_id'],
-							'ip' => $ip
-						];
-						$pointData = [
-							'in' => (int)$data['in'],
-							'out' => (int)$data['out']
-						];
-						//Worker::safeEcho('VEID '.$veid.' ID '.$vps.' Line Tags '.json_encode($pointTags).' Data '.json_encode($pointData).__LINE__.PHP_EOL);
-						$points[] = new \InfluxDB\Point($influx_table, null, $pointTags, $pointData);
+						if (INFLUX_V2 === true) {
+							/*$point = \InfluxDB2\Point::measurement($influx_table)
+								->addTag('vps', (int)$vps)
+								->addTag('host', (int)$server[$prefix.'_id'])
+								->addTag('ip', $ip)
+								->addField('in', (int)$data['in'])
+								->addField('out', (int)$data['out'])
+								->time(time());*/
+							$point = $influx_table.',vps='.(int)$vps.',host='.(int)$server[$prefix.'_id'].',ip='.$ip.' in='.(int)$data['in'].',out='.(int)$data['out'];
+							$influx_database->write($point);
+						} else {
+							$pointTags = [
+								'vps' => (int)$vps,
+								'host' => (int)$server[$prefix.'_id'],
+								'ip' => $ip
+							];
+							$pointData = [
+								'in' => (int)$data['in'],
+								'out' => (int)$data['out']
+							];
+							//Worker::safeEcho('VEID '.$veid.' ID '.$vps.' Line Tags '.json_encode($pointTags).' Data '.json_encode($pointData).__LINE__.PHP_EOL);
+							$points[] = new \InfluxDB\Point($influx_table, null, $pointTags, $pointData);
+						}
 					}
 					try {
-						$newPoints = $influx_database->writePoints($points, \InfluxDB\Database::PRECISION_SECONDS);
-					} catch (\InfluxDB\Exception $e) {
+						if (INFLUX_V2 === true) {
+							$influx_database->close();
+						} else {
+							$newPoints = $influx_database->writePoints($points, \InfluxDB\Database::PRECISION_SECONDS);
+						}
+					} catch (\Exception $e) {
 						Worker::safeEcho('InfluxDB got Exception '.$e->getMessage(). ' while writing bandwidth points to DB'.PHP_EOL);
 					}
 				}
@@ -265,7 +319,7 @@ function memcached_queue_task($args)
 					if (!in_array($field, $skipfields) && isset($servers[$field]) && isset($server[$prefix.'_'.$field]) && $server[$prefix.'_'.$field] != $servers[$field]) {
 						$cols[] = $prefix.'_'.$field;
 						$values[$prefix.'_'.$field] = $servers[$field];
-						$server[$prefix.'_'.$field] = $servers[$field];  
+						$server[$prefix.'_'.$field] = $servers[$field];
 					}
 				}
 				if (count($cols) > 0)
@@ -281,8 +335,8 @@ function memcached_queue_task($args)
 								->cols($cols)
 								->where($prefix.'_id='.$server[$prefix.'_id'])
 								->bindValues($values)
-								->query();                            
-						}                        
+								->query();
+						}
 					}
 					$memcache->set($module.'_masters'.$queue['ip'], $server, 3600);
 				break;
@@ -309,7 +363,7 @@ function memcached_queue_task($args)
 			}
 		} while (!$memcache->cas($response['cas'], 'queueout', $queue));
 	}
-	$global->queuein = 0;			
+	$global->queuein = 0;
 	//Worker::safeEcho('memcached_queue_task finished processing '.count($processQueue).' queues after '.(time() - $memcached_start).' seconds'.PHP_EOL);
 	return;
 }

@@ -16,10 +16,10 @@
 		}
 	],
 	"require": {
-		"php": ">=5.6.0",
+		"php": ">=7.0.0",
 		"ext-curl": "*",
 		"corneltek/cliframework": "*",
-		"clue/soap-react": "dev-master",
+		"clue/soap-react": "*",
 		"roave/security-advisories": "dev-master",
 		"react/child-process": "*",
 		"react/event-loop": "*",
@@ -28,6 +28,7 @@
 		"guzzlehttp/guzzle": "^6.0",
 		"danielstjules/php-pretty-datetime": "*",
 		"influxdb/influxdb-php": "dev-master",
+		"influxdata/influxdb-client-php": "dev-master",
 		"cache/memcached-adapter": "dev-master",
 		"workerman/channel": "dev-master",
 		"workerman/gatewayclient": "dev-master",

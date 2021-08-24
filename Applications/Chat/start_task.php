@@ -17,8 +17,21 @@ $task_worker->onWorkerStart = function ($worker) {
 	$db_config = include __DIR__.'/../../../../my/include/config/config.db.php';
 	$loop = Worker::getEventLoop();
 	$worker_db = new \Workerman\MySQL\Connection($db_config['db_host'], $db_config['db_port'], $db_config['db_user'], $db_config['db_pass'], $db_config['db_name'], 'utf8mb4');
-	$influx_client = new \InfluxDB\Client(INFLUX_HOST, INFLUX_PORT, INFLUX_USER, INFLUX_PASS, true);
-	$influx_database = $influx_client->selectDB(INFLUX_DB);
+	$influx_v2 = true;
+	if (INFLUX_V2 === true) {
+		$influx_client = new \InfluxDB2\Client([
+		    'url' => INFLUX_V2_URL,
+		    'token' => INFLUX_V2_TOKEN,
+		    'bucket' => INFLUX_V2_BUCKET,
+		    'org' => INFLUX_V2_ORG,
+		    'precision' => \InfluxDB2\Model\WritePrecision::S,
+		    'debug' => false,
+		]);
+		$influx_database = $influx_client->createWriteApi(['writeType' => \InfluxDB2\WriteType::BATCHING, 'batchSize' => 1000]);
+	} else {
+		$influx_client = new \InfluxDB\Client(INFLUX_HOST, INFLUX_PORT, INFLUX_USER, INFLUX_PASS, true);
+		$influx_database = $influx_client->selectDB(INFLUX_DB);
+	}
 	$global = new \GlobalData\Client('127.0.0.1:2207');
 	$memcache = new \Memcached();
 	$memcache->addServer('localhost', 11211);

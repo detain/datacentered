@@ -29,17 +29,33 @@ function bandwidth($args)
 		}
 		$row = $veids[$data['vps']];
 		if ($row !== false) {
-			$points[] = new \InfluxDB\Point('bandwidth', null, [
-				'vps' => (int)$row['vps_id'],
-				'host' => (int)$args['uid'],
-				'ip' => $ip
-			], [
-				'in' => (int)$data['in'],
-				'out' => (int)$data['out']
-			]);
+			if (INFLUX_V2 === true) {
+				/*$point = \InfluxDB2\Point::measurement('bandwidth')
+				    ->addTag('vps', (int)$row['vps_id'])
+				    ->addTag('host', (int)$args['uid'])
+				    ->addTag('ip', $ip)
+				    ->addField('in', (int)$data['in'])
+				    ->addField('out', (int)$data['out'])
+				    ->time(time());
+				$influx_database->write($point);*/
+				$influx_database->write('bandwidth,vps='.(int)$row['vps_id'].',host='.(int)$args['uid'].',ip='.$ip.' in='.(int)$data['in'].',out='.(int)$data['in']);
+			} else {
+				$points[] = new \InfluxDB\Point('bandwidth', null, [
+					'vps' => (int)$row['vps_id'],
+					'host' => (int)$args['uid'],
+					'ip' => $ip
+				], [
+					'in' => (int)$data['in'],
+					'out' => (int)$data['out']
+				]);
+			}
 		}
 	}
 	//Worker::safeEcho("[bandwidth Task] built up points ".json_encode($points).PHP_EOL);
-	$newPoints = $influx_database->writePoints($points, \InfluxDB\Database::PRECISION_SECONDS);
+	if (INFLUX_V2 === true) {
+		$influx_database->close();
+	} else {
+		$newPoints = $influx_database->writePoints($points, \InfluxDB\Database::PRECISION_SECONDS);
+	}
 	return true;
 }
