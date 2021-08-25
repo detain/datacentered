@@ -17,7 +17,6 @@ $task_worker->onWorkerStart = function ($worker) {
 	$db_config = include __DIR__.'/../../../../my/include/config/config.db.php';
 	$loop = Worker::getEventLoop();
 	$worker_db = new \Workerman\MySQL\Connection($db_config['db_host'], $db_config['db_port'], $db_config['db_user'], $db_config['db_pass'], $db_config['db_name'], 'utf8mb4');
-	$influx_v2 = true;
 	if (INFLUX_V2 === true) {
 		$influx_client = new \InfluxDB2\Client([
 		    'url' => INFLUX_V2_URL,
