@@ -18,6 +18,9 @@ function memcached_queue_task($args)
 	*/
 	global $influx_client;
 	global $influx_database;
+	global $influx_v1;
+	global $influx_v2_client;
+	global $influx_v2_database;
 	/**
 	* @var \Memcached
 	*/
@@ -166,8 +169,9 @@ function memcached_queue_task($args)
 									}
 								}
 								$point = $prefix.'_stats,vps='.(int)$vps.',host='.(int)$server[$prefix.'_id'].' '.implode(',',$point);
-								$influx_database->write($point);
-							} else {
+								$influx_v2_database->write($point);
+							}
+							if ($influx_v1 === true) {
 								$points[] = new \InfluxDB\Point($prefix.'_stats', null, [
 									'vps' => (int)$vps,
 									'host' => (int)$server[$prefix.'_id'],
@@ -197,8 +201,9 @@ function memcached_queue_task($args)
 										}
 									}
 									$point = $prefix.'_stats,vps='.(int)$row[$prefix.'_id'].',host='.(int)$server[$prefix.'_id'].' '.implode(',',$point);
-									$influx_database->write($point);
-								} else {
+									$influx_v2_database->write($point);
+								}
+								if ($influx_v1 === true) {
 									$points[] = new \InfluxDB\Point($prefix.'_stats', null, [
 										'vps' => (int)$row[$prefix.'_id'],
 										'host' => (int)$server[$prefix.'_id'],
@@ -209,8 +214,9 @@ function memcached_queue_task($args)
 					}
 					try {
 						if (INFLUX_V2 === true) {
-							$influx_database->close();
-						} else {
+							$influx_v2_database->close();
+						}
+						if ($influx_v1 === true) {
 							$newPoints = $influx_database->writePoints($points, \InfluxDB\Database::PRECISION_SECONDS);
 						}
 					} catch (\Exception $e) {
@@ -265,8 +271,9 @@ function memcached_queue_task($args)
 								->addField('out', (int)$data['out'])
 								->time(time());*/
 							$point = $influx_table.',vps='.(int)$vps.',host='.(int)$server[$prefix.'_id'].',ip='.$ip.' in='.(int)$data['in'].',out='.(int)$data['out'];
-							$influx_database->write($point);
-						} else {
+							$influx_v2_database->write($point);
+						}
+						if ($influx_v1 === true) {
 							$pointTags = [
 								'vps' => (int)$vps,
 								'host' => (int)$server[$prefix.'_id'],
@@ -282,8 +289,9 @@ function memcached_queue_task($args)
 					}
 					try {
 						if (INFLUX_V2 === true) {
-							$influx_database->close();
-						} else {
+							$influx_v2_database->close();
+						}
+						if ($influx_v1 === true) {
 							$newPoints = $influx_database->writePoints($points, \InfluxDB\Database::PRECISION_SECONDS);
 						}
 					} catch (\Exception $e) {

@@ -4,7 +4,7 @@ use Workerman\Worker;
 
 function bandwidth($args)
 {
-	global $worker_db, $influx_database;
+	global $worker_db, $influx_database, $influx_v1, $influx_v2_database;
 	//Worker::safeEcho("[bandwidth Task] Creating Influx Connection to ".INFLUX_HOST." port ".INFLUX_PORT);
 	//$influx_client = new \InfluxDB\Client(INFLUX_HOST, INFLUX_PORT, INFLUX_USER, INFLUX_PASS, true);
 	//$influx_database = $influx_client->selectDB(INFLUX_DB);
@@ -37,9 +37,10 @@ function bandwidth($args)
 				    ->addField('in', (int)$data['in'])
 				    ->addField('out', (int)$data['out'])
 				    ->time(time());
-				$influx_database->write($point);*/
-				$influx_database->write('bandwidth,vps='.(int)$row['vps_id'].',host='.(int)$args['uid'].',ip='.$ip.' in='.(int)$data['in'].',out='.(int)$data['in']);
-			} else {
+				$influx_v2_database->write($point);*/
+				$influx_v2_database->write('bandwidth,vps='.(int)$row['vps_id'].',host='.(int)$args['uid'].',ip='.$ip.' in='.(int)$data['in'].',out='.(int)$data['in']);
+			}
+			if ($influx_v1 === true) {
 				$points[] = new \InfluxDB\Point('bandwidth', null, [
 					'vps' => (int)$row['vps_id'],
 					'host' => (int)$args['uid'],
@@ -53,8 +54,9 @@ function bandwidth($args)
 	}
 	//Worker::safeEcho("[bandwidth Task] built up points ".json_encode($points).PHP_EOL);
 	if (INFLUX_V2 === true) {
-		$influx_database->close();
-	} else {
+		$influx_v2_database->close();
+	}
+	if ($influx_v1 === true) {
 		$newPoints = $influx_database->writePoints($points, \InfluxDB\Database::PRECISION_SECONDS);
 	}
 	return true;
