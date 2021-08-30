@@ -12,12 +12,11 @@ $task_worker = new Worker('Text://127.0.0.1:2208');		// task worker, using the T
 $task_worker->count = 5; 								// number of task processes can be opened more than needed
 $task_worker->name = 'TaskWorker';
 $task_worker->onWorkerStart = function ($worker) {
-	global $global, $functions, $worker_db, $influx_v1, $influx_client, $influx_database, $influx_v2_client, $influx_v2_database, $memcache;
+	global $global, $functions, $worker_db, $influx_v2_client, $influx_v2_database, $memcache;
 	include_once __DIR__.'/../../../../my/include/config/config.settings.php';
 	$db_config = include __DIR__.'/../../../../my/include/config/config.db.php';
 	$loop = Worker::getEventLoop();
 	$worker_db = new \Workerman\MySQL\Connection($db_config['db_host'], $db_config['db_port'], $db_config['db_user'], $db_config['db_pass'], $db_config['db_name'], 'utf8mb4');
-	$influx_v1 = true;
 	if (INFLUX_V2 === true) {
 		$influx_v2_client = new \InfluxDB2\Client([
 		    'url' => INFLUX_V2_URL,
@@ -28,10 +27,6 @@ $task_worker->onWorkerStart = function ($worker) {
 		    'debug' => false,
 		]);
 		$influx_v2_database = $influx_v2_client->createWriteApi(['writeType' => \InfluxDB2\WriteType::BATCHING, 'batchSize' => 1000]);
-	}
-	if ($influx_v1 === true) {
-		$influx_client = new \InfluxDB\Client(INFLUX_HOST, INFLUX_PORT, INFLUX_USER, INFLUX_PASS, true);
-		$influx_database = $influx_client->selectDB(INFLUX_DB);
 	}
 	$global = new \GlobalData\Client('127.0.0.1:2207');
 	$memcache = new \Memcached();

@@ -16,9 +16,6 @@ function memcached_queue_task($args)
 	/**
 	* @var \InfluxDB\Client
 	*/
-	global $influx_client;
-	global $influx_database;
-	global $influx_v1;
 	global $influx_v2_client;
 	global $influx_v2_database;
 	/**
@@ -171,12 +168,6 @@ function memcached_queue_task($args)
 								$point = $prefix.'_stats,vps='.(int)$vps.',host='.(int)$server[$prefix.'_id'].' '.implode(',',$point);
 								$influx_v2_database->write($point);
 							}
-							if ($influx_v1 === true) {
-								$points[] = new \InfluxDB\Point($prefix.'_stats', null, [
-									'vps' => (int)$vps,
-									'host' => (int)$server[$prefix.'_id'],
-								], $influxValues);
-							}
 						} else {
 							$row = $worker_db->select($prefix.'_id,'.$prefix.'_vzid')
 								->from($table)
@@ -203,21 +194,12 @@ function memcached_queue_task($args)
 									$point = $prefix.'_stats,vps='.(int)$row[$prefix.'_id'].',host='.(int)$server[$prefix.'_id'].' '.implode(',',$point);
 									$influx_v2_database->write($point);
 								}
-								if ($influx_v1 === true) {
-									$points[] = new \InfluxDB\Point($prefix.'_stats', null, [
-										'vps' => (int)$row[$prefix.'_id'],
-										'host' => (int)$server[$prefix.'_id'],
-									], $influxValues);
-								}
 							}
 						}
 					}
 					try {
 						if (INFLUX_V2 === true) {
 							$influx_v2_database->close();
-						}
-						if ($influx_v1 === true) {
-							$newPoints = $influx_database->writePoints($points, \InfluxDB\Database::PRECISION_SECONDS);
 						}
 					} catch (\Exception $e) {
 						Worker::safeEcho('InfluxDB got Exception '.$e->getMessage(). ' while writing bandwidth points to DB'.PHP_EOL);
@@ -273,26 +255,10 @@ function memcached_queue_task($args)
 							$point = $influx_table.',vps='.(int)$vps.',host='.(int)$server[$prefix.'_id'].',ip='.$ip.' in='.(int)$data['in'].',out='.(int)$data['out'];
 							$influx_v2_database->write($point);
 						}
-						if ($influx_v1 === true) {
-							$pointTags = [
-								'vps' => (int)$vps,
-								'host' => (int)$server[$prefix.'_id'],
-								'ip' => $ip
-							];
-							$pointData = [
-								'in' => (int)$data['in'],
-								'out' => (int)$data['out']
-							];
-							//Worker::safeEcho('VEID '.$veid.' ID '.$vps.' Line Tags '.json_encode($pointTags).' Data '.json_encode($pointData).__LINE__.PHP_EOL);
-							$points[] = new \InfluxDB\Point($influx_table, null, $pointTags, $pointData);
-						}
 					}
 					try {
 						if (INFLUX_V2 === true) {
 							$influx_v2_database->close();
-						}
-						if ($influx_v1 === true) {
-							$newPoints = $influx_database->writePoints($points, \InfluxDB\Database::PRECISION_SECONDS);
 						}
 					} catch (\Exception $e) {
 						Worker::safeEcho('InfluxDB got Exception '.$e->getMessage(). ' while writing bandwidth points to DB'.PHP_EOL);
