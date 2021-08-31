@@ -35,7 +35,7 @@ function bandwidth($args)
 				    ->addField('out', (int)$data['out'])
 				    ->time(time());
 				$influx_v2_database->write($point);*/
-				$influx_v2_database->write('bandwidth,vps='.(int)$row['vps_id'].',host='.(int)$args['uid'].',ip='.$ip.' in='.(int)$data['in'].',out='.(int)$data['in']);
+				$influx_v2_database->write('bandwidth,vps='.(int)$row['vps_id'].',host='.(int)$args['uid'].',ip='.$ip.' in='.(int)$data['in'].',out='.(int)$data['out']);
 			}
 		}
 	}
