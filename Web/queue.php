@@ -24,7 +24,7 @@ if (isset($_POST['action']) && $_POST['action'] == 'map') {
 			ip="66.45.228.100";
 		fi;
 		if [ ! -e /etc/xinetd.d/$vps ]; then
-			sh /root/cpaneldirect/vps_kvm_setup_vnc.sh $vps $ip;
+			/root/cpaneldirect/cli/provirted.phar vnc setup $vps $ip;
 		fi;
 	done;
 fi;
