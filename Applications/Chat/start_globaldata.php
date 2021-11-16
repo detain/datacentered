@@ -15,6 +15,7 @@ use Workerman\Worker;
 require_once __DIR__.'/../../vendor/workerman/globaldata/src/Server.php';
 
 $globaldata_server = new GlobalData\Server('127.0.0.1', 2207);
+$globaldata_server->count = 5; // WebServer number of processes
 
 $globaldata_server->onConnect = function ($connection) { // When the client is connected, set the connection onWebSocketConnect, that is, when the websocket handshake callback
 	$connection->maxSendBufferSize = 100*1024*1024; // Set the current connection application layer send buffer size of the connection to 100mb, will override the default value

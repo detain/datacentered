@@ -12,7 +12,7 @@ if (ini_get('default_socket_timeout') < 1200 && ini_get('default_socket_timeout'
 
 $gateway = new Gateway("websocket://0.0.0.0:7271");
 $gateway->name = 'ChatGateway';
-$gateway->count = 4; // Set the number of processes, the number of gateway process recommendations and cpu the same
+$gateway->count = 5; // Set the number of processes, the number of gateway process recommendations and cpu the same
 $gateway->lanIp = '127.0.0.1'; // When distributed deployment set to intranet ip (non 127.0.0.1)
 $gateway->startPort = 2300; // Internal communication start port. If $ gateway-> count = 4, the starting port is 2300. 2300 2301 2302 2303 4 ports are generally used as the internal communication port
 $gateway->pingInterval = 60; // Heartbeat interval

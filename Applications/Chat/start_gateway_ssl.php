@@ -22,7 +22,7 @@ $context = [																						// Certificate is best to apply for a certific
 $gateway_ssl = new Gateway("websocket://0.0.0.0:7272", $context);
 $gateway_ssl->name = 'SslChatGateway';
 $gateway_ssl->transport = 'ssl';
-$gateway_ssl->count = 4; // Set the number of processes, the number of gateway process recommendations and cpu the same
+$gateway_ssl->count = 5; // Set the number of processes, the number of gateway process recommendations and cpu the same
 $gateway_ssl->lanIp = '127.0.0.1'; // When distributed deployment set to intranet ip (non 127.0.0.1)
 $gateway_ssl->startPort = 2400; // Internal communication start port. If $ gateway-> count = 4, the starting port is 2300. 2300 2301 2302 2303 4 ports are generally used as the internal communication port
 $gateway_ssl->pingInterval = 60; // Heartbeat interval
