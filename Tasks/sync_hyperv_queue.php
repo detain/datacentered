@@ -38,17 +38,16 @@ function sync_hyperv_queue($args)
 		}
 		if (sizeof($service_master['newvps']) > 0 || sizeof($service_master['queue']) > 0) {
 			if ($global->cas($var, 0, 1)) {
-				function_requirements('vps_queue_handler');
-				if (sizeof($service_master['newvps']) > 0) {
-					myadmin_log('myadmin', 'info', 'Processing New VPS for '.$service_master['vps_name'], __LINE__, __FILE__, 'vps');
-					vps_queue_handler($service_master, 'get_new_vps', $service_master['newvps']);
-				}
-				if (sizeof($service_master['queue']) > 0) {
-                    myadmin_log('myadmin', 'info', 'Processing VPS Queue for '.$service_master['vps_name'], __LINE__, __FILE__, 'vps');
-					vps_queue_handler($service_master, 'get_queue', $service_master['queue']);
-				}
-				vps_queue_handler($service_master, 'server_list');
-				$global->$var = 0;
+				Worker::safeEcho("timer starting hyperv async queue processing for {$service_master['vps_name']}");
+				$task_connection = new AsyncTcpConnection('Text://127.0.0.1:2208');
+				$task_connection->send(json_encode(['type' => 'async_hyperv_get_list', 'args' => ['id' => $service_id, 'data' => $service_master]]));
+				$task_connection->onMessage = function ($connection, $task_result) use ($task_connection) {
+					//var_dump($task_result);
+					$task_connection->close();
+				};
+				$task_connection->connect();
+			} else {
+				Worker::safeEcho("timer couldnt get lock to start hyperv async queue processing for {$service_master['vps_name']}");
 			}
 		}
 	}
