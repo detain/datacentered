@@ -49,7 +49,7 @@ class Events
 		*/
 		global $memcache;
 		$memcache = new \Memcached();
-		$memcache->addServer('localhost', 11211);		
+		$memcache->addServer('localhost', 11211);
 		GlobalTimer::init('127.0.0.1','3333');
 		$db_config = include __DIR__.'/../../../../my/include/config/config.db.php';
 		$loop = Worker::getEventLoop();
@@ -207,9 +207,9 @@ class Events
 			}
 		}
 	}
-	
+
 	public static function queue_queue_timer() {
-		Worker::safeEcho('Timer running for '.__METHOD__);
+		Worker::safeEcho('Timer running for '.__METHOD__."\n");
 		$task_connection = new AsyncTcpConnection('Text://127.0.0.1:2208');
 		$task_connection->send(json_encode(['type' => 'queue_queue_task', 'args' => []]));
 		$task_connection->onMessage = function ($connection, $task_result) use ($task_connection) {
@@ -217,9 +217,9 @@ class Events
 		};
 		$task_connection->connect();
 	}
-	
+
 	public static function map_queue_timer() {
-		Worker::safeEcho('Timer running for '.__METHOD__);
+		Worker::safeEcho('Timer running for '.__METHOD__."\n");
 		$task_connection = new AsyncTcpConnection('Text://127.0.0.1:2208');
 		$task_connection->send(json_encode(['type' => 'map_queue_task', 'args' => []]));
 		$task_connection->onMessage = function ($connection, $task_result) use ($task_connection) {
@@ -227,9 +227,9 @@ class Events
 		};
 		$task_connection->connect();
 	}
-	
+
 	public static function memcache_queue_timer() {
-		Worker::safeEcho('Timer running for '.__METHOD__);
+		Worker::safeEcho('Timer running for '.__METHOD__."\n");
 		$task_connection = new AsyncTcpConnection('Text://127.0.0.1:2208');
 		$task_connection->send(json_encode(['type' => 'memcached_queue_task', 'args' => []]));
 		$task_connection->onMessage = function ($connection, $task_result) use ($task_connection) {
@@ -324,7 +324,7 @@ class Events
 			'time' => date('Y-m-d H:i:s'),
 		];
 		Gateway::sendToAll(json_encode($new_message));*/
-		Worker::safeEcho("timer starting hyperv update list");
+		Worker::safeEcho("timer starting hyperv update list\n");
 		$task_connection = new AsyncTcpConnection('Text://127.0.0.1:2208');
 		$task_connection->send(json_encode(['type' => 'async_hyperv_get_list', 'args' => []]));
 		$task_connection->onMessage = function ($connection, $task_result) use ($task_connection) {
@@ -346,7 +346,7 @@ class Events
 			'time' => date('Y-m-d H:i:s'),
 		];
 		Gateway::sendToAll(json_encode($new_message));*/
-		Worker::safeEcho("timer starting hyperv queue check");
+		Worker::safeEcho("timer starting hyperv queue check\n");
 		$task_connection = new AsyncTcpConnection('Text://127.0.0.1:2208');
 		$task_connection->send(json_encode(['type' => 'sync_hyperv_queue', 'args' => []]));
 		$task_connection->onMessage = function ($connection, $task_result) use ($task_connection) {
@@ -355,7 +355,7 @@ class Events
 		};
 		$task_connection->connect();
 	}
-	
+
 	/**
 	 * runs a command on a given host.
 	 *
@@ -367,7 +367,7 @@ class Events
 	public static function run_local($client_id, $cmd, $tag) {
 		$process = new Process($client_id, $cmd, $tag);
 		self::$running[] = $run;
-		/*		
+		/*
 		$worker->onMessage = function($connection, $data) {
 			if(ALLOW_CLIENT_INPUT) {
 				fwrite($connection->pipes[0], $data);
@@ -388,8 +388,8 @@ class Events
 			}
 		};
 		*/
-		
-				
+
+
 	}
 
 	/**
