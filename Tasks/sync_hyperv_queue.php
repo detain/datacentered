@@ -38,7 +38,6 @@ function sync_hyperv_queue($args)
 			$global->$var = 0;
 		}
 		if (sizeof($service_master['newvps']) > 0 || sizeof($service_master['queue']) > 0) {
-			Worker::safeEcho("timer calling hyperv async handler for {$service_master['vps_name']}\n");
 			$task_connection = new AsyncTcpConnection('Text://127.0.0.1:2208');
 			$task_connection->send(json_encode(['type' => 'async_hyperv_queue_runner', 'args' => ['id' => $service_id, 'data' => $service_master]]));
 			$task_connection->onMessage = function ($connection, $task_result) use ($task_connection) {
