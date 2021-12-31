@@ -76,18 +76,18 @@
             "source": {
                 "type": "git",
                 "url": "https://github.com/php-cache/hierarchical-cache.git",
-                "reference": "ba3746c65461b17154fb855068403670fd7fa2d3"
+                "reference": "2c04e3d25b40d27bff549b94bc651f6ef31e9c70"
             },
             "dist": {
                 "type": "zip",
-                "url": "https://api.github.com/repos/php-cache/hierarchical-cache/zipball/ba3746c65461b17154fb855068403670fd7fa2d3",
-                "reference": "ba3746c65461b17154fb855068403670fd7fa2d3",
+                "url": "https://api.github.com/repos/php-cache/hierarchical-cache/zipball/2c04e3d25b40d27bff549b94bc651f6ef31e9c70",
+                "reference": "2c04e3d25b40d27bff549b94bc651f6ef31e9c70",
                 "shasum": ""
             },
             "require": {
                 "cache/adapter-common": "^1.0",
                 "php": "^5.6 || ^7.0 || ^8.0",
-                "psr/cache": "^1.0"
+                "psr/cache": "^1.0 || ^2.0"
             },
             "require-dev": {
                 "phpunit/phpunit": "^5.7.21"
@@ -132,9 +132,9 @@
                 "psr-6"
             ],
             "support": {
-                "source": "https://github.com/php-cache/hierarchical-cache/tree/1.1.0"
+                "source": "https://github.com/php-cache/hierarchical-cache/tree/master"
             },
-            "time": "2020-12-14T12:17:39+00:00"
+            "time": "2021-12-31T11:34:24+00:00"
         },
         {
             "name": "cache/memcached-adapter",
@@ -142,19 +142,19 @@
             "source": {
                 "type": "git",
                 "url": "https://github.com/php-cache/memcached-adapter.git",
-                "reference": "3e2105684bc2813646c2f44ce9c403020ff2145f"
+                "reference": "ac51aa543ae518e8e6e8e9f226e9993d574aca59"
             },
             "dist": {
                 "type": "zip",
-                "url": "https://api.github.com/repos/php-cache/memcached-adapter/zipball/3e2105684bc2813646c2f44ce9c403020ff2145f",
-                "reference": "3e2105684bc2813646c2f44ce9c403020ff2145f",
+                "url": "https://api.github.com/repos/php-cache/memcached-adapter/zipball/ac51aa543ae518e8e6e8e9f226e9993d574aca59",
+                "reference": "ac51aa543ae518e8e6e8e9f226e9993d574aca59",
                 "shasum": ""
             },
             "require": {
                 "cache/adapter-common": "^1.0",
                 "cache/hierarchical-cache": "^1.0",
                 "php": "^5.6 || ^7.0 || ^8.0",
-                "psr/cache": "^1.0",
+                "psr/cache": "^1.0 || ^2.0",
                 "psr/simple-cache": "^1.0"
             },
             "provide": {
@@ -208,9 +208,9 @@
                 "tag"
             ],
             "support": {
-                "source": "https://github.com/php-cache/memcached-adapter/tree/1.1.0"
+                "source": "https://github.com/php-cache/memcached-adapter/tree/master"
             },
-            "time": "2020-12-14T12:17:39+00:00"
+            "time": "2021-12-31T11:34:24+00:00"
         },
         {
             "name": "cache/tag-interop",
@@ -218,17 +218,17 @@
             "source": {
                 "type": "git",
                 "url": "https://github.com/php-cache/tag-interop.git",
-                "reference": "dcf84ad3a590248a9c4d2ee5b1d99d87956800e7"
+                "reference": "b062b1d735357da50edf8387f7a8696f3027d328"
             },
             "dist": {
                 "type": "zip",
-                "url": "https://api.github.com/repos/php-cache/tag-interop/zipball/dcf84ad3a590248a9c4d2ee5b1d99d87956800e7",
-                "reference": "dcf84ad3a590248a9c4d2ee5b1d99d87956800e7",
+                "url": "https://api.github.com/repos/php-cache/tag-interop/zipball/b062b1d735357da50edf8387f7a8696f3027d328",
+                "reference": "b062b1d735357da50edf8387f7a8696f3027d328",
                 "shasum": ""
             },
             "require": {
                 "php": "^5.5 || ^7.0 || ^8.0",
-                "psr/cache": "^1.0"
+                "psr/cache": "^1.0 || ^2.0"
             },
             "default-branch": true,
             "type": "library",
@@ -268,9 +268,9 @@
             ],
             "support": {
                 "issues": "https://github.com/php-cache/tag-interop/issues",
-                "source": "https://github.com/php-cache/tag-interop/tree/master"
+                "source": "https://github.com/php-cache/tag-interop/tree/1.1.0"
             },
-            "time": "2020-12-07T16:06:48+00:00"
+            "time": "2021-12-31T10:03:23+00:00"
         },
         {
             "name": "clue/soap-react",
@@ -2982,7 +2982,7 @@
             "description": "Finds files and directories via an intuitive fluent interface",
             "homepage": "https://symfony.com",
             "support": {
-                "source": "https://github.com/symfony/finder/tree/5.4"
+                "source": "https://github.com/symfony/finder/tree/v5.4.2"
             },
             "funding": [
                 {
@@ -3507,12 +3507,12 @@
             "source": {
                 "type": "git",
                 "url": "https://github.com/twigphp/Twig.git",
-                "reference": "3284859a1b160833e8afc2a40d04c33b94191e41"
+                "reference": "8b989ebc8a4274eb6952099a8859a93c3d111bef"
             },
             "dist": {
                 "type": "zip",
-                "url": "https://api.github.com/repos/twigphp/Twig/zipball/3284859a1b160833e8afc2a40d04c33b94191e41",
-                "reference": "3284859a1b160833e8afc2a40d04c33b94191e41",
+                "url": "https://api.github.com/repos/twigphp/Twig/zipball/8b989ebc8a4274eb6952099a8859a93c3d111bef",
+                "reference": "8b989ebc8a4274eb6952099a8859a93c3d111bef",
                 "shasum": ""
             },
             "require": {
@@ -3578,7 +3578,7 @@
                     "type": "tidelift"
                 }
             ],
-            "time": "2021-12-17T16:44:00+00:00"
+            "time": "2021-12-26T17:56:12+00:00"
         },
         {
             "name": "universal/universal",
@@ -3636,12 +3636,12 @@
             "source": {
                 "type": "git",
                 "url": "https://github.com/walkor/channel.git",
-                "reference": "3df772d0d20d4cebfcfd621c33d1a1ab732db523"
+                "reference": "07e08038ce6ade8de82e69cedfd89a5a255ffbbc"
             },
             "dist": {
                 "type": "zip",
-                "url": "https://api.github.com/repos/walkor/channel/zipball/3df772d0d20d4cebfcfd621c33d1a1ab732db523",
-                "reference": "3df772d0d20d4cebfcfd621c33d1a1ab732db523",
+                "url": "https://api.github.com/repos/walkor/channel/zipball/07e08038ce6ade8de82e69cedfd89a5a255ffbbc",
+                "reference": "07e08038ce6ade8de82e69cedfd89a5a255ffbbc",
                 "shasum": ""
             },
             "require": {
@@ -3661,9 +3661,9 @@
             "homepage": "http://www.workerman.net",
             "support": {
                 "issues": "https://github.com/walkor/channel/issues",
-                "source": "https://github.com/walkor/channel/tree/v1.1.0"
+                "source": "https://github.com/walkor/channel/tree/master"
             },
-            "time": "2021-02-08T02:45:42+00:00"
+            "time": "2021-12-29T08:34:47+00:00"
         },
         {
             "name": "workerman/gateway-worker",
@@ -3671,12 +3671,12 @@
             "source": {
                 "type": "git",
                 "url": "https://github.com/walkor/GatewayWorker.git",
-                "reference": "c2b6c1054d5dd5539430be39852b7af6fd77dd15"
+                "reference": "a615036c482d11f68b693998575e804752ef9068"
             },
             "dist": {
                 "type": "zip",
-                "url": "https://api.github.com/repos/walkor/GatewayWorker/zipball/c2b6c1054d5dd5539430be39852b7af6fd77dd15",
-                "reference": "c2b6c1054d5dd5539430be39852b7af6fd77dd15",
+                "url": "https://api.github.com/repos/walkor/GatewayWorker/zipball/a615036c482d11f68b693998575e804752ef9068",
+                "reference": "a615036c482d11f68b693998575e804752ef9068",
                 "shasum": ""
             },
             "require": {
@@ -3700,7 +3700,7 @@
             ],
             "support": {
                 "issues": "https://github.com/walkor/GatewayWorker/issues",
-                "source": "https://github.com/walkor/GatewayWorker/tree/master"
+                "source": "https://github.com/walkor/GatewayWorker/tree/v3.0.22"
             },
             "funding": [
                 {
@@ -3712,7 +3712,7 @@
                     "type": "patreon"
                 }
             ],
-            "time": "2021-12-22T12:02:52+00:00"
+            "time": "2021-12-23T13:13:09+00:00"
         },
         {
             "name": "workerman/gatewayclient",
@@ -3850,12 +3850,12 @@
             "source": {
                 "type": "git",
                 "url": "https://github.com/walkor/workerman.git",
-                "reference": "a68c3cf9f871f54e09cbadad26e60fea368997fc"
+                "reference": "50d0d403ba1658d2efbb738d9cfa5975cd9c42fa"
             },
             "dist": {
                 "type": "zip",
-                "url": "https://api.github.com/repos/walkor/workerman/zipball/a68c3cf9f871f54e09cbadad26e60fea368997fc",
-                "reference": "a68c3cf9f871f54e09cbadad26e60fea368997fc",
+                "url": "https://api.github.com/repos/walkor/workerman/zipball/50d0d403ba1658d2efbb738d9cfa5975cd9c42fa",
+                "reference": "50d0d403ba1658d2efbb738d9cfa5975cd9c42fa",
                 "shasum": ""
             },
             "require": {
@@ -3906,7 +3906,7 @@
                     "type": "patreon"
                 }
             ],
-            "time": "2021-12-23T06:54:04+00:00"
+            "time": "2021-12-31T02:01:03+00:00"
         }
     ],
     "packages-dev": [
@@ -4819,12 +4819,12 @@
             "source": {
                 "type": "git",
                 "url": "https://github.com/phpDocumentor/ReflectionDocBlock.git",
-                "reference": "fd033934972daf855e062f1bf38abd3e79dd08ed"
+                "reference": "21481a5c97e8332f7279e31219c32faa2da21c79"
             },
             "dist": {
                 "type": "zip",
-                "url": "https://api.github.com/repos/phpDocumentor/ReflectionDocBlock/zipball/fd033934972daf855e062f1bf38abd3e79dd08ed",
-                "reference": "fd033934972daf855e062f1bf38abd3e79dd08ed",
+                "url": "https://api.github.com/repos/phpDocumentor/ReflectionDocBlock/zipball/21481a5c97e8332f7279e31219c32faa2da21c79",
+                "reference": "21481a5c97e8332f7279e31219c32faa2da21c79",
                 "shasum": ""
             },
             "require": {
@@ -4869,7 +4869,7 @@
                 "issues": "https://github.com/phpDocumentor/ReflectionDocBlock/issues",
                 "source": "https://github.com/phpDocumentor/ReflectionDocBlock/tree/master"
             },
-            "time": "2021-12-21T15:04:07+00:00"
+            "time": "2021-12-27T22:36:43+00:00"
         },
         {
             "name": "phpdocumentor/type-resolver",
@@ -4877,12 +4877,12 @@
             "source": {
                 "type": "git",
                 "url": "https://github.com/phpDocumentor/TypeResolver.git",
-                "reference": "f8ec4ab631de5a97769e66b13418c3b8b24e81f4"
+                "reference": "94891c5b34aca4d60f6a110b0538df52f61384f5"
             },
             "dist": {
                 "type": "zip",
-                "url": "https://api.github.com/repos/phpDocumentor/TypeResolver/zipball/f8ec4ab631de5a97769e66b13418c3b8b24e81f4",
-                "reference": "f8ec4ab631de5a97769e66b13418c3b8b24e81f4",
+                "url": "https://api.github.com/repos/phpDocumentor/TypeResolver/zipball/94891c5b34aca4d60f6a110b0538df52f61384f5",
+                "reference": "94891c5b34aca4d60f6a110b0538df52f61384f5",
                 "shasum": ""
             },
             "require": {
@@ -4920,7 +4920,7 @@
                 "issues": "https://github.com/phpDocumentor/TypeResolver/issues",
                 "source": "https://github.com/phpDocumentor/TypeResolver/tree/1.x"
             },
-            "time": "2021-11-24T08:29:39+00:00"
+            "time": "2021-12-28T08:51:16+00:00"
         },
         {
             "name": "phpoption/phpoption",
@@ -5068,12 +5068,12 @@
             "source": {
                 "type": "git",
                 "url": "https://github.com/sebastianbergmann/php-code-coverage.git",
-                "reference": "e0c5a565a1a1f71c83f3daf228e5a25f6670299a"
+                "reference": "746c4b88e16df67b459a82894d29e490b39c4a2c"
             },
             "dist": {
                 "type": "zip",
-                "url": "https://api.github.com/repos/sebastianbergmann/php-code-coverage/zipball/e0c5a565a1a1f71c83f3daf228e5a25f6670299a",
-                "reference": "e0c5a565a1a1f71c83f3daf228e5a25f6670299a",
+                "url": "https://api.github.com/repos/sebastianbergmann/php-code-coverage/zipball/746c4b88e16df67b459a82894d29e490b39c4a2c",
+                "reference": "746c4b88e16df67b459a82894d29e490b39c4a2c",
                 "shasum": ""
             },
             "require": {
@@ -5137,7 +5137,7 @@
                     "type": "github"
                 }
             ],
-            "time": "2021-12-22T13:14:58+00:00"
+            "time": "2021-12-26T08:30:51+00:00"
         },
         {
             "name": "phpunit/php-file-iterator",
@@ -5386,12 +5386,12 @@
             "source": {
                 "type": "git",
                 "url": "https://github.com/sebastianbergmann/phpunit.git",
-                "reference": "d01222296466de73d8802f912526a44c23a033ca"
+                "reference": "9f0695e7665b6d06302d98062d6d234fe676791d"
             },
             "dist": {
                 "type": "zip",
-                "url": "https://api.github.com/repos/sebastianbergmann/phpunit/zipball/d01222296466de73d8802f912526a44c23a033ca",
-                "reference": "d01222296466de73d8802f912526a44c23a033ca",
+                "url": "https://api.github.com/repos/sebastianbergmann/phpunit/zipball/9f0695e7665b6d06302d98062d6d234fe676791d",
+                "reference": "9f0695e7665b6d06302d98062d6d234fe676791d",
                 "shasum": ""
             },
             "require": {
@@ -5481,7 +5481,7 @@
                     "type": "github"
                 }
             ],
-            "time": "2021-12-22T13:15:34+00:00"
+            "time": "2021-12-26T08:30:22+00:00"
         },
         {
             "name": "satooshi/php-coveralls",
@@ -6394,7 +6394,6 @@
             "description": "Provides a list of PHP built-in functions that operate on resources",
             "homepage": "https://www.github.com/sebastianbergmann/resource-operations",
             "support": {
-                "issues": "https://github.com/sebastianbergmann/resource-operations/issues",
                 "source": "https://github.com/sebastianbergmann/resource-operations/tree/3.0.3"
             },
             "funding": [
@@ -7076,12 +7075,12 @@
             "source": {
                 "type": "git",
                 "url": "https://github.com/symfony/process.git",
-                "reference": "bf0e245dd8f115502d11df04cdb91c49abbc83ec"
+                "reference": "2b3ba8722c4aaf3e88011be5e7f48710088fb5e4"
             },
             "dist": {
                 "type": "zip",
-                "url": "https://api.github.com/repos/symfony/process/zipball/bf0e245dd8f115502d11df04cdb91c49abbc83ec",
-                "reference": "bf0e245dd8f115502d11df04cdb91c49abbc83ec",
+                "url": "https://api.github.com/repos/symfony/process/zipball/2b3ba8722c4aaf3e88011be5e7f48710088fb5e4",
+                "reference": "2b3ba8722c4aaf3e88011be5e7f48710088fb5e4",
                 "shasum": ""
             },
             "require": {
@@ -7115,7 +7114,7 @@
             "description": "Executes commands in sub-processes",
             "homepage": "https://symfony.com",
             "support": {
-                "source": "https://github.com/symfony/process/tree/5.4"
+                "source": "https://github.com/symfony/process/tree/v5.4.2"
             },
             "funding": [
                 {
@@ -7131,7 +7130,7 @@
                     "type": "tidelift"
                 }
             ],
-            "time": "2021-12-11T16:33:38+00:00"
+            "time": "2021-12-27T21:01:00+00:00"
         },
         {
             "name": "symfony/service-contracts",

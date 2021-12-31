@@ -304,6 +304,7 @@ function memcached_queue_task($args)
 							->bindValues($values)
 							->query();
 					} catch (\PDOException $e) {
+						Worker::safeEcho('Cought PDO Excetion #'.$e->getCode().':'.$e->getMessage().PHP_EOL);
 						if ($e->getCode() == 3101) {
 							$worker_db->update($prefix.'_masters')
 								->cols($cols)
