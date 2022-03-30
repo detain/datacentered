@@ -1,7 +1,7 @@
 <?php
 
 use Workerman\Worker;
-use Workerman\Lib\Timer;
+use Workerman\Timer;
 use Workerman\Connection\AsyncTcpConnection;
 
 /**
@@ -12,5 +12,5 @@ class ChannelClient extends \Channel\Client
 {
 	public static function getStatus() {
 		return self::$_events;
-	}	
+	}
 }

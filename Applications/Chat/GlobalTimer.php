@@ -12,7 +12,7 @@
  * @license   http://www.opensource.org/licenses/mit-license.php MIT License
  */
 
-use Workerman\Lib\Timer;
+use Workerman\Timer;
 
 require_once __DIR__.'/ChannelClient.php';
 
@@ -25,8 +25,8 @@ class GlobalTimer
 	/**
 	 * @var string
 	 */
-	protected static $_uniqueId = '';
-	
+	protected static $_uniqueId = 'GlobalTimer';
+
 	public static function getStatus() {
 		return static::$_uniqueId;
 	}

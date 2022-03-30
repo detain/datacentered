@@ -14,7 +14,7 @@ use Workerman\Worker;
 use GatewayWorker\Lib\Gateway;
 use Workerman\Connection\AsyncTcpConnection;
 use Workerman\Connection\TcpConnection;
-use Workerman\Lib\Timer;
+use Workerman\Timer;
 //use Workerman\GlobalTimer;
 
 require_once __DIR__.'/Process.php';
@@ -70,12 +70,12 @@ class Events
 		if ($worker->id == 0 ) {
 			$args = [];
 			/*
-			Workerman\Lib\Timer::add(3600, ['Events', 'hyperv_update_list_timer'], $args);
-			Workerman\Lib\Timer::add(30, ['Events', 'hyperv_queue_timer'], $args);
-			Workerman\Lib\Timer::add(30, ['Events', 'vps_queue_timer'], $args);
-			Workerman\Lib\Timer::add(30, ['Events', 'memcache_queue_timer'], $args);
-			Workerman\Lib\Timer::add(60, ['Events', 'map_queue_timer'], $args);
-			//Workerman\Lib\Timer::add(60, ['Events', 'queue_queue_timer'], $args);
+			Workerman\Timer::add(3600, ['Events', 'hyperv_update_list_timer'], $args);
+			Workerman\Timer::add(30, ['Events', 'hyperv_queue_timer'], $args);
+			Workerman\Timer::add(30, ['Events', 'vps_queue_timer'], $args);
+			Workerman\Timer::add(30, ['Events', 'memcache_queue_timer'], $args);
+			Workerman\Timer::add(60, ['Events', 'map_queue_timer'], $args);
+			//Workerman\Timer::add(60, ['Events', 'queue_queue_timer'], $args);
 			*/
 			$timers = [];
 			$timers[] = GlobalTimer::add(3600, ['Events', 'hyperv_update_list_timer'], $args);
