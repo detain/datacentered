@@ -4,7 +4,7 @@ use Workerman\Worker;
 
 function memcached_queue_task($args)
 {
-	//require_once __DIR__.'/../../../my/include/functions.inc.php';
+	//require_once '/home/my/include/functions.inc.php';
 	/**
 	* @var \GlobalData\Client
 	*/
@@ -153,9 +153,9 @@ function memcached_queue_task($args)
 							$vps = $serverVps[$veid];
 							if (INFLUX_V2 === true) {
 								/*$point = \InfluxDB2\Point::measurement($prefix.'_stats')
-								    ->addTag('vps', (int)$vps)
-								    ->addTag('host', (int)$server[$prefix.'_id'])
-								    ->time(time());*/
+									->addTag('vps', (int)$vps)
+									->addTag('host', (int)$server[$prefix.'_id'])
+									->time(time());*/
 								$point = [];
 								foreach ($influxValues as $key => $value) {
 									//$point->addField($key, $value);
@@ -179,9 +179,9 @@ function memcached_queue_task($args)
 								$memcache->set($module.'_vps'.$server[$prefix.'_id'], $serverVps, 3600);
 								if (INFLUX_V2 === true) {
 									/*$point = \InfluxDB2\Point::measurement($prefix.'_stats')
-									    ->addTag('vps', (int)$row[$prefix.'_id'])
-									    ->addTag('host', (int)$server[$prefix.'_id'])
-									    ->time(time());*/
+										->addTag('vps', (int)$row[$prefix.'_id'])
+										->addTag('host', (int)$server[$prefix.'_id'])
+										->time(time());*/
 									$point = [];
 									foreach ($influxValues as $key => $value) {
 										//$point->addField($key, $value);
@@ -224,6 +224,7 @@ function memcached_queue_task($args)
 					if ($serverVps === false) {
 						$serverVps = [];
 					}
+					$errors = [];
 					foreach ($bandwidth as $ip => $data) {
 						if ($ip == '')
 							continue;
@@ -237,7 +238,7 @@ function memcached_queue_task($args)
 								->bindValues(['server' => $server[$prefix.'_id'], 'hostname' => $veid, 'veid' => $veid, 'idFromVeid' => $idFromVeid])
 								->row();
 							if ($row === false) {
-								Worker::safeEcho('Bandwidth Data with no matching IP '.$ip.'. Server '.$server[$prefix.'_id'].' VEID '.$veid.' IdFromVeid '.$idFromVeid.PHP_EOL);
+								$errors[] = $ip.'. Server '.$server[$prefix.'_id'].' VEID '.$veid.' IdFromVeid '.$idFromVeid;
 								continue;
 							}
 							$serverVps[$veid] = $row[$prefix.'_id'];
@@ -256,6 +257,8 @@ function memcached_queue_task($args)
 							$influx_v2_database->write($point);
 						}
 					}
+					if (count($errors) > 0)
+						Worker::safeEcho('Bandwidth Data with no matching IP: '.implode(', ', $errors).PHP_EOL);
 					try {
 						if (INFLUX_V2 === true) {
 							$influx_v2_database->close();

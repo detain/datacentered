@@ -5,7 +5,7 @@ use Workerman\Connection\AsyncTcpConnection;
 
 function sync_hyperv_queue($args)
 {
-	require_once __DIR__.'/../../../my/include/functions.inc.php';
+	require_once '/home/my/include/functions.inc.php';
 	/**
 	* @var \GlobalData\Client
 	*/

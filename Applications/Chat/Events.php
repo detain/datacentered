@@ -51,7 +51,7 @@ class Events
 		$memcache = new \Memcached();
 		$memcache->addServer('localhost', 11211);
 		GlobalTimer::init('127.0.0.1','3333');
-		$db_config = include __DIR__.'/../../../../my/include/config/config.db.php';
+		$db_config = include '/home/my/include/config/config.db.php';
 		$loop = Worker::getEventLoop();
 		self::$db = new \Workerman\MySQL\Connection($db_config['db_host'], $db_config['db_port'], $db_config['db_user'], $db_config['db_pass'], $db_config['db_name'], 'utf8mb4');
 		if ($global->add('running', [])) {
@@ -72,7 +72,7 @@ class Events
 			$timers = [];
 			$timers['hyperv_update_list_timer'] = GlobalTimer::add(3600, ['Events', 'hyperv_update_list_timer'], $args);
 			$timers['hyperv_queue_timer'] = GlobalTimer::add(30, ['Events', 'hyperv_queue_timer'], $args);
-			//$timers['processing_queue_timer'] = GlobalTimer::add(30, ['Events', 'processing_queue_timer'], $args);
+			$timers['processing_queue_timer'] = GlobalTimer::add(30, ['Events', 'processing_queue_timer'], $args);
 			$timers['vps_queue_queue_timer'] = GlobalTimer::add(30, ['Events', 'vps_queue_timer'], $args);
 			$timers['memcache_queue_timer'] = GlobalTimer::add(30, ['Events', 'memcache_queue_timer'], $args);
 			$timers['map_queue_timer'] = GlobalTimer::add(60, ['Events', 'map_queue_timer'], $args);
@@ -250,20 +250,24 @@ class Events
 				/**
 				 * @var \React\MySQL\Connection
 				 */
-				$results = self::$db->select('*')->from('queue_log')->where('history_section="payment_processing" and history_new_value="pending"')->query();
+				Worker::safeEcho("querying payment processing\n");
+				$results = self::$db->select('*')->from('queue_log')->where('history_section="process_payment" and history_new_value="pending"')->query();
+				Worker::safeEcho("Got Results ".json_encode($results,true)."\n");
 				if (is_array($results) && sizeof($results) > 0) {
 					$queues = [];
 					foreach ($results as $result) {
+						Worker::safeEcho("payment processing about to spawn task for ".json_encode($result,true)."\n");
 						$task_connection = new AsyncTcpConnection('Text://127.0.0.1:2208');
-						$task_connection->send(json_encode(['type' => 'processing_queue_task', 'args' => [
-							'id' => $result['history_type'],
-						]]));
+						$task_connection->send(json_encode(['type' => 'processing_queue_task', 'args' => $result]));
 						$task_connection->onMessage = function ($connection, $task_result) use ($task_connection) {
+							Worker::safeEcho("finished payment processing task\n");
 							$task_connection->close();
 						};
 						$task_connection->connect();
 					}
+					$found = false;
 				} else {
+					Worker::safeEcho("no pending payments found\n");
 					$found = false;
 				}
 			}

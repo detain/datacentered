@@ -4,7 +4,7 @@ use Workerman\Worker;
 
 function async_hyperv_queue_runner($args)
 {
-	require_once __DIR__.'/../../../my/include/functions.inc.php';
+	require_once '/home/my/include/functions.inc.php';
 	/**
 	* @var \GlobalData\Client
 	*/

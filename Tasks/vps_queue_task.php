@@ -4,7 +4,7 @@ use Workerman\Worker;
 
 function vps_queue_task($args)
 {
-	require_once __DIR__.'/../../../my/include/functions.inc.php';
+	require_once '/home/my/include/functions.inc.php';
 	/**
 	* @var \GlobalData\Client
 	*/
@@ -45,7 +45,7 @@ function vps_queue_task($args)
 					$output .= vps_queue_handler($service_master, 'get_new_vps', $service_master['newvps']);
 				}
 				if (sizeof($service_master['queue']) > 0) {
-                    myadmin_log('myadmin', 'info', 'Processing VPS Queue for '.$service_master['vps_name'], __LINE__, __FILE__, 'vps');
+					myadmin_log('myadmin', 'info', 'Processing VPS Queue for '.$service_master['vps_name'], __LINE__, __FILE__, 'vps');
 					$output .= vps_queue_handler($service_master, 'get_queue', $service_master['queue']);
 				}
 				$output .= vps_queue_handler($service_master, 'server_list');

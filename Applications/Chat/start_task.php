@@ -13,18 +13,19 @@ $task_worker->count = 10; 								// number of task processes can be opened more
 $task_worker->name = 'TaskWorker';
 $task_worker->onWorkerStart = function ($worker) {
 	global $global, $functions, $worker_db, $influx_v2_client, $influx_v2_database, $memcache;
-	include_once __DIR__.'/../../../../my/include/config/config.settings.php';
-	$db_config = include __DIR__.'/../../../../my/include/config/config.db.php';
+	require_once '/home/my/include/functions.inc.php';
+	include_once '/home/my/include/config/config.settings.php';
+	$db_config = include '/home/my/include/config/config.db.php';
 	$loop = Worker::getEventLoop();
 	$worker_db = new \Workerman\MySQL\Connection($db_config['db_host'], $db_config['db_port'], $db_config['db_user'], $db_config['db_pass'], $db_config['db_name'], 'utf8mb4');
 	if (INFLUX_V2 === true) {
 		$influx_v2_client = new \InfluxDB2\Client([
-		    'url' => INFLUX_V2_URL,
-		    'token' => INFLUX_V2_TOKEN,
-		    'bucket' => INFLUX_V2_BUCKET,
-		    'org' => INFLUX_V2_ORG,
-		    'precision' => \InfluxDB2\Model\WritePrecision::S,
-		    'debug' => false,
+			'url' => INFLUX_V2_URL,
+			'token' => INFLUX_V2_TOKEN,
+			'bucket' => INFLUX_V2_BUCKET,
+			'org' => INFLUX_V2_ORG,
+			'precision' => \InfluxDB2\Model\WritePrecision::S,
+			'debug' => false,
 		]);
 		$influx_v2_database = $influx_v2_client->createWriteApi(['writeType' => \InfluxDB2\WriteType::BATCHING, 'batchSize' => 1000]);
 	}
