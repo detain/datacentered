@@ -25,7 +25,7 @@ class GlobalTimer
 	/**
 	 * @var string
 	 */
-	protected static $_uniqueId = 'GlobalTimer';
+	protected static $_uniqueId = '';
 
 	public static function getStatus() {
 		return static::$_uniqueId;

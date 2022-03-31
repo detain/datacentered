@@ -239,6 +239,47 @@ class Events
 	}
 
 	/**
+	 * timer function to check for payment processing queue items
+	 *
+	 */
+	public static function processing_queue_timer()
+	{
+		/**
+		 * @var \GlobalData\Client
+		 */
+		global $global;
+		$var = 'processsing_queue';
+		if (!isset($global->$var))
+			$global->$var = 0;
+		if ($global->cas($var, 0, 1)) {
+			$found = true;
+			while ($found === true) {
+				/**
+				 * @var \React\MySQL\Connection
+				 */
+				$results = self::$db->select('*')->from('queue_log')->where('history_section="payment_processing" and history_new_value="pending"')->query();
+				if (is_array($results) && sizeof($results) > 0) {
+					$queues = [];
+					foreach ($results as $result) {
+						$task_connection = new AsyncTcpConnection('Text://127.0.0.1:2208');
+						$task_connection->send(json_encode(['type' => 'processing_queue_task', 'args' => [
+							'id' => $result['history_type'],
+						]]));
+						$task_connection->onMessage = function ($connection, $task_result) use ($task_connection) {
+							$task_connection->close();
+						};
+						$task_connection->connect();
+					}
+				} else {
+					$found = false;
+				}
+			}
+			$global->$var = 0;
+		}
+	}
+
+
+	/**
 	 * timer function to check for vps queue items
 	 *
 	 */
