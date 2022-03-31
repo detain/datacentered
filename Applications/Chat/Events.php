@@ -15,12 +15,11 @@ use GatewayWorker\Lib\Gateway;
 use Workerman\Connection\AsyncTcpConnection;
 use Workerman\Connection\TcpConnection;
 use Workerman\Timer;
-//use Workerman\GlobalTimer;
+use Workerman\GlobalTimer;
 
 require_once __DIR__.'/Process.php';
-require_once __DIR__.'/ChannelClient.php';
-//require_once __DIR__.'/../../vendor/workerman/global-timer/src/GlobalTimer.php';
-require_once __DIR__.'/GlobalTimer.php';
+require_once __DIR__.'/../../vendor/workerman/global-timer/src/GlobalTimer.php';
+//require_once __DIR__.'/GlobalTimer.php';
 require_once __DIR__.'/stdObject.php';
 
 class Events
@@ -43,7 +42,7 @@ class Events
 		 * @var \GlobalData\Client
 		 */
 		global $global;
-		$global = new GlobalData\Client('127.0.0.1:2207');     // initialize the GlobalData client
+		$global = new \GlobalData\Client('127.0.0.1:2207');     // initialize the GlobalData client
 		/**
 		* @var \Memcached
 		*/
@@ -78,6 +77,7 @@ class Events
 			$timers['map_queue_timer'] = GlobalTimer::add(60, ['Events', 'map_queue_timer'], $args);
 			//$timers[] = GlobalTimer::add(60, ['Events', 'queue_queue_timer'], $args);
 			//$timer_id = GlobalTimer::add(1, function() use (&$timer_id, $timers) { echo "worker[0] tick timer_id:$timer_id:'".print_r($timers,true)."\n"; });
+			$global->timers = $timers;
 		}
 	}
 
@@ -247,27 +247,27 @@ class Events
 		if ($global->cas($var, 0, 1)) {
 			$found = true;
 			while ($found === true) {
+				Worker::safeEcho("querying payment processing\n");
 				/**
 				 * @var \React\MySQL\Connection
 				 */
-				Worker::safeEcho("querying payment processing\n");
 				$results = self::$db->select('*')->from('queue_log')->where('history_section="process_payment" and history_new_value="pending"')->query();
-				Worker::safeEcho("Got Results ".json_encode($results,true)."\n");
+				//Worker::safeEcho("Got Results ".json_encode($results,true)."\n");
 				if (is_array($results) && sizeof($results) > 0) {
 					$queues = [];
 					foreach ($results as $result) {
-						Worker::safeEcho("payment processing about to spawn task for ".json_encode($result,true)."\n");
+						//Worker::safeEcho("payment processing about to spawn task for ".json_encode($result,true)."\n");
 						$task_connection = new AsyncTcpConnection('Text://127.0.0.1:2208');
 						$task_connection->send(json_encode(['type' => 'processing_queue_task', 'args' => $result]));
 						$task_connection->onMessage = function ($connection, $task_result) use ($task_connection) {
-							Worker::safeEcho("finished payment processing task\n");
+							//Worker::safeEcho("finished payment processing task\n");
 							$task_connection->close();
 						};
 						$task_connection->connect();
 					}
-					$found = false;
+					//$found = false;
 				} else {
-					Worker::safeEcho("no pending payments found\n");
+					//Worker::safeEcho("no pending payments found\n");
 					$found = false;
 				}
 			}
@@ -722,8 +722,8 @@ class Events
 		if ($_SESSION['login'] == true && $_SESSION['ima'] == 'admin') {
 			$message_data = [
 				'type' => 'timers',
-				'channel' => ChannelClient::getStatus(),
-				'status' => GlobalTimer::getStatus(),
+				//'channel' => ChannelClient::getStatus(),
+				//'status' => GlobalTimer::getStatus(),
 			];
 			Gateway::sendToCurrentClient(json_encode($message_data));
 			/*
