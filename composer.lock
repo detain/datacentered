@@ -3742,12 +3742,12 @@
             "source": {
                 "type": "git",
                 "url": "https://github.com/walkor/channel.git",
-                "reference": "07e08038ce6ade8de82e69cedfd89a5a255ffbbc"
+                "reference": "0d2b6478f7fd1b18aa92096254184fd5d87f8ba4"
             },
             "dist": {
                 "type": "zip",
-                "url": "https://api.github.com/repos/walkor/channel/zipball/07e08038ce6ade8de82e69cedfd89a5a255ffbbc",
-                "reference": "07e08038ce6ade8de82e69cedfd89a5a255ffbbc",
+                "url": "https://api.github.com/repos/walkor/channel/zipball/0d2b6478f7fd1b18aa92096254184fd5d87f8ba4",
+                "reference": "0d2b6478f7fd1b18aa92096254184fd5d87f8ba4",
                 "shasum": ""
             },
             "require": {
@@ -3769,7 +3769,7 @@
                 "issues": "https://github.com/walkor/channel/issues",
                 "source": "https://github.com/walkor/channel/tree/master"
             },
-            "time": "2021-12-29T08:34:47+00:00"
+            "time": "2022-03-30T12:44:27+00:00"
         },
         {
             "name": "workerman/gateway-worker",
@@ -3777,12 +3777,12 @@
             "source": {
                 "type": "git",
                 "url": "https://github.com/walkor/GatewayWorker.git",
-                "reference": "017857678a2ff6972f25f7d7d564c8bb649dc8ed"
+                "reference": "21165ced75a756be8ba5128a22607b2c7bfd07a3"
             },
             "dist": {
                 "type": "zip",
-                "url": "https://api.github.com/repos/walkor/GatewayWorker/zipball/017857678a2ff6972f25f7d7d564c8bb649dc8ed",
-                "reference": "017857678a2ff6972f25f7d7d564c8bb649dc8ed",
+                "url": "https://api.github.com/repos/walkor/GatewayWorker/zipball/21165ced75a756be8ba5128a22607b2c7bfd07a3",
+                "reference": "21165ced75a756be8ba5128a22607b2c7bfd07a3",
                 "shasum": ""
             },
             "require": {
@@ -3818,7 +3818,7 @@
                     "type": "patreon"
                 }
             ],
-            "time": "2022-03-03T10:54:13+00:00"
+            "time": "2022-03-30T12:43:56+00:00"
         },
         {
             "name": "workerman/gatewayclient",
@@ -3868,12 +3868,12 @@
             "source": {
                 "type": "git",
                 "url": "https://github.com/walkor/GlobalData.git",
-                "reference": "baf3b7af338f329e88136ebe92266dfe40dd00a7"
+                "reference": "0deee3e161cfa3be8ad8e4902db06f3f3d4d3684"
             },
             "dist": {
                 "type": "zip",
-                "url": "https://api.github.com/repos/walkor/GlobalData/zipball/baf3b7af338f329e88136ebe92266dfe40dd00a7",
-                "reference": "baf3b7af338f329e88136ebe92266dfe40dd00a7",
+                "url": "https://api.github.com/repos/walkor/GlobalData/zipball/0deee3e161cfa3be8ad8e4902db06f3f3d4d3684",
+                "reference": "0deee3e161cfa3be8ad8e4902db06f3f3d4d3684",
                 "shasum": ""
             },
             "require": {
@@ -3893,9 +3893,9 @@
             "homepage": "http://www.workerman.net",
             "support": {
                 "issues": "https://github.com/walkor/GlobalData/issues",
-                "source": "https://github.com/walkor/GlobalData/tree/v1.0.3"
+                "source": "https://github.com/walkor/GlobalData/tree/master"
             },
-            "time": "2018-08-16T03:59:34+00:00"
+            "time": "2022-03-30T12:44:43+00:00"
         },
         {
             "name": "workerman/mysql",
@@ -3956,12 +3956,12 @@
             "source": {
                 "type": "git",
                 "url": "https://github.com/walkor/workerman.git",
-                "reference": "7e7a95d38abf2a878438070aa8934029059d6866"
+                "reference": "5f02be9a8a170e7e6936f3ee0d0d71f031ec12ab"
             },
             "dist": {
                 "type": "zip",
-                "url": "https://api.github.com/repos/walkor/workerman/zipball/7e7a95d38abf2a878438070aa8934029059d6866",
-                "reference": "7e7a95d38abf2a878438070aa8934029059d6866",
+                "url": "https://api.github.com/repos/walkor/workerman/zipball/5f02be9a8a170e7e6936f3ee0d0d71f031ec12ab",
+                "reference": "5f02be9a8a170e7e6936f3ee0d0d71f031ec12ab",
                 "shasum": ""
             },
             "require": {
@@ -4011,7 +4011,7 @@
                     "type": "patreon"
                 }
             ],
-            "time": "2022-03-29T14:18:51+00:00"
+            "time": "2022-03-31T03:57:45+00:00"
         }
     ],
     "packages-dev": [
@@ -5186,12 +5186,12 @@
             "source": {
                 "type": "git",
                 "url": "https://github.com/sebastianbergmann/php-code-coverage.git",
-                "reference": "c46105173d72d632e3829add9f50aded1e702572"
+                "reference": "120e079cd4fb82a79ffd134d19f1266bc11f9c33"
             },
             "dist": {
                 "type": "zip",
-                "url": "https://api.github.com/repos/sebastianbergmann/php-code-coverage/zipball/c46105173d72d632e3829add9f50aded1e702572",
-                "reference": "c46105173d72d632e3829add9f50aded1e702572",
+                "url": "https://api.github.com/repos/sebastianbergmann/php-code-coverage/zipball/120e079cd4fb82a79ffd134d19f1266bc11f9c33",
+                "reference": "120e079cd4fb82a79ffd134d19f1266bc11f9c33",
                 "shasum": ""
             },
             "require": {
@@ -5255,7 +5255,7 @@
                     "type": "github"
                 }
             ],
-            "time": "2022-03-21T05:59:05+00:00"
+            "time": "2022-03-31T06:18:13+00:00"
         },
         {
             "name": "phpunit/php-file-iterator",
@@ -5504,12 +5504,12 @@
             "source": {
                 "type": "git",
                 "url": "https://github.com/sebastianbergmann/phpunit.git",
-                "reference": "5be3707c415747bcd2e40f4f3528fc7402ef5609"
+                "reference": "5e06be79ad152b7a794ca2855fffa8a098410410"
             },
             "dist": {
                 "type": "zip",
-                "url": "https://api.github.com/repos/sebastianbergmann/phpunit/zipball/5be3707c415747bcd2e40f4f3528fc7402ef5609",
-                "reference": "5be3707c415747bcd2e40f4f3528fc7402ef5609",
+                "url": "https://api.github.com/repos/sebastianbergmann/phpunit/zipball/5e06be79ad152b7a794ca2855fffa8a098410410",
+                "reference": "5e06be79ad152b7a794ca2855fffa8a098410410",
                 "shasum": ""
             },
             "require": {
@@ -5599,7 +5599,7 @@
                     "type": "github"
                 }
             ],
-            "time": "2022-03-24T08:25:56+00:00"
+            "time": "2022-03-31T06:17:08+00:00"
         },
         {
             "name": "satooshi/php-coveralls",

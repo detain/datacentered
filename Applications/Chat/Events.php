@@ -69,20 +69,13 @@ class Events
 		}
 		if ($worker->id == 0 ) {
 			$args = [];
-			/*
-			Workerman\Timer::add(3600, ['Events', 'hyperv_update_list_timer'], $args);
-			Workerman\Timer::add(30, ['Events', 'hyperv_queue_timer'], $args);
-			Workerman\Timer::add(30, ['Events', 'vps_queue_timer'], $args);
-			Workerman\Timer::add(30, ['Events', 'memcache_queue_timer'], $args);
-			Workerman\Timer::add(60, ['Events', 'map_queue_timer'], $args);
-			//Workerman\Timer::add(60, ['Events', 'queue_queue_timer'], $args);
-			*/
 			$timers = [];
-			$timers[] = GlobalTimer::add(3600, ['Events', 'hyperv_update_list_timer'], $args);
-			$timers[] = GlobalTimer::add(30, ['Events', 'hyperv_queue_timer'], $args);
-			$timers[] = GlobalTimer::add(30, ['Events', 'vps_queue_timer'], $args);
-			$timers[] = GlobalTimer::add(30, ['Events', 'memcache_queue_timer'], $args);
-			$timers[] = GlobalTimer::add(60, ['Events', 'map_queue_timer'], $args);
+			$timers['hyperv_update_list_timer'] = GlobalTimer::add(3600, ['Events', 'hyperv_update_list_timer'], $args);
+			$timers['hyperv_queue_timer'] = GlobalTimer::add(30, ['Events', 'hyperv_queue_timer'], $args);
+			//$timers['processing_queue_timer'] = GlobalTimer::add(30, ['Events', 'processing_queue_timer'], $args);
+			$timers['vps_queue_queue_timer'] = GlobalTimer::add(30, ['Events', 'vps_queue_timer'], $args);
+			$timers['memcache_queue_timer'] = GlobalTimer::add(30, ['Events', 'memcache_queue_timer'], $args);
+			$timers['map_queue_timer'] = GlobalTimer::add(60, ['Events', 'map_queue_timer'], $args);
 			//$timers[] = GlobalTimer::add(60, ['Events', 'queue_queue_timer'], $args);
 			//$timer_id = GlobalTimer::add(1, function() use (&$timer_id, $timers) { echo "worker[0] tick timer_id:$timer_id:'".print_r($timers,true)."\n"; });
 		}
