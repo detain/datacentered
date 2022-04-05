@@ -265,7 +265,7 @@ class Events
 						};
 						$task_connection->connect();
 					}
-					//$found = false;
+					$found = false;
 				} else {
 					//Worker::safeEcho("no pending payments found\n");
 					$found = false;
