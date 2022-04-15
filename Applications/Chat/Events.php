@@ -899,6 +899,18 @@ class Events
 		return;
 	}
 
+
+	/**
+	 * handler for when receiving a payment process message.
+	 *
+	 * @param int $client_id
+	 * @param array $message_data
+	 */
+	public static function msgPaymentprocess($client_id, $message_data) {
+		self::processing_queue_timer();
+		Gateway::sendToClient($client_id, json_encode('ok'));
+	}
+
 	/**
 	 * handler for when receiving a ran message.
 	 *
