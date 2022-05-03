@@ -5,7 +5,7 @@ use Workerman\Worker;
 function processing_queue_task($args)
 {
 	require_once '/home/my/include/functions.inc.php';
-	//Worker::safeEcho('Processing Queue Task got here '.json_encode($args).PHP_EOL);
+	Worker::safeEcho('Processing Queue Task Started'.PHP_EOL);
 	$db = $GLOBALS['tf']->db;
 	$db->query("update queue_log set history_new_value='processing' where history_id='{$args['history_id']}'", __LINE__, __FILE__);
 	//Worker::safeEcho('Processing Queue Task got here after setting to processing, starting processing'.PHP_EOL);

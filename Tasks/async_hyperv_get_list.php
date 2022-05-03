@@ -1,4 +1,5 @@
 <?php
+use Workerman\Worker;
 use Workerman\Connection\AsyncTcpConnection;
 
 require_once '/home/my/vendor/workerman/statistics/Applications/Statistics/Clients/StatisticClient.php';
@@ -17,7 +18,7 @@ function async_hyperv_get_list_server(\React\Http\Browser &$browser, $service_ma
 	$requestVar = $var.'_request';
 	$global->$requestVar = 'get_list__browser_get';
 	$url = "https://{$service_master['vps_ip']}/HyperVService/HyperVService.asmx?WSDL";
-	//echo "Creating Client for {$service_master['vps_name']} @ {$url}\n";
+	//Worker::safeEcho("Creating Client for {$service_master['vps_name']} @ {$url}\n");
 	$browser->get($url)->then(
 		function (\Psr\Http\Message\ResponseInterface $response) use ($browser, $service_master) {
 			/**
@@ -50,10 +51,14 @@ function async_hyperv_get_list_server(\React\Http\Browser &$browser, $service_ma
 					if (isset($result->GetVMListResult->Success)) {
 						$result = $result->GetVMListResult;
 					}
-					if (isset($result->Success) && ($result->Success == 'true' || $result->Success == 1) && isset($result->VMList) && isset($result->VMList->VirtualMachineSummary)) {
-						\StatisticClient::report('Hyper-V', 'GetVMList', true, 0, '', STATISTICS_SERVER);
-						if (isset($result->VMList->VirtualMachineSummary->VmId)) {
-							$result->VMList->VirtualMachineSummary = [0 => $result->VMList->VirtualMachineSummary];
+					if (isset($result->Success) && ($result->Success == 'true' || $result->Success == 1)) {
+						if (isset($result->VMList) && isset($result->VMList->VirtualMachineSummary)) {
+							\StatisticClient::report('Hyper-V', 'GetVMList', true, 0, '', STATISTICS_SERVER);
+							if (isset($result->VMList->VirtualMachineSummary->VmId)) {
+								$result->VMList->VirtualMachineSummary = [0 => $result->VMList->VirtualMachineSummary];
+							}
+						} else {
+							$result->VMList->VirtualMachineSummary  = [];
 						}
 						$global->$requestVar = 'server_list';
 						//echo $service_master['vps_name'].' Successfull Get VM List'.PHP_EOL;
