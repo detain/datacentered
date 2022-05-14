@@ -907,7 +907,8 @@ class Events
 	 * @param array $message_data
 	 */
 	public static function msgPaymentprocess($client_id, $message_data) {
-		Gateway::sendToClient($client_id, json_encode('ok'));
+		//Gateway::sendToClient($client_id, json_encode('ok'));
+		Gateway::closeClient($client_id, json_encode('ok'));
 		self::processing_queue_timer();
 	}
 
