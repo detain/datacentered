@@ -247,7 +247,6 @@ class Events
 		if ($global->cas($var, 0, 1)) {
 			$found = true;
 			while ($found === true) {
-				Worker::safeEcho("querying payment processing\n");
 				/**
 				 * @var \React\MySQL\Connection
 				 */
