@@ -9,6 +9,8 @@ function async_hyperv_queue_runner($args)
 	* @var \GlobalData\Client
 	*/
 	global $global;
+    $GLOBALS['tf']->session->sessionid = 'datacentered';
+    $GLOBALS['tf']->session->account_id = 160307;
 	$service_id = $args['id'];
 	$service_master = $args['data'];
 	$var = 'vps_host_'.$service_id;
