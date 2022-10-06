@@ -245,34 +245,43 @@ class Events
 		if (!isset($global->$var))
 			$global->$var = 0;
 		if ($global->cas($var, 0, 1)) {
-			$found = true;
-			while ($found === true) {
-				/**
-				 * @var \React\MySQL\Connection
-				 */
-				$results = self::$db->select('*')->from('queue_log')->where('history_section="process_payment" and history_new_value="pending"')->query();
-				//Worker::safeEcho("Got Results ".json_encode($results,true)."\n");
-				if (is_array($results) && sizeof($results) > 0) {
-					$queues = [];
-					foreach ($results as $result) {
-						//Worker::safeEcho("payment processing about to spawn task for ".json_encode($result,true)."\n");
-						$task_connection = new AsyncTcpConnection('Text://127.0.0.1:2208');
-						$task_connection->send(json_encode(['type' => 'processing_queue_task', 'args' => $result]));
-						$task_connection->onMessage = function ($connection, $task_result) use ($task_connection) {
-							//Worker::safeEcho("finished payment processing task\n");
-							$task_connection->close();
-						};
-						$task_connection->connect();
-					}
-					$found = false;
-				} else {
-					//Worker::safeEcho("no pending payments found\n");
-					$found = false;
-				}
-			}
-			$global->$var = 0;
+			/**
+			 * @var \React\MySQL\Connection
+			 */
+			$results = self::$db->select('*')->from('queue_log')->where('history_section="process_payment" and history_new_value="pending"')->query();
+			Worker::safeEcho("Got Results ".json_encode($results,true)."\n");
+			if (is_array($results) && sizeof($results) > 0) {
+                self::process_results($results);
+			} else {
+                $global->$var = 0;
+            }
 		}
 	}
+
+    public static function process_results($results) {
+        $result = array_shift($results);
+        self::$db->update('queue_log')->cols(['history_new_value' => 'processing'])->where('history_id='.$result['history_id'])->query();
+        Worker::safeEcho("payment processing about to spawn task for ".json_encode($result,true)."\n");
+        $task_connection = new AsyncTcpConnection('Text://127.0.0.1:2208');
+        $task_connection->send(json_encode(['type' => 'processing_queue_task', 'args' => $result]));
+        $task_connection->onMessage = function ($connection, $task_result) use ($result, $results, $task_connection) {
+            Worker::safeEcho("finished queued payment processing task\n");
+            Events::$db->update('queue_log')->cols(['history_new_value' => 'completed'])->where('history_id='.$result['history_id'])->query();
+            $task_connection->close();
+            Worker::safeEcho("finished queued payment processing task (post close)\n");
+            if (count($results) > 0) {
+                Events::process_results($results);
+            } else {
+                /**
+                 * @var \GlobalData\Client
+                 */
+                global $global;
+                $var = 'processsing_queue';
+                $global->$var = 0;
+            }
+        };
+        $task_connection->connect();
+    }
 
 
 	/**
