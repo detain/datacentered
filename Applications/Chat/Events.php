@@ -260,15 +260,40 @@ class Events
 
     public static function process_results($results) {
         $result = array_shift($results);
-        self::$db->update('queue_log')->cols(['history_new_value' => 'processing'])->where('history_id='.$result['history_id'])->query();
+        $maxTries = 30;
+        $delay = 1;
+        $try = 0;
+        $updated = false;
+        while ($updated === false && $try < $maxTries) {
+            $try++;
+            try {
+                self::$db->update('queue_log')->cols(['history_new_value' => 'processing'])->where('history_id='.$result['history_id'])->query();
+                $updated = true;
+            } catch (\PDOException $e) {
+                $check = 'SQLSTATE[40000]: Transaction rollback: 3101 Plugin instructed the server to rollback the current transaction.';
+                Worker::safeEcho('Got PDO Exception #'.$e->getCode().': "'.$e->getMessage()."\"\n");
+                sleep($delay);
+            }
+        }
         Worker::safeEcho("payment processing about to spawn task for ".json_encode($result,true)."\n");
         $task_connection = new AsyncTcpConnection('Text://127.0.0.1:2208');
         $task_connection->send(json_encode(['type' => 'processing_queue_task', 'args' => $result]));
-        $task_connection->onMessage = function ($connection, $task_result) use ($result, $results, $task_connection) {
+        $task_connection->onMessage = function ($connection, $task_result) use ($result, $results, $task_connection, $maxTries, $delay) {
             Worker::safeEcho("finished queued payment processing task\n");
-            Events::$db->update('queue_log')->cols(['history_new_value' => 'completed'])->where('history_id='.$result['history_id'])->query();
+            $try = 0;
+            $updated = false;
+            while ($updated === false && $try < $maxTries) {
+                $try++;
+                try {
+                    Events::$db->update('queue_log')->cols(['history_new_value' => 'completed'])->where('history_id='.$result['history_id'])->query();
+                    $updated = true;
+                } catch (\PDOException $e) {
+                    $check = 'SQLSTATE[40000]: Transaction rollback: 3101 Plugin instructed the server to rollback the current transaction.';
+                    Worker::safeEcho('Got PDO Exception #'.$e->getCode().': "'.$e->getMessage()."\"\n");
+                    sleep($delay);
+                }
+            }
             $task_connection->close();
-            Worker::safeEcho("finished queued payment processing task (post close)\n");
             if (count($results) > 0) {
                 Events::process_results($results);
             } else {
@@ -279,6 +304,7 @@ class Events
                 $var = 'processsing_queue';
                 $global->$var = 0;
             }
+            Worker::safeEcho("finished queued payment processing task (post close)\n");
         };
         $task_connection->connect();
     }
