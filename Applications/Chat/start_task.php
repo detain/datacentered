@@ -16,6 +16,7 @@ $task_worker->onWorkerStart = function ($worker) {
 	require_once '/home/my/include/functions.inc.php';
 	include_once '/home/my/include/config/config.settings.php';
 	$db_config = include '/home/my/include/config/config.db.php';
+    $GLOBALS['tf']->db->haltOnError = 'report';
 	$loop = Worker::getEventLoop();
 	$worker_db = new \Workerman\MySQL\Connection($db_config['db_host'], $db_config['db_port'], $db_config['db_user'], $db_config['db_pass'], $db_config['db_name'], 'utf8mb4');
 	if (INFLUX_V2 === true) {

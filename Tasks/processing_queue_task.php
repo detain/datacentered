@@ -5,6 +5,7 @@ use Workerman\Worker;
 function processing_queue_task($args)
 {
 	require_once '/home/my/include/functions.inc.php';
+    $GLOBALS['tf']->db->haltOnError = 'report';
 	Worker::safeEcho('Processing Queue Task Started'.PHP_EOL);
     $GLOBALS['tf']->session->sessionid = 'datacentered';
     $GLOBALS['tf']->session->account_id = $args['history_owner'];
