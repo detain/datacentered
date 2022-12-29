@@ -127,9 +127,9 @@ Contains only the GatewayWorker kernel
 
 ## Choose **Workerman** or **GatewayWorker**
 
-If your project is a long connection and requires communication between the client and the client, it is recommended to use GatewayWorker.  
-Workerman is recommended for short connections or projects that do not require communication between the client and the client.  
-GatewayWorker does not support UDP listening, so choose UDP service Workerman.  
+If your project is a long connection and requires communication between the client and the client, it is recommended to use GatewayWorker.
+Workerman is recommended for short connections or projects that do not require communication between the client and the client.
+GatewayWorker does not support UDP listening, so choose UDP service Workerman.
 If you are a multi-process socket programming experience and like to customize your own process model, you can choose Workerman.
 
 
@@ -143,9 +143,9 @@ Workerman is a high-performance socket server communication framework for rapid 
 
 ### **[GatewayWorker Manual](http://doc2.workerman.net/)**
 
-GatewayWorker is a set of **TCP long connection** application framework developed by Workerman . It  
-implements single-issue, group-sending, broadcast and other interfaces. It has built-in mysql class library.  
-GatewayWorker is divided into Gateway process and Worker process. It supports distributed deployment naturally and can support huge The number of connections (millions or even millions of connection level applications).  
+GatewayWorker is a set of **TCP long connection** application framework developed by Workerman . It
+implements single-issue, group-sending, broadcast and other interfaces. It has built-in mysql class library.
+GatewayWorker is divided into Gateway process and Worker process. It supports distributed deployment naturally and can support huge The number of connections (millions or even millions of connection level applications).
 Can be used to develop IM chat applications, mobile communications, game backends, the Internet of Things, smart home background and more.
 
 [GatewayWorker Manual](http://doc2.workerman.net/)
@@ -155,146 +155,146 @@ Can be used to develop IM chat applications, mobile communications, game backend
 
 ### **thinkworker**
 
-High-performance website/API development framework based on Workerman   
-Project homepage: [http://thinkworker.cn/project](http://thinkworker.cn/)  
+High-performance website/API development framework based on Workerman 
+Project homepage: [http://thinkworker.cn/project](http://thinkworker.cn/)
 documentation: [http://docs.thinkworker.cn/](http://docs.thinkworker.cn/)
 
 ### **Beanbun**
 
-Beanbun is a multi-process web crawler framework written in PHP with good openness and high scalability, based on Workerman.   
-Project home page: [http://www.beanbun.org](http://www.beanbun.org/)  
+Beanbun is a multi-process web crawler framework written in PHP with good openness and high scalability, based on Workerman. 
+Project home page: [http://www.beanbun.org](http://www.beanbun.org/)
 project documentation: [http://www.beanbun.org](http://www.beanbun.org/)
 
 ### **think-worker**
 
-ThinkPHP's official developer extension for ThinkPHP5   
-Project home page: [https://github.com/top-think/think-worker](https://github.com/top-think/think-worker)  
+ThinkPHP's official developer extension for ThinkPHP5 
+Project home page: [https://github.com/top-think/think-worker](https://github.com/top-think/think-worker)
 project documentation: [https://www.kancloud.cn/manual/thinkphp5/235128](https://www.kancloud.cn/manual/thinkphp5/235128)
 
 ### **SlightPHP**
 
-SlightPHP's efficient PHP agile development framework   
-Project home page: [https://github.com/hetao29/slightphp](https://github.com/hetao29/slightphp)  
+SlightPHP's efficient PHP agile development framework 
+Project home page: [https://github.com/hetao29/slightphp](https://github.com/hetao29/slightphp)
 project documentation: [https://github.com/hetao29/slightphp](https://github.com/hetao29/slightphp)
 
 ### **SimplerWorker**
 
-High-performance, timely deployment of high-performance, timely communication framework based on Thinkphp and workerman, gateway   
-Project home page: [https://gitee.com/SimplerWorker/SimplerWorker](https://gitee.com/SimplerWorker/SimplerWorker)  
+High-performance, timely deployment of high-performance, timely communication framework based on Thinkphp and workerman, gateway 
+Project home page: [https://gitee.com/SimplerWorker/SimplerWorker](https://gitee.com/SimplerWorker/SimplerWorker)
 project documentation: [https://gitee.com/SimplerWorker/SimplerWorker](https://gitee.com/SimplerWorker/SimplerWorker)
 
 ### **hide2 / api**
 
-High-performance API service based on Workerman   
-Project home page: [https://github.com/hide2/api](https://github.com/hide2/api)  
+High-performance API service based on Workerman 
+Project home page: [https://github.com/hide2/api](https://github.com/hide2/api)
 project documentation: [https://github.com/hide2/api](https://github.com/hide2/api)
 
 ### **think-workerman**
 
-A simple asynchronous development framework based on workerman, syntax similar to thinkphp5 development model, pure composer package + common class composition   
-Project home page: [https://github.com/Zsoner/think-workerman](https://github.com/Zsoner/think-workerman)  
+A simple asynchronous development framework based on workerman, syntax similar to thinkphp5 development model, pure composer package + common class composition 
+Project home page: [https://github.com/Zsoner/think-workerman](https://github.com/Zsoner/think-workerman)
 project documentation: [https://github.com/Zsoner /think-workerman](https://github.com/Zsoner/think-workerman)
 
 ### **webworker**
 
-Web development framework with http server based on Workerman   
-Project homepage: [http://ask.webworker.xtgxiso.com/project](http://ask.webworker.xtgxiso.com/)  
+Web development framework with http server based on Workerman 
+Project homepage: [http://ask.webworker.xtgxiso.com/project](http://ask.webworker.xtgxiso.com/)
 documentation: [http://doc.webworker.xtgxiso.com/](http://doc.webworker.xtgxiso.com/)
 
 ### **Workerman_cor_ape**
 
-Workerman_cor_ape is an enhanced version of the php framework Workerman that adds asynchronous task components without affecting any usage, stability, or performance.   
-Project home page: [https://github.com/zyfei/workerman_cor_ape](https://github.com/zyfei/workerman_cor_ape)  
+Workerman_cor_ape is an enhanced version of the php framework Workerman that adds asynchronous task components without affecting any usage, stability, or performance. 
+Project home page: [https://github.com/zyfei/workerman_cor_ape](https://github.com/zyfei/workerman_cor_ape)
 project documentation: [https://github.com/zyfei/workerman_cor_ape](https://github.com/zyfei/workerman_cor_ape)
 
 ### **WorkermanYii2**
 
-For those familiar with workerman and yii2 ActiveRecod, using ActiveRecord in workerman is a problem. This project mainly solves the problem of using ActiveRecord in yii2 in workerman.   
-Project homepage: [https://github.com/victorruan/WorkermanYii2](https://github.com/victorruan/WorkermanYii2)  
+For those familiar with workerman and yii2 ActiveRecod, using ActiveRecord in workerman is a problem. This project mainly solves the problem of using ActiveRecord in yii2 in workerman. 
+Project homepage: [https://github.com/victorruan/WorkermanYii2](https://github.com/victorruan/WorkermanYii2)
 project Documentation: [https://github.com/victorruan/WorkermanYii2](https://github.com/victorruan/WorkermanYii2)
 
 ### **WorkerA**
 
-a http framework for workerman   
-project home page: [https://github.com/wazsmwazsm/WorkerA](https://github.com/wazsmwazsm/WorkerA)  
+a http framework for workerman 
+project home page: [https://github.com/wazsmwazsm/WorkerA](https://github.com/wazsmwazsm/WorkerA)
 project documentation: [https://www.kancloud.cn/wazsmwazsm/workera](https://www.kancloud.cn/wazsmwazsm/workera/691859)
 
 ### **Workerman-Amp**
 
-This project is used to apply Amp's event-loop to Workerman, so you can use Amp-based high-performance components in Workerman, such as asynchronous MySQL, asynchronous Redis, asynchronous HTTP client, and so on.   
-Project home page: [https://github.com/CismonX/Workerman-Amp](https://github.com/CismonX/Workerman-Amp)  
+This project is used to apply Amp's event-loop to Workerman, so you can use Amp-based high-performance components in Workerman, such as asynchronous MySQL, asynchronous Redis, asynchronous HTTP client, and so on. 
+Project home page: [https://github.com/CismonX/Workerman-Amp](https://github.com/CismonX/Workerman-Amp)
 project documentation: [https://github.com/CismonX/Workerman-Amp](https://github.com/CismonX/Workerman-Amp)
 
 ### **socket-service**
 
-A high-performance socket push service that supports distributed deployment based on the workerman-chat's GatewayWorker framework.   
-Project home page: [https://github.com/cryhac/socket-service](https://github.com/cryhac/socket-service)  
+A high-performance socket push service that supports distributed deployment based on the workerman-chat's GatewayWorker framework. 
+Project home page: [https://github.com/cryhac/socket-service](https://github.com/cryhac/socket-service)
 project documentation: [https://github.com/cryhac/socket-service](https://github.com/cryhac/socket-service)
 
 ### **scheduledTask-workerman**
 
-Scheduled Task System based on workerman and yaf   
-Project Homepage: [https://github.com/moxiaobai/scheduledTask-workerman](https://github.com/moxiaobai/scheduledTask-workerman)  
+Scheduled Task System based on workerman and yaf 
+Project Homepage: [https://github.com/moxiaobai/scheduledTask-workerman](https://github.com/moxiaobai/scheduledTask-workerman)
 Project Documentation: [https://github.com/moxiaobai/scheduledTask-workerman](https://github.com/moxiaobai/scheduledTask-workerman)
 
 ### **Iyov http proxy**
 
-Web proxy for http(s) for developers to analyze data between client and servers based on workerman, especailly for app developers.  
-项目主页：[https://github.com/nicecp/iyov](https://github.com/nicecp/iyov)  
+Web proxy for http(s) for developers to analyze data between client and servers based on workerman, especailly for app developers.
+项目主页：[https://github.com/nicecp/iyov](https://github.com/nicecp/iyov)
 项目文档：[https://github.com/nicecp/iyov](https://github.com/nicecp/iyov)
 
 ### **laravel_worker**
 
-Best practices for bidirectional instant messaging for websocket based on laravel&workerman, php   
-Project home page: [https://github.com/shellus/laravel_worker](https://github.com/shellus/laravel_worker)  
+Best practices for bidirectional instant messaging for websocket based on laravel&workerman, php 
+Project home page: [https://github.com/shellus/laravel_worker](https://github.com/shellus/laravel_worker)
 Project documentation: [https://github.com/shellus/laravel_worker](https://github.com/shellus/laravel_worker)
 
 ### **workerman-thrift-resque**
 
-Thrift RPC and Resque based on workerman.   
-Project home page: [https://github.com/vtumi/workerman-thrift-resque](https://github.com/vtumi/workerman-thrift-resque)  
+Thrift RPC and Resque based on workerman. 
+Project home page: [https://github.com/vtumi/workerman-thrift-resque](https://github.com/vtumi/workerman-thrift-resque)
 project documentation: [https://github.com/vtumi/workerman-thrift-resque](https://github.com/vtumi/workerman-thrift-resque)
 
 ### **workerman-statistics-java**
 
-A distributed statistical monitoring system includes JAVA client and server   
-project home page: [https://github.com/shuiguang/workerman-statistics-java](https://github.com/shuiguang/workerman-statistics-java)  
+A distributed statistical monitoring system includes JAVA client and server 
+project home page: [https://github.com/shuiguang/workerman-statistics-java](https://github.com/shuiguang/workerman-statistics-java)
 project documentation: [https://github.com/shuiguang/workerman-statistics-java](https://github.com/shuiguang/workerman-statistics-java)
 
 ### **CI-worker**
 
-CI framework written by workerman   
-Project home page: [https://github.com/tmtbe/CI-worker](https://github.com/tmtbe/CI-worker)  
+CI framework written by workerman 
+Project home page: [https://github.com/tmtbe/CI-worker](https://github.com/tmtbe/CI-worker)
 project documentation: [https://github.com/tmtbe/CI-worker](https://github.com/tmtbe/CI-worker)
 
 ### **Logger Ever**
 
-The worker server-based log server uses udp to upload logs, which has no impact on application performance. The log server supports multiple processes and conforms to the psr-3 log specification.   
-Project home page: [https://github.com/tmtbe/LoggerSever](https://github.com/tmtbe/LoggerSever)  
+The worker server-based log server uses udp to upload logs, which has no impact on application performance. The log server supports multiple processes and conforms to the psr-3 log specification. 
+Project home page: [https://github.com/tmtbe/LoggerSever](https://github.com/tmtbe/LoggerSever)
 project documentation: [https://github.com/tmtbe/LoggerSever](https://github.com/tmtbe/LoggerSever)
 
 ### **workerman-crontab**
 
-Dynamic crontab for php, power by workerman   
-project home page: [https://github.com/shuiguang/workerman-crontab](https://github.com/shuiguang/workerman-crontab)  
+Dynamic crontab for php, power by workerman 
+project home page: [https://github.com/shuiguang/workerman-crontab](https://github.com/shuiguang/workerman-crontab)
 project documentation: [https://github.com/shuiguang/workerman-crontab](https://github.com/shuiguang/workerman-crontab)
 
 ### **Workerman-ThinkPHP-Redis**
 
-Workerman-chat+ThinkPHP+Redis   
-project home page: [https://github.com/happyliu2014/Workerman-ThinkPHP-Redis](https://github.com/happyliu2014/Workerman-ThinkPHP-Redis)  
+Workerman-chat+ThinkPHP+Redis 
+project home page: [https://github.com/happyliu2014/Workerman-ThinkPHP-Redis](https://github.com/happyliu2014/Workerman-ThinkPHP-Redis)
 project documentation: [https://github.com/happyliu2014/Workerman-ThinkPHP-Redis](https://github.com/happyliu2014/Workerman-ThinkPHP-Redis)
 
 ### **Quasar**
 
-a Push Server for Nova Framework   
-project home page: [https://github.com/nova-framework/quasar](https://github.com/nova-framework/quasar)  
+a Push Server for Nova Framework 
+project home page: [https://github.com/nova-framework/quasar](https://github.com/nova-framework/quasar)
 project documentation: [https://github.com/nova-framework/quasar](https://github.com/nova-framework/quasar)
 
 ### **workermvc**
 
-Workermvc is a workerv-based mvc framework, using thinkphp5 composer package, using the habits to try to make the original formula, the original taste   
-Project home page: [https://github.com/lobtao/workermvc](https://github.com/lobtao/workermvc)  
+Workermvc is a workerv-based mvc framework, using thinkphp5 composer package, using the habits to try to make the original formula, the original taste 
+Project home page: [https://github.com/lobtao/workermvc](https://github.com/lobtao/workermvc)
 project documentation: [https://github. Com/lobtao/workermvc_demo](https://github.com/lobtao/workermvc_demo)
 
 
@@ -357,3 +357,35 @@ project documentation: [https://github. Com/lobtao/workermvc_demo](https://gith
 [xtgxiso / WebWorker-benchmark: WebWorker-benchmark](https://github.com/xtgxiso/WebWorker-benchmark)
 [xtgxiso / WebWorker-example: WebWorker-example](https://github.com/xtgxiso/WebWorker-example)
 [xtgxiso / WebWorker: Web Development Framework With Http Server Based on Workerman (http://www.workerman.net/)](https://github.com/xtgxiso/WebWorker)
+
+
+##### Queue Info
+
+* Memcached Queue Task [30s]
+  * Set $global->cas('queuein', 0, 1)
+  * Iterate $memcache->get('queuein'.$suffix) combining into $processQueue and empting queuein<id>
+  * Process $processQueue
+  * Set $memcache->cas($response['cas'], 'queueout, [])
+  * Set $global->queuein = 0;
+* /queue.php URL Endpoint
+  * if post action=queue
+    * $memcache->get('queue')
+    * if data in $queue[ip] display it
+    * empty queue with $memcache->cas($response['cas'], 'queue',
+  * else
+    * $memcache->get('queuehosts')
+    * if data not in queuehosts[ip] add it
+    * update wit $memcache->cas($response['cas'], 'queuehosts'
+    * get $memcache->get('queuein<id>' data
+    * Add data to queuein<id>
+    * set with $memcache->cas($response['cas'], 'queuein<id>'
+* vps_cron
+  * cpu-usage -> :55151/queue.php
+  * host-info -> :55151/queue.php
+  * get_new_vps -> mynew/vps_queue.php
+  * bw-info -> :55151/queue.php
+  * map -> :55151/queue.php
+  * get_queue -> mynew/vps_queue.php
+  * vps-info -> :55151/queue.php
+
+
