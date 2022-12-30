@@ -23,6 +23,7 @@ function memcached_queue_task($args)
 	*/
 	global $memcache;
 	$memcached_start = time();
+    //
 	//Worker::safeEcho('Task handler Started memcached_queue_task'.PHP_EOL);
 	if (!isset($global->queuein)) {
 		$global->queuein = 0;
@@ -31,6 +32,7 @@ function memcached_queue_task($args)
 		Worker::safeEcho('Cannot Get queuein Lock, Returning after '.(time() - $memcached_start).' seconds'.PHP_EOL);
 		return;
 	}
+    // Get the Memcached QueueIn<id> values => $processQueue
 	$processQueue = [];
 	$queuesCount = 5;
 	for ($suffix = 1; $suffix <= $queuesCount; $suffix++) {
@@ -131,7 +133,7 @@ function memcached_queue_task($args)
 							->bindValues([$prefix.'_cpu_avg' => $cpu_avg, $prefix.'_cpu_usage' => $serialized_server_usage])
 							->query();
 					} catch (\PDOException $e) {
-						if ($e->getCode() == 3101) {
+						if (in_array($e->getCode(), [3101, 1180])) {
 							$worker_db->update($prefix.'_master_details')
 								->cols([$prefix.'_cpu_avg', $prefix.'_cpu_usage'])
 								->where($prefix.'_id='.$server[$prefix.'_id'])
@@ -308,7 +310,7 @@ function memcached_queue_task($args)
 							->query();
 					} catch (\PDOException $e) {
 						Worker::safeEcho('Cought PDO Excetion #'.$e->getCode().':'.$e->getMessage().PHP_EOL);
-						if ($e->getCode() == 3101) {
+						if (in_array($e->getCode(), [3101, 1180])) {
 							$worker_db->update($prefix.'_masters')
 								->cols($cols)
 								->where($prefix.'_id='.$server[$prefix.'_id'])
@@ -324,6 +326,7 @@ function memcached_queue_task($args)
 		}
 	}
 	if (count($return) > 0) {
+        error_log(__FILE__.' return: '.json_encode($return));
 		$loopCount = 0;
 		do {
 			$response = $memcache->get('queueout', function($memcache, $key, &$value) { $value = []; return true; }, \Memcached::GET_EXTENDED);

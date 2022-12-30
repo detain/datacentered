@@ -21,7 +21,7 @@ $context = [																						// Certificate is best to apply for a certific
 ];
 $web = new Worker('http://0.0.0.0:55151', $context);
 $web->name	 = 'WebServer';
-$web->count = 10; // WebServer number of processes
+$web->count = 5; // WebServer number of processes
 //$web->transport = 'ssl';
 
 define('WEBROOT', realpath(__DIR__.'/../../Web'));
@@ -86,12 +86,12 @@ $web->onWorkerStart = function ($worker) {
 	global $mysql_db;
 	//$db_config = include '/home/my/include/config/config.db.php';
 	//$mysql_db = new \Workerman\MySQL\Connection($db_config['db_host'], $db_config['db_port'], $db_config['db_user'], $db_config['db_pass'], $db_config['db_name'], 'utf8mb4');
-	$mysql_db = new \Workerman\MySQL\Connection('66.45.240.70', 3306, 'zonemta', 'Z0n3mt4!', 'zonemta', 'utf8mb4');	
+	$mysql_db = new \Workerman\MySQL\Connection('66.45.240.70', 3306, 'zonemta', 'Z0n3mt4!', 'zonemta', 'utf8mb4');
 };
-	
+
 $web->onWorkerStop = function ($worker) {
 };
-	
+
 $web->onConnect = function ($connection) {
 	$connection->maxSendBufferSize = 50663296;
 };
