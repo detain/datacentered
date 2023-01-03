@@ -32,28 +32,34 @@ function memcached_queue_task($args)
 		Worker::safeEcho('Cannot Get queuein Lock, Returning after '.(time() - $memcached_start).' seconds'.PHP_EOL);
 		return;
 	}
-    // Get the Memcached QueueIn<id> values => $processQueue
+    $queuehosts = [];
+    foreach (['vps', 'quickservers'] as $module) {
+        if ($module == 'vps') {
+            $tblname ='VPS';
+            $table = 'vps';
+            $prefix = 'vps';
+            $influx_table = 'bandwidth';
+        } else {
+            $tblname = 'Rapid Deploy Servers';
+            $table = 'quickservers';
+            $prefix = 'qs';
+            $influx_table = $prefix.'_bandwidth';
+        }
+        $queuehosts = array_merge($queuehosts, $worker_db->select($prefix.'_ip')
+                    ->from($prefix.'_masters')
+                    ->column());
+    }
+    if (!is_array($queuehosts)) {
+        echo 'Queue Hosts is not array:'.var_export($queuehosts,true);
+    }
 	$processQueue = [];
-	$queuesCount = 5;
-	for ($suffix = 1; $suffix <= $queuesCount; $suffix++) {
-		$loopCount = 0;
-		do {
-			$response = $memcache->get('queuein'.$suffix, function($memcache, $key, &$value) { $value = []; return true; }, \Memcached::GET_EXTENDED);
-			if ($response === false) {
-				$memcache->set('queuein'.$suffix, []);
-				$response = $memcache->get('queuein'.$suffix, function($memcache, $key, &$value) { $value = []; return true; }, \Memcached::GET_EXTENDED);
-			}
-			$queue = $response['value'];
-			$cas = $response['cas'];
-			$processQueue = array_merge($processQueue, $queue);
-			$queue = [];
-			$loopCount++;
-			if ($loopCount > 100) {
-				$global->queuein = 0;
-				Worker::SafeEcho('Hit 100 Attempts at CAS updating the queuein after '.(time() - $memcached_start).' seconds'.PHP_EOL);
-				return;
-			}
-		} while ($loopCount < 100 && !$memcache->cas($response['cas'], 'queuein'.$suffix, $queue));
+    foreach ($queuehosts as $hostIp) {
+	    $queue = $memcache->get('queuein'.$hostIp);
+        if (is_array($queue)) {
+            $processQueue = array_merge($processQueue, $queue);
+            $queue = [];
+            $memcache->set('queuein'.$hostIp, $queue);
+        }
 	}
 	if (count($processQueue) == 0) {
 		$global->queuein = 0;
@@ -345,6 +351,6 @@ function memcached_queue_task($args)
 		} while (!$memcache->cas($response['cas'], 'queueout', $queue));
 	}
 	$global->queuein = 0;
-	//Worker::safeEcho('memcached_queue_task finished processing '.count($processQueue).' queues after '.(time() - $memcached_start).' seconds'.PHP_EOL);
+	Worker::safeEcho('memcached_queue_task finished processing '.count($processQueue).' queues after '.(time() - $memcached_start).' seconds'.PHP_EOL);
 	return;
 }

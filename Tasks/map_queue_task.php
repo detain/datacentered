@@ -13,7 +13,7 @@ function map_queue_task($args)
 	*/
 	global $memcache;
 	$hosts = 0;
-	$memcached_start = time();
+	//$memcached_start = time();
 	foreach (['vps', 'quickservers'] as $module) {
 		if ($module == 'vps') {
 			$tblname ='VPS';
@@ -25,7 +25,7 @@ function map_queue_task($args)
 			$table = 'quickservers';
 			$prefix = 'qs';
 			$influx_table = $prefix.'_bandwidth';
-		}		
+		}
 		$servers = $worker_db->select('*')
 			->from($prefix.'_masters')
 			->where($prefix.'_type != 11')
@@ -89,7 +89,7 @@ function map_queue_task($args)
 						    }
                         }
 					}
-					
+
 				}
 			}
 			$memcache->set('maps'.$server[$prefix.'_ip'], $maps);

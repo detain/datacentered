@@ -33,12 +33,12 @@ fi;
 		if (array_key_exists('main', $map)) {
 			echo "echo '{$map['main']}' > /root/cpaneldirect/vps.mainips;".PHP_EOL;
 		}
-	}	
+	}
 } elseif (isset($_POST['action']) && $_POST['action'] == 'queue') {
 	$queueArray = $memcache->get('queue');
 	if (is_array($queueArray)) {
 		/*if (array_key_exists($_SERVER['REMOTE_ADDR'], $queueArray['new']) && count($queueArray['new'][$_SERVER['REMOTE_ADDR']]) > 0) {
-			echo implode(PHP_EOL, $queueArray['new'][$_SERVER['REMOTE_ADDR']]).PHP_EOL;			
+			echo implode(PHP_EOL, $queueArray['new'][$_SERVER['REMOTE_ADDR']]).PHP_EOL;
 		}*/
 		if (array_key_exists($_SERVER['REMOTE_ADDR'], $queueArray['queue']) && count($queueArray['queue'][$_SERVER['REMOTE_ADDR']]) > 0) {
 			echo implode(PHP_EOL, $queueArray['queue'][$_SERVER['REMOTE_ADDR']]).PHP_EOL;
@@ -55,67 +55,19 @@ fi;
 				}
 			} while (!$memcache->cas($response['cas'], 'queue', $queue));
 		}
-	}	
+	}
 } else {
 	$item = ['get' => $_GET, 'post' => $_POST, 'ip' => $_SERVER['REMOTE_ADDR']];
-	$maxLoops = 1000;
-	$loopCount = 0;
 	$output = '';
-	$queuesCount = 5;
-	$success = true;
-	$queuehosts = $memcache->get('queuehosts');
-	if (!is_array($queuehosts) || !array_key_exists($_SERVER['REMOTE_ADDR'], $queuehosts)) {
-		do {
-			$response = $memcache->get('queuehosts', function($memcache, $key, &$value) { $value = []; return true; }, \Memcached::GET_EXTENDED);
-			$queuehosts = $response['value'];
-			$cas = $response['cas'];
-			// modify queue
-			if (!is_array($queuehosts)) {
-				//Worker::safeEcho('Queue isnt an array its '.var_export($queue,true).' forcing it to an array'.PHP_EOL);
-				$queuehosts = [];
-				$bestQueue = 1;
-			} else {
-				$queueCounts = [];
-				for ($x = 1; $x <= $queuesCount; $x++) {
-					$queueCounts[$x] = 0;
-				}
-				foreach ($queuehosts as $host => $queue) {
-					$queueCounts[$queue]++;
-				}
-				$bestQueue = 1;
-				for ($x = 1; $x <= $queuesCount; $x++) {
-					if ($queueCounts[$x] < $queueCounts[$bestQueue]) {
-						$bestQueue = $x;
-					}
-				}                
-			}
-			$queuehosts[$_SERVER['REMOTE_ADDR']] = $bestQueue;
-			$loopCount++;
-			if ($loopCount > $maxLoops) {
-				$success = false;
-				Worker::safeEcho('Max Loops ('.$maxLoops.') Reached Trying to Get queuehosts CAS set '.PHP_EOL);
-				break;
-			}
-		} while (!$memcache->cas($response['cas'], 'queuehosts', $queuehosts));
-	}   
-	if ($success == true) {
-		$queuein = 'queuein'.$queuehosts[$_SERVER['REMOTE_ADDR']];
-		$loopCount = 0;
-		do {
-			$response = $memcache->get($queuein, function($memcache, $key, &$value) { $value = []; return true; }, \Memcached::GET_EXTENDED);
-			if ($response === false) {
-				$memcache->set($queuein, []);
-				$response = $memcache->get($queuein, function($memcache, $key, &$value) { $value = []; return true; }, \Memcached::GET_EXTENDED);
-			}
-			$queue = $response['value'];
-			$queue[] = $item;                        
-			$loopCount++;
-			if ($loopCount > $maxLoops) {
-				Worker::safeEcho('Max Loops ('.$maxLoops.') Reached Trying to Get '.$queuein.' CAS set '.count($response['value']).' # items in each'.PHP_EOL);
-				break;
-			}
-		} while (!$memcache->cas($response['cas'], $queuein, $queue));
+	$queuein = 'queuein'.$_SERVER['REMOTE_ADDR'];
+	$loopCount = 0;
+	$response = $memcache->get($queuein, function($memcache, $key, &$value) { $value = []; return true; }, \Memcached::GET_EXTENDED);
+	if ($response === false) {
+		$memcache->set($queuein, []);
+		$response = $memcache->get($queuein, function($memcache, $key, &$value) { $value = []; return true; }, \Memcached::GET_EXTENDED);
 	}
-	//Worker::safeEcho('CAS set queuein to  '.json_encode($queue).PHP_EOL); 
+	$queue = $response['value'];
+	$queue[] = $item;
+    $memcache->set($queuein, $queue);
 }
 //\Workerman\Protocols\Http::end($output);
