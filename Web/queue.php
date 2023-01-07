@@ -61,12 +61,15 @@ fi;
 	$output = '';
 	$queuein = 'queuein'.$_SERVER['REMOTE_ADDR'];
 	$loopCount = 0;
+    /*
 	$response = $memcache->get($queuein, function($memcache, $key, &$value) { $value = []; return true; }, \Memcached::GET_EXTENDED);
 	if ($response === false) {
 		$memcache->set($queuein, []);
 		$response = $memcache->get($queuein, function($memcache, $key, &$value) { $value = []; return true; }, \Memcached::GET_EXTENDED);
 	}
 	$queue = $response['value'];
+    */
+    $queue = $memcache->get($queuein);
 	$queue[] = $item;
     $memcache->set($queuein, $queue);
 }

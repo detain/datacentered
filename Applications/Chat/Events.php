@@ -212,7 +212,7 @@ class Events
 	}
 
 	public static function map_queue_timer() {
-		Worker::safeEcho('Timer running for '.__METHOD__."\n");
+		//Worker::safeEcho('Timer running for '.__METHOD__."\n");
 		$task_connection = new AsyncTcpConnection('Text://127.0.0.1:2208');
 		$task_connection->send(json_encode(['type' => 'map_queue_task', 'args' => []]));
 		$task_connection->onMessage = function ($connection, $task_result) use ($task_connection) {
@@ -222,7 +222,7 @@ class Events
 	}
 
 	public static function memcache_queue_timer() {
-		Worker::safeEcho('Timer running for '.__METHOD__."\n");
+		//Worker::safeEcho('Timer running for '.__METHOD__."\n");
 		$task_connection = new AsyncTcpConnection('Text://127.0.0.1:2208');
 		$task_connection->send(json_encode(['type' => 'memcached_queue_task', 'args' => []]));
 		$task_connection->onMessage = function ($connection, $task_result) use ($task_connection) {
@@ -271,42 +271,51 @@ class Events
                 $updated = true;
             } catch (\PDOException $e) {
                 $check = 'SQLSTATE[40000]: Transaction rollback: 3101 Plugin instructed the server to rollback the current transaction.';
-                Worker::safeEcho('Got PDO Exception #'.$e->getCode().': "'.$e->getMessage()."\"\n");
+                ///Worker::safeEcho('Got PDO Exception #'.$e->getCode().': "'.$e->getMessage()."\"\n");
                 sleep($delay);
             }
         }
-        Worker::safeEcho("payment processing about to spawn task for ".json_encode($result,true)."\n");
-        $task_connection = new AsyncTcpConnection('Text://127.0.0.1:2208');
-        $task_connection->send(json_encode(['type' => 'processing_queue_task', 'args' => $result]));
-        $task_connection->onMessage = function ($connection, $task_result) use ($result, $results, $task_connection, $maxTries, $delay) {
-            Worker::safeEcho("finished queued payment processing task\n");
-            $try = 0;
-            $updated = false;
-            while ($updated === false && $try < $maxTries) {
-                $try++;
-                try {
-                    Events::$db->update('queue_log')->cols(['history_new_value' => 'completed'])->where('history_id='.$result['history_id'])->query();
-                    $updated = true;
-                } catch (\PDOException $e) {
-                    //$check = 'SQLSTATE[40000]: Transaction rollback: 3101 Plugin instructed the server to rollback the current transaction.';
-                    Worker::safeEcho('Got PDO Exception #'.$e->getCode().': "'.$e->getMessage()."\"\n");
-                    sleep($delay);
+        if ($updated === true) {
+            Worker::safeEcho("payment processing about to spawn task for ".json_encode($result,true)."\n");
+            $task_connection = new AsyncTcpConnection('Text://127.0.0.1:2208');
+            $task_connection->send(json_encode(['type' => 'processing_queue_task', 'args' => $result]));
+            $task_connection->onMessage = function ($connection, $task_result) use ($result, $results, $task_connection, $maxTries, $delay) {
+                //Worker::safeEcho("finished queued payment processing task\n");
+                $try = 0;
+                $updated = false;
+                while ($updated === false && $try < $maxTries) {
+                    $try++;
+                    try {
+                        Events::$db->update('queue_log')->cols(['history_new_value' => 'completed'])->where('history_id='.$result['history_id'])->query();
+                        $updated = true;
+                    } catch (\PDOException $e) {
+                        //$check = 'SQLSTATE[40000]: Transaction rollback: 3101 Plugin instructed the server to rollback the current transaction.';
+                        Worker::safeEcho('Got PDO Exception #'.$e->getCode().': "'.$e->getMessage()."\"\n");
+                        sleep($delay);
+                    }
                 }
-            }
-            $task_connection->close();
-            if (count($results) > 0) {
-                Events::process_results($results);
-            } else {
-                /**
-                 * @var \GlobalData\Client
-                 */
-                global $global;
-                $var = 'processsing_queue';
-                $global->$var = 0;
-            }
-            Worker::safeEcho("finished queued payment processing task (post close)\n");
-        };
-        $task_connection->connect();
+                $task_connection->close();
+                if (count($results) > 0) {
+                    Events::process_results($results);
+                } else {
+                    /**
+                     * @var \GlobalData\Client
+                     */
+                    global $global;
+                    $var = 'processsing_queue';
+                    $global->$var = 0;
+                }
+                Worker::safeEcho("finished queued payment processing task (post close)\n");
+            };
+            $task_connection->connect();
+        } else {
+            /**
+             * @var \GlobalData\Client
+             */
+            global $global;
+            $var = 'processsing_queue';
+            $global->$var = 0;
+        }
     }
 
 
@@ -418,7 +427,7 @@ class Events
 			'time' => date('Y-m-d H:i:s'),
 		];
 		Gateway::sendToAll(json_encode($new_message));*/
-		Worker::safeEcho("timer starting hyperv queue check\n");
+		//Worker::safeEcho("timer starting hyperv queue check\n");
 		$task_connection = new AsyncTcpConnection('Text://127.0.0.1:2208');
 		$task_connection->send(json_encode(['type' => 'sync_hyperv_queue', 'args' => []]));
 		$task_connection->onMessage = function ($connection, $task_result) use ($task_connection) {

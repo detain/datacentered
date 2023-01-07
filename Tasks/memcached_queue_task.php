@@ -63,7 +63,7 @@ function memcached_queue_task($args)
 	}
 	if (count($processQueue) == 0) {
 		$global->queuein = 0;
-		Worker::safeEcho('Empty Queue, Returning after '.(time() - $memcached_start).' seconds'.PHP_EOL);
+		//Worker::safeEcho('Empty Queue, Returning after '.(time() - $memcached_start).' seconds'.PHP_EOL);
 		return;
 	}
 	/**
@@ -315,14 +315,15 @@ function memcached_queue_task($args)
 							->bindValues($values)
 							->query();
 					} catch (\PDOException $e) {
-						Worker::safeEcho('Cought PDO Excetion #'.$e->getCode().':'.$e->getMessage().PHP_EOL);
 						if (in_array($e->getCode(), [3101, 1180])) {
 							$worker_db->update($prefix.'_masters')
 								->cols($cols)
 								->where($prefix.'_id='.$server[$prefix.'_id'])
 								->bindValues($values)
 								->query();
-						}
+						} else {
+                            Worker::safeEcho('Cought PDO Excetion #'.$e->getCode().':'.$e->getMessage().PHP_EOL);
+                        }
 					}
 					$memcache->set($module.'_masters'.$queue['ip'], $server, 3600);
 				break;
@@ -351,6 +352,6 @@ function memcached_queue_task($args)
 		} while (!$memcache->cas($response['cas'], 'queueout', $queue));
 	}
 	$global->queuein = 0;
-	Worker::safeEcho('memcached_queue_task finished processing '.count($processQueue).' queues after '.(time() - $memcached_start).' seconds'.PHP_EOL);
+	//Worker::safeEcho('memcached_queue_task finished processing '.count($processQueue).' queues after '.(time() - $memcached_start).' seconds'.PHP_EOL);
 	return;
 }

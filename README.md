@@ -360,10 +360,6 @@ project documentation: [https://github. Com/lobtao/workermvc_demo](https://gith
 
 ##### Problems to fix
 
-PHP Fatal error:  Maximum execution time of 1000 seconds exceeded in /home/sites/datacentered/Tasks/memcached_queue_task.php on line 233
-Fatal error: Maximum execution time of 1000 seconds exceeded in /home/sites/datacentered/Tasks/memcached_queue_task.php on line 233
-
-
 ##### Queue Info
 
 * Memcached Queue Task [30s]
