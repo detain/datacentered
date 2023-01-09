@@ -5860,12 +5860,12 @@
             "source": {
                 "type": "git",
                 "url": "https://github.com/sebastianbergmann/phpunit.git",
-                "reference": "0b91f6c65ddd492a57c738947110458ce20b0734"
+                "reference": "9bfc9c43291baa4b7b5b670cd28615ed941a3637"
             },
             "dist": {
                 "type": "zip",
-                "url": "https://api.github.com/repos/sebastianbergmann/phpunit/zipball/0b91f6c65ddd492a57c738947110458ce20b0734",
-                "reference": "0b91f6c65ddd492a57c738947110458ce20b0734",
+                "url": "https://api.github.com/repos/sebastianbergmann/phpunit/zipball/9bfc9c43291baa4b7b5b670cd28615ed941a3637",
+                "reference": "9bfc9c43291baa4b7b5b670cd28615ed941a3637",
                 "shasum": ""
             },
             "require": {
@@ -5954,7 +5954,7 @@
                     "type": "tidelift"
                 }
             ],
-            "time": "2023-01-04T07:20:58+00:00"
+            "time": "2023-01-09T12:30:24+00:00"
         },
         {
             "name": "satooshi/php-coveralls",
