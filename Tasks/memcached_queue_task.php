@@ -138,15 +138,23 @@ function memcached_queue_task($args)
 							->where($prefix.'_id='.$server[$prefix.'_id'])
 							->bindValues([$prefix.'_cpu_avg' => $cpu_avg, $prefix.'_cpu_usage' => $serialized_server_usage])
 							->query();
-					} catch (\PDOException $e) {
-						if (in_array($e->getCode(), [3101, 1180])) {
-							$worker_db->update($prefix.'_master_details')
-								->cols([$prefix.'_cpu_avg', $prefix.'_cpu_usage'])
-								->where($prefix.'_id='.$server[$prefix.'_id'])
-								->bindValues([$prefix.'_cpu_avg' => $cpu_avg, $prefix.'_cpu_usage' => $serialized_server_usage])
-								->query();
-						}
-					}
+                    } catch (\PDOException $e) {
+                        if (in_array($e->getCode(), [3101, 1180])) {
+                            $worker_db->update($prefix.'_master_details')
+                                ->cols([$prefix.'_cpu_avg', $prefix.'_cpu_usage'])
+                                ->where($prefix.'_id='.$server[$prefix.'_id'])
+                                ->bindValues([$prefix.'_cpu_avg' => $cpu_avg, $prefix.'_cpu_usage' => $serialized_server_usage])
+                                ->query();
+                        }
+                    } catch (\Exception $e) {
+                        if (in_array($e->getCode(), [3101, 1180])) {
+                            $worker_db->update($prefix.'_master_details')
+                                ->cols([$prefix.'_cpu_avg', $prefix.'_cpu_usage'])
+                                ->where($prefix.'_id='.$server[$prefix.'_id'])
+                                ->bindValues([$prefix.'_cpu_avg' => $cpu_avg, $prefix.'_cpu_usage' => $serialized_server_usage])
+                                ->query();
+                        }
+                    }
 					$serverDetails[$prefix.'_cpu_avg'] = $cpu_avg;
 					$serverDetails[$prefix.'_cpu_usage'] = $serialized_server_usage;
 					$memcache->set($module.'_master_details'.$server[$prefix.'_id'], $serverDetails, 3600);
@@ -314,17 +322,27 @@ function memcached_queue_task($args)
 							->where($prefix.'_id='.$server[$prefix.'_id'])
 							->bindValues($values)
 							->query();
-					} catch (\PDOException $e) {
-						if (in_array($e->getCode(), [3101, 1180])) {
-							$worker_db->update($prefix.'_masters')
-								->cols($cols)
-								->where($prefix.'_id='.$server[$prefix.'_id'])
-								->bindValues($values)
-								->query();
-						} else {
+                    } catch (\PDOException $e) {
+                        if (in_array($e->getCode(), [40000, 3101, 1180])) {
+                            $worker_db->update($prefix.'_masters')
+                                ->cols($cols)
+                                ->where($prefix.'_id='.$server[$prefix.'_id'])
+                                ->bindValues($values)
+                                ->query();
+                        } else {
                             Worker::safeEcho('Cought PDO Excetion #'.$e->getCode().':'.$e->getMessage().PHP_EOL);
                         }
-					}
+                    } catch (\Exception $e) {
+                        if (in_array($e->getCode(), [40000, 3101, 1180])) {
+                            $worker_db->update($prefix.'_masters')
+                                ->cols($cols)
+                                ->where($prefix.'_id='.$server[$prefix.'_id'])
+                                ->bindValues($values)
+                                ->query();
+                        } else {
+                            Worker::safeEcho('Cought PDO Excetion #'.$e->getCode().':'.$e->getMessage().PHP_EOL);
+                        }
+                    }
 					$memcache->set($module.'_masters'.$queue['ip'], $server, 3600);
 				break;
 			default:
