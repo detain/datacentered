@@ -30,14 +30,14 @@
 		"danielstjules/php-pretty-datetime": "*",
 		"influxdata/influxdb-client-php": "*",
 		"cache/memcached-adapter": "*",
-		"workerman/channel": "dev-master",
-		"workerman/gatewayclient": "dev-master",
-		"workerman/gateway-worker" : "dev-master",
-		"workerman/globaldata": "dev-master",
-		"workerman/global-timer": "dev-master",
-		"workerman/mysql": "dev-master",
-		"workerman/workerman": "^4.0@stable",
-		"workerman/statistics": "dev-master"
+		"workerman/channel": "*",
+		"workerman/gatewayclient": "*",
+		"workerman/gateway-worker" : "*",
+		"workerman/globaldata": "*",
+		"workerman/global-timer": "*",
+		"workerman/mysql": "*",
+		"workerman/workerman": "*",
+		"workerman/statistics": "*"
 	},
 	"require-dev": {
 		"phpunit/phpunit": "*",
@@ -53,7 +53,10 @@
 	"config": {
 		"minimum-stability": "dev",
 		"optimize-autoloader": true,
-		"sort-packages": true
+		"sort-packages": true,
+		"allow-plugins": {
+			"php-http/discovery": true
+		}
 	},
 	"repositories": [
 		{
