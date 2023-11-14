@@ -21,7 +21,6 @@
 		"corneltek/cliframework": "*",
 		"clue/soap-react": "*",
 		"roave/security-advisories": "*",
-		"react/promise": "*@stable",
 		"react/child-process": "*@stable",
 		"react/event-loop": "*@stable",
 		"react/http": "*@stable",
@@ -36,10 +35,11 @@
 		"workerman/globaldata": "*",
 		"workerman/global-timer": "*",
 		"workerman/mysql": "*",
-		"workerman/workerman": "*",
+		"workerman/workerman": "*@stable",
 		"workerman/statistics": "*"
 	},
 	"require-dev": {
+		"react/promise": "^2.10",
 		"phpunit/phpunit": "*",
 		"vlucas/phpdotenv": "*",
 		"codeclimate/php-test-reporter": "dev-master",
