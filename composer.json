@@ -42,11 +42,11 @@
 		"react/promise": "^2.10",
 		"phpunit/phpunit": "*",
 		"vlucas/phpdotenv": "*",
-		"codeclimate/php-test-reporter": "dev-master",
 		"satooshi/php-coveralls": "*",
 		"codacy/coverage": "dev-master"
 	},
 	"suggest": {
+		"codeclimate/php-test-reporter": "dev-master",
 		"ext-event": "*",
 		"ext-ev": "*"
 	},
