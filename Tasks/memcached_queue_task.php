@@ -27,6 +27,7 @@ function memcached_queue_task($args)
     $delay = 1;
     //
 	//Worker::safeEcho('Task handler Started memcached_queue_task'.PHP_EOL);
+    // - Get Lock to ensure its not ran a 2nd time in parallel - queuein
 	if (!isset($global->queuein)) {
 		$global->queuein = 0;
 	}
@@ -34,6 +35,7 @@ function memcached_queue_task($args)
 		Worker::safeEcho('Cannot Get queuein Lock, Returning after '.(time() - $memcached_start).' seconds'.PHP_EOL);
 		return;
 	}
+    // - Loop through vps, quickservers - $module
     $queuehosts = [];
     foreach (['vps', 'quickservers'] as $module) {
         if ($module == 'vps') {
@@ -52,6 +54,7 @@ function memcached_queue_task($args)
         while ($success == false && $try < $maxTries) {
             $try++;
             try {
+                // - Load all vps/qs_masters making an array of the host ip 0 - $queuehosts
                 $queuehosts = array_merge($queuehosts, $worker_db->select($prefix.'_ip')
                             ->from($prefix.'_masters')
                             ->column());
@@ -77,6 +80,7 @@ function memcached_queue_task($args)
     if (!is_array($queuehosts)) {
         echo 'Queue Hosts is not array:'.var_export($queuehosts,true);
     }
+    //
 	$processQueue = [];
     foreach ($queuehosts as $hostIp) {
 	    $queue = $memcache->get('queuein'.$hostIp);

@@ -80,7 +80,13 @@ if (!defined('GLOBAL_START')) { // If it is not started in the root directory, r
 }
 
 $web->onWorkerStart = function ($worker) {
-	global $memcache;
+	global $memcache, $redis;
+    include_once '/home/my/include/config/config.settings.php';
+    if (USE_REDIS === true) {
+        $redis = new \Redis();
+        if ($redis->connect(REDIS_HOST, REDIS_PORT, 1, '', 0, 0, ['auth' => [REDIS_USER, REDIS_PASS]])) {
+        }
+    }
 	$memcache = new \Memcached();
 	$memcache->addServer('localhost', 11211);
 	global $mysql_db;

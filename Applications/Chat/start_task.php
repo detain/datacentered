@@ -12,7 +12,7 @@ $task_worker = new Worker('Text://127.0.0.1:2208');		// task worker, using the T
 $task_worker->count = 10; 								// number of task processes can be opened more than needed
 $task_worker->name = 'TaskWorker';
 $task_worker->onWorkerStart = function ($worker) {
-	global $global, $functions, $worker_db, $influx_v2_client, $influx_v2_database, $memcache;
+	global $global, $functions, $worker_db, $influx_v2_client, $influx_v2_database, $memcache, $redis;
 	require_once '/home/my/include/functions.inc.php';
 	include_once '/home/my/include/config/config.settings.php';
 	$db_config = include '/home/my/include/config/config.db.php';
@@ -31,16 +31,21 @@ $task_worker->onWorkerStart = function ($worker) {
 		$influx_v2_database = $influx_v2_client->createWriteApi(['writeType' => \InfluxDB2\WriteType::BATCHING, 'batchSize' => 1000]);
 	}
 	$global = new \GlobalData\Client('127.0.0.1:2207');
+    $queuehosts = [];
+    $functions = [];
+    foreach (glob(__DIR__.'/../../Tasks/*.php') as $file) {
+        $function = basename($file, '.php');
+        $functions[] = $function;
+        require_once $file;
+    }
+    if (USE_REDIS === true) {
+        $redis = new \Redis();
+        if ($redis->connect(REDIS_HOST, REDIS_PORT, 1, '', 0, 0, ['auth' => [REDIS_USER, REDIS_PASS]])) {
+        }
+    }
 	$memcache = new \Memcached();
 	$memcache->addServer('localhost', 11211);
-	$queuehosts = [];
 	$memcache->set('queuehosts', $queuehosts);
-	$functions = [];
-	foreach (glob(__DIR__.'/../../Tasks/*.php') as $file) {
-		$function = basename($file, '.php');
-		$functions[] = $function;
-		require_once $file;
-	}
 };
 
 $task_worker->onConnect = function ($connection) { // When the client is connected, set the connection onWebSocketConnect, that is, when the websocket handshake callback
