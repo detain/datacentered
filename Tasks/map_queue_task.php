@@ -92,7 +92,11 @@ function map_queue_task($args)
 
 				}
 			}
-			$memcache->set('maps'.$server[$prefix.'_ip'], $maps);
+            if (USE_REDIS === true) {
+                $redis->set('maps|'.$server[$prefix.'_ip'], json_encode($maps));
+            } else {
+                $memcache->set('maps'.$server[$prefix.'_ip'], $maps);
+            }
 			$hosts++;
 		}
 	}
