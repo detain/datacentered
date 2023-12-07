@@ -465,13 +465,22 @@ function redis_queue_task($args)
 					$key = $module.'|host|'.$server[$prefix.'_id'].'|'.$field;
 					if (isset($servers[$field])) {
 						//Worker::safeEcho('server_info setting '.$key.'='.$servers[$field].PHP_EOL);
-						$memcache->set($key, $servers[$field]);
+                        if (USE_REDIS === true) {
+                            $redis->set($key, $servers[$field]);
+                        } else {
+						    $memcache->set($key, $servers[$field]);
+                        }
 					}
 				}
 				foreach ($detailfields as $field) {
 					$key = '|'.$module.'|hostd|'.$server[$prefix.'_id'].'|'.$field;
-					if (isset($servers[$field]))
-						$memcache->set($key, $servers[$field]);
+					if (isset($servers[$field])) {
+                        if (USE_REDIS === true) {
+                            $redis->set($key, $servers[$field]);
+                        } else {
+                            $memcache->set($key, $servers[$field]);
+                        }
+                    }
 				}
 				$cols = [];
 				$values = [];
@@ -506,7 +515,11 @@ function redis_queue_task($args)
                             }
                         }
                     }
-					$memcache->set($module.'_masters'.$queue['ip'], $server, 3600);
+                    if (USE_REDIS === true) {
+                        $redis->setEx($module.'_masters|'.$queue['ip'], 3600, $server);
+                    } else {
+                        $memcache->set($module.'_masters'.$queue['ip'], $server, 3600);
+                    }
 				break;
 			default:
 				Worker::safeEcho('Dont know how to handel this Queued Entry: '.json_encode($queue, true).PHP_EOL);
