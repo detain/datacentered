@@ -4,7 +4,11 @@ use Workerman\Worker;
 
 global $memcache;
 if (isset($_POST['action']) && $_POST['action'] == 'map') {
-	$map = $memcache->get('maps'.$_SERVER['REMOTE_ADDR']);
+    if (USE_REDIS === true) {
+        $map = json_decode($redis->get('maps|'.$_SERVER['REMOTE_ADDR']), true);
+    } else {
+        $map = $memcache->get('maps'.$_SERVER['REMOTE_ADDR']);
+    }
 	if (is_array($map)) {
 		if (array_key_exists('slice', $map)) {
 			echo "echo '{$map['slice']}' > /root/cpaneldirect/vps.slicemap;".PHP_EOL;
@@ -35,42 +39,52 @@ fi;
 		}
 	}
 } elseif (isset($_POST['action']) && $_POST['action'] == 'queue') {
-	$queueArray = $memcache->get('queue');
-	if (is_array($queueArray)) {
-		/*if (array_key_exists($_SERVER['REMOTE_ADDR'], $queueArray['new']) && count($queueArray['new'][$_SERVER['REMOTE_ADDR']]) > 0) {
-			echo implode(PHP_EOL, $queueArray['new'][$_SERVER['REMOTE_ADDR']]).PHP_EOL;
-		}*/
-		if (array_key_exists($_SERVER['REMOTE_ADDR'], $queueArray['queue']) && count($queueArray['queue'][$_SERVER['REMOTE_ADDR']]) > 0) {
-			echo implode(PHP_EOL, $queueArray['queue'][$_SERVER['REMOTE_ADDR']]).PHP_EOL;
-			$loopCount = 0;
-			do {
-				$response = $memcache->get('queue', function($memcache, $key, &$value) { $value = []; return true; }, \Memcached::GET_EXTENDED);
-				$queue = $response['value'];
-				$cas = $response['cas'];
-				$queue['queue'][$_SERVER['REMOTE_ADDR']] = [];
-				$loopCount++;
-				if ($loopCount > 100) {
-					Worker::safeEcho('Max Loops Reached Trying to Get queue CAS set '.PHP_EOL);
-					break;
-				}
-			} while (!$memcache->cas($response['cas'], 'queue', $queue));
-		}
-	}
+    if (USE_REDIS === true) {
+        while (false !== $queue = $redis->lPop('queue|'.$_SERVER['REMOTE_ADDR'])) {
+            echo $queue.PHP_EOL;
+        }
+    } else {
+        $queueArray = $memcache->get('queue');
+        if (is_array($queueArray)) {
+            /*if (array_key_exists($_SERVER['REMOTE_ADDR'], $queueArray['new']) && count($queueArray['new'][$_SERVER['REMOTE_ADDR']]) > 0) {
+                echo implode(PHP_EOL, $queueArray['new'][$_SERVER['REMOTE_ADDR']]).PHP_EOL;
+            }*/
+            if (array_key_exists($_SERVER['REMOTE_ADDR'], $queueArray['queue']) && count($queueArray['queue'][$_SERVER['REMOTE_ADDR']]) > 0) {
+                echo implode(PHP_EOL, $queueArray['queue'][$_SERVER['REMOTE_ADDR']]).PHP_EOL;
+                $loopCount = 0;
+                do {
+                    $response = $memcache->get('queue', function($memcache, $key, &$value) { $value = []; return true; }, \Memcached::GET_EXTENDED);
+                    $queue = $response['value'];
+                    $cas = $response['cas'];
+                    $queue['queue'][$_SERVER['REMOTE_ADDR']] = [];
+                    $loopCount++;
+                    if ($loopCount > 100) {
+                        Worker::safeEcho('Max Loops Reached Trying to Get queue CAS set '.PHP_EOL);
+                        break;
+                    }
+                } while (!$memcache->cas($response['cas'], 'queue', $queue));
+            }
+        }
+    }
 } else {
 	$item = ['get' => $_GET, 'post' => $_POST, 'ip' => $_SERVER['REMOTE_ADDR']];
 	$output = '';
-	$queuein = 'queuein'.$_SERVER['REMOTE_ADDR'];
-	$loopCount = 0;
-    /*
-	$response = $memcache->get($queuein, function($memcache, $key, &$value) { $value = []; return true; }, \Memcached::GET_EXTENDED);
-	if ($response === false) {
-		$memcache->set($queuein, []);
-		$response = $memcache->get($queuein, function($memcache, $key, &$value) { $value = []; return true; }, \Memcached::GET_EXTENDED);
-	}
-	$queue = $response['value'];
-    */
-    $queue = $memcache->get($queuein);
-	$queue[] = $item;
-    $memcache->set($queuein, $queue);
+    if (USE_REDIS === true) {
+        $redis->rPush('queuein|'.$_SERVER['REMOTE_ADDR'], json_encode($item));
+    } else {
+        $queuein = 'queuein'.$_SERVER['REMOTE_ADDR'];
+        $loopCount = 0;
+        /*
+        $response = $memcache->get($queuein, function($memcache, $key, &$value) { $value = []; return true; }, \Memcached::GET_EXTENDED);
+        if ($response === false) {
+            $memcache->set($queuein, []);
+            $response = $memcache->get($queuein, function($memcache, $key, &$value) { $value = []; return true; }, \Memcached::GET_EXTENDED);
+        }
+        $queue = $response['value'];
+        */
+        $queue = $memcache->get($queuein);
+        $queue[] = $item;
+        $memcache->set($queuein, $queue);
+    }
 }
 //\Workerman\Protocols\Http::end($output);
