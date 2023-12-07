@@ -113,7 +113,6 @@ function redis_queue_task($args)
 	*/
 	//Worker::safeEcho('Processing '.count($processQueue).' Queues from Memcached after '.(time() - $start).' seconds'.PHP_EOL);
 
-	$return = [];
 	foreach ($processQueue as $idx => $queue) {
 		$module = isset($queue['post']['module']) ? $queue['post']['module'] : 'vps';
 		if ($module == 'vps') {
@@ -422,7 +421,11 @@ function redis_queue_task($args)
 								continue;
 							}
 							$serverVps[$veid] = $row[$prefix.'_id'];
-							$memcache->set($module.'_vps'.$server[$prefix.'_id'], $serverVps, 3600);
+                            if (USE_REDIS === true) {
+                                $redis->setEx($module.'_vps|'.$server[$prefix.'_id'], 3600, $serverVps);
+                            } else {
+                                $memcache->set($module.'_vps'.$server[$prefix.'_id'], $serverVps, 3600);
+                            }
 						}
 						$vps = $serverVps[$veid];
 						if (INFLUX_V2 === true) {
@@ -509,25 +512,6 @@ function redis_queue_task($args)
 				Worker::safeEcho('Dont know how to handel this Queued Entry: '.json_encode($queue, true).PHP_EOL);
 				break;
 		}
-	}
-	if (count($return) > 0) {
-        error_log(__FILE__.' return: '.json_encode($return));
-		$loopCount = 0;
-		do {
-			$response = $memcache->get('queueout', function($memcache, $key, &$value) { $value = []; return true; }, \Memcached::GET_EXTENDED);
-			$queue = $response['value'];
-			$cas = $response['cas'];
-			if (count($queue) > 0) {
-				foreach ($return as $row)
-					$queue[] = $row;
-			}
-			$loopCount++;
-			if ($loopCount > 100) {
-				$global->queuein = 0;
-				Worker::SafeEcho('Hit 100 Attempts at CAS updating the queuein to 0 after '.(time() - $start).' seconds'.PHP_EOL);
-				return;
-			}
-		} while (!$memcache->cas($response['cas'], 'queueout', $queue));
 	}
 	$global->queuein = 0;
 	//Worker::safeEcho('memcached_queue_task finished processing '.count($processQueue).' queues after '.(time() - $start).' seconds'.PHP_EOL);
