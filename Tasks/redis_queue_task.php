@@ -166,7 +166,7 @@ function redis_queue_task($args)
                 $memcache->set($module.'_masters'.$queue['ip'], $server, 3600);
             }
 		}
-        if (USE_REDIS === true) {
+        if (USE_REDIS === true && !is_array($server)) {
             $server = json_decode($server, true);
         }
 		switch ($queue['post']['action']) {
@@ -252,7 +252,7 @@ function redis_queue_task($args)
                         }
 					}
 				}
-                if (USE_REDIS === true) {
+                if (USE_REDIS === true && !is_array($serverDetails)) {
                     $serverDetails = json_decode($serverDetails, true);
                 }
 				if ($serverDetails[$prefix.'_cpu_usage'] != $serialized_server_usage || $serverDetails[$prefix.'_cpu_avg'] != $cpu_avg) {
@@ -345,7 +345,11 @@ function redis_queue_task($args)
                             }
 							if ($row !== false) {
 								$serverVps[$veid] = $row[$prefix.'_id'];
-								$memcache->set($module.'_vps'.$server[$prefix.'_id'], $serverVps, 3600);
+                                if (USE_REDIS === true) {
+                                    $redis->setEx($module.'_vps|'.$server[$prefix.'_id'], 3600, $serverVps);
+                                } else {
+                                    $memcache->set($module.'_vps'.$server[$prefix.'_id'], $serverVps, 3600);
+                                }
 								if (INFLUX_V2 === true) {
 									/*$point = \InfluxDB2\Point::measurement($prefix.'_stats')
 										->addTag('vps', (int)$row[$prefix.'_id'])
@@ -389,10 +393,17 @@ function redis_queue_task($args)
 				$servers = gzuncompress($servers);
 				$servers = json_decode($servers,true);
 				if (is_array($bandwidth)) {
-					$serverVps = $memcache->get($module.'_vps'.$server[$prefix.'_id']);
-					if ($serverVps === false) {
-						$serverVps = [];
-					}
+                    if (USE_REDIS === true) {
+                        $serverVps = $redis->get($module.'_vps|'.$server[$prefix.'_id']);
+                    } else {
+                        $serverVps = $memcache->get($module.'_vps'.$server[$prefix.'_id']);
+                    }
+                    if (USE_REDIS === true && $serverVps !== false) {
+                        $serverVps = json_decode($serverVps, true);
+                    }
+                    if ($serverVps === false) {
+                        $serverVps = [];
+                    }
 					$errors = [];
 					foreach ($bandwidth as $ip => $data) {
 						if ($ip == '')
