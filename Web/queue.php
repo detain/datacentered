@@ -2,7 +2,7 @@
 
 use Workerman\Worker;
 
-global $memcache;
+global $memcache, $redis;
 if (isset($_POST['action']) && $_POST['action'] == 'map') {
     if (USE_REDIS === true) {
         $map = json_decode($redis->get('maps|'.$_SERVER['REMOTE_ADDR']), true);
