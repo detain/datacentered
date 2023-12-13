@@ -85,7 +85,7 @@ $web->onWorkerStart = function ($worker) {
     if (USE_REDIS === true) {
         $redis = new \Redis();
         if ($redis->connect(REDIS_HOST, REDIS_PORT, 2)) {
-            $redis->auth([REDIS_USER, REDIS_PASS]);
+            $redis->auth(REDIS_PASS);
         }
     }
 	$memcache = new \Memcached();
