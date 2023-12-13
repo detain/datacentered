@@ -168,6 +168,10 @@ function memcached_queue_task($args)
         if (USE_REDIS === true && !is_array($server)) {
             $server = json_decode($server, true);
         }
+        if (!is_array($server)) {
+            Worker::safeEcho(var_export($server, true));
+            Worker::safeEcho(var_export($queue, true));
+        }
 		switch ($queue['post']['action']) {
 			case 'cpu_usage':
 				$cpu_usage = json_decode($queue['post']['cpu_usage'], true);
