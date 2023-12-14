@@ -168,10 +168,6 @@ function memcached_queue_task($args)
         if (USE_REDIS === true && !is_array($server)) {
             $server = json_decode($server, true);
         }
-        if (!is_array($server)) {
-            Worker::safeEcho(var_export($server, true));
-            Worker::safeEcho(var_export($queue, true));
-        }
 		switch ($queue['post']['action']) {
 			case 'cpu_usage':
 				$cpu_usage = json_decode($queue['post']['cpu_usage'], true);
@@ -349,7 +345,7 @@ function memcached_queue_task($args)
 							if ($row !== false) {
 								$serverVps[$veid] = $row[$prefix.'_id'];
                                 if (USE_REDIS === true) {
-                                    $redis->setEx($module.'_vps|'.$server[$prefix.'_id'], 3600, $serverVps);
+                                    $redis->setEx($module.'_vps|'.$server[$prefix.'_id'], 3600, json_encode($serverVps));
                                 } else {
                                     $memcache->set($module.'_vps'.$server[$prefix.'_id'], $serverVps, 3600);
                                 }
@@ -426,7 +422,7 @@ function memcached_queue_task($args)
 							}
 							$serverVps[$veid] = $row[$prefix.'_id'];
                             if (USE_REDIS === true) {
-                                $redis->setEx($module.'_vps|'.$server[$prefix.'_id'], 3600, $serverVps);
+                                $redis->setEx($module.'_vps|'.$server[$prefix.'_id'], 3600, json_encode($serverVps));
                             } else {
                                 $memcache->set($module.'_vps'.$server[$prefix.'_id'], $serverVps, 3600);
                             }
@@ -520,7 +516,7 @@ function memcached_queue_task($args)
                         }
                     }
                     if (USE_REDIS === true) {
-                        $redis->setEx($module.'_masters|'.$queue['ip'], 3600, $server);
+                        $redis->setEx($module.'_masters|'.$queue['ip'], 3600, json_encode($server));
                     } else {
                         $memcache->set($module.'_masters'.$queue['ip'], $server, 3600);
                     }

@@ -11,7 +11,7 @@ function map_queue_task($args)
 	/**
 	* @var \Memcached
 	*/
-	global $memcache;
+	global $memcache, $redis;
 	$hosts = 0;
 	//$memcached_start = time();
 	foreach (['vps', 'quickservers'] as $module) {
