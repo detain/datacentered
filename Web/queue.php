@@ -40,7 +40,7 @@ if (isset($_POST['action']) && $_POST['action'] == 'map') {
 		    }
 	    }
     } catch (\Exception $e) {
-        Worker::safeEcho('Cought Exception #'.$e->getCode().':'.$e->getMessage().' on '.__LINE__.'@'.__FILE__);
+        Worker::safeEcho('Caught Exception #'.$e->getCode().':'.$e->getMessage().' on '.__LINE__.'@'.__FILE__);
     }
 } elseif (isset($_POST['action']) && $_POST['action'] == 'queue') {
     try {
@@ -72,7 +72,7 @@ if (isset($_POST['action']) && $_POST['action'] == 'map') {
             }
         }
     } catch (\Exception $e) {
-        Worker::safeEcho('Cought Exception #'.$e->getCode().':'.$e->getMessage().' on '.__LINE__.'@'.__FILE__);
+        Worker::safeEcho('Caught Exception #'.$e->getCode().':'.$e->getMessage().' on '.__LINE__.'@'.__FILE__);
     }
 } else {
 	$item = ['get' => $_GET, 'post' => $_POST, 'ip' => $_SERVER['REMOTE_ADDR']];
@@ -96,7 +96,7 @@ if (isset($_POST['action']) && $_POST['action'] == 'map') {
             $memcache->set($queuein, $queue);
         }
     } catch (\Exception $e) {
-        Worker::safeEcho('Cought Exception #'.$e->getCode().':'.$e->getMessage().' on '.__LINE__.'@'.__FILE__);
+        Worker::safeEcho('Caught Exception #'.$e->getCode().':'.$e->getMessage().' on '.__LINE__.'@'.__FILE__);
     }
 }
 //\Workerman\Protocols\Http::end($output);
