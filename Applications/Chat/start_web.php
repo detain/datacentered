@@ -86,7 +86,7 @@ $web->onWorkerStart = function ($worker) {
         try {
             $redis = new \Redis();
             if ($redis->connect(REDIS_HOST, REDIS_PORT, 2)) {
-                $redis->auth(REDIS_PASS);
+                //$redis->auth(REDIS_PASS);
             }
         } catch (\Exception $e) {
             Worker::safeEcho('Caught Exception #'.$e->getCode().':'.$e->getMessage().' on '.__LINE__.'@'.__FILE__);
