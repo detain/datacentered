@@ -103,7 +103,7 @@ $web->onWorkerStart = function ($worker) {
 	$mysql_db = new \Workerman\MySQL\Connection($db_config['db_host'], $db_config['db_port'], $db_config['db_user'], $db_config['db_pass'], $db_config['db_name'], 'utf8mb4');
 	$zone_db = new \Workerman\MySQL\Connection('66.45.240.70', 3306, 'zonemta', 'Z0n3mt4!', 'zonemta', 'utf8mb4');
     $GLOBALS['log_queries'] = false;
-    require_once __DIR__.'/../include/functions.inc.php';
+    require_once '/home/my/include/functions.inc.php';
     ini_set('error_reporting', E_ALL & ~E_NOTICE);
     $tf->session->sessionid = 'WorkerManWeb';
     $tf->session->account_id = 160308;
