@@ -80,7 +80,12 @@ if (!defined('GLOBAL_START')) { // If it is not started in the root directory, r
 }
 
 $web->onWorkerStart = function ($worker) {
-	global $memcache, $redis;
+    global $memcache, $redis;
+    global $mysql_db, $zone_db;
+    /**
+    * @var MyAdmin\tf $tf
+    */
+    global $tf;
     include_once '/home/my/include/config/config.settings.php';
     if (USE_REDIS === true) {
         try {
@@ -94,10 +99,16 @@ $web->onWorkerStart = function ($worker) {
     }
 	$memcache = new \Memcached();
 	$memcache->addServer('localhost', 11211);
-	global $mysql_db;
-	//$db_config = include '/home/my/include/config/config.db.php';
-	//$mysql_db = new \Workerman\MySQL\Connection($db_config['db_host'], $db_config['db_port'], $db_config['db_user'], $db_config['db_pass'], $db_config['db_name'], 'utf8mb4');
-	$mysql_db = new \Workerman\MySQL\Connection('66.45.240.70', 3306, 'zonemta', 'Z0n3mt4!', 'zonemta', 'utf8mb4');
+	$db_config = include '/home/my/include/config/config.db.php';
+	$mysql_db = new \Workerman\MySQL\Connection($db_config['db_host'], $db_config['db_port'], $db_config['db_user'], $db_config['db_pass'], $db_config['db_name'], 'utf8mb4');
+	$zone_db = new \Workerman\MySQL\Connection('66.45.240.70', 3306, 'zonemta', 'Z0n3mt4!', 'zonemta', 'utf8mb4');
+    $GLOBALS['log_queries'] = false;
+    require_once __DIR__.'/../include/functions.inc.php';
+    ini_set('error_reporting', E_ALL & ~E_NOTICE);
+    $tf->session->sessionid = 'WorkerManWeb';
+    $tf->session->account_id = 160308;
+    $tf->session->appnocache('ima', 'services');
+    
 };
 
 $web->onWorkerStop = function ($worker) {

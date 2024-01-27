@@ -8,7 +8,7 @@ use Workerman\Worker;
 /**
 * @var {\Workerman\MySQL\Connection}
 */
-global $mysql_db;
+global $zone_db;
 global $_GET, $_POST;
 //error_log('Logger called for table '.$_GET['table']);
 if (!isset($_GET['table'])) {
@@ -87,7 +87,7 @@ if (count($doc) > 0) {
 		$out['doc'] = json_encode($doc);
 	}
 }
-$insertId = $mysql_db
+$insertId = $zone_db
 	->insert('mail_'.$table)
 	->cols($out)
 	->query();
@@ -97,7 +97,7 @@ if (count($doc) > 0) {
 			'senderdelivered_id' => $insertId,
 			'doc' => json_encode($doc)
 		];
-		$insertExtraId = $mysql_db
+		$insertExtraId = $zone_db
 			->insert('mail_'.$table.'_extra')
 			->cols($extra)
 			->query();
