@@ -101,7 +101,7 @@ $web->onWorkerStart = function ($worker) {
 	$memcache->addServer('localhost', 11211);
 	$db_config = include '/home/my/include/config/config.db.php';
 	$mysql_db = new \Workerman\MySQL\Connection($db_config['db_host'], $db_config['db_port'], $db_config['db_user'], $db_config['db_pass'], $db_config['db_name'], 'utf8mb4');
-	$zone_db = new \Workerman\MySQL\Connection('66.45.240.70', 3306, 'zonemta', 'Z0n3mt4!', 'zonemta', 'utf8mb4');
+	$zone_db = new \Workerman\MySQL\Connection(ZONEMTA_MYSQL_HOST, ZONEMTA_MYSQL_PORT, ZONEMTA_MYSQL_USERNAME, ZONEMTA_MYSQL_PASSWORD, ZONEMTA_MYSQL_DB, 'utf8mb4');
     $GLOBALS['log_queries'] = false;
     require_once '/home/my/include/functions.inc.php';
     ini_set('error_reporting', E_ALL & ~E_NOTICE);

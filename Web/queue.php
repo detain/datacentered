@@ -45,11 +45,11 @@ if (isset($_POST['action']) && $_POST['action'] == 'map') {
 } elseif (isset($_POST['action']) && $_POST['action'] == 'get_queue') {
     $module = 'vps';
     $settings = get_module_settings($module);
-    $db = get_module_db($module);
+    global $mysql_db;
     $ip = $_SERVER['REMOTE_ADDR'];
     if (validIp($ip)) {
-        if (false !== $vpsMaster = $db->select('*')->from('vps_masters')->where('vps_ip = :ip')->bindValues(['ip' => '205.209.103.70'])->row()) {
-            if (false !== $results = $db->select('*')->from('queue_log')->leftJoin('vps', 'vps_id=history_type')->where('history_section="vpsqueue" and vps_server=:id')->bindValues(['id' => $vpsMaster['vps_id']])->query()) {
+        if (false !== $vpsMaster = $mysql_db->select('*')->from('vps_masters')->where('vps_ip = :ip')->bindValues(['ip' => '205.209.103.70'])->row()) {
+            if (false !== $results = $mysql_db->select('*')->from('queue_log')->leftJoin('vps', 'vps_id=history_type')->where('history_section="vpsqueue" and vps_server=:id')->bindValues(['id' => $vpsMaster['vps_id']])->query()) {
                 function_requirements('vps_queue_handler');
                 foreach ($results as $result) {
                     echo call_user_func('vps_queue_handler', $result, 'get_queue');
