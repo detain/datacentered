@@ -48,7 +48,7 @@ if (isset($_POST['action']) && $_POST['action'] == 'map') {
     global $mysql_db;
     $ip = $_SERVER['REMOTE_ADDR'];
     if (validIp($ip)) {
-        if (false !== $vpsMaster = $mysql_db->select('*')->from('vps_masters')->where('vps_ip = :ip')->bindValues(['ip' => '205.209.103.70'])->row()) {
+        if (false !== $vpsMaster = $mysql_db->select('*')->from('vps_masters')->where('vps_ip = :ip')->bindValues(['ip' => $_SERVER['REMOTE_ADDR']])->row()) {
             if (false !== $results = $mysql_db->select('*')->from('queue_log')->leftJoin('vps', 'vps_id=history_type')->where('history_section="vpsqueue" and vps_server=:id')->bindValues(['id' => $vpsMaster['vps_id']])->query()) {
                 function_requirements('vps_queue_handler');
                 foreach ($results as $result) {
