@@ -52,7 +52,7 @@ if (isset($_POST['action']) && $_POST['action'] == 'map') {
             if (false !== $results = $mysql_db->select('*')->from('queue_log')->leftJoin('vps', 'vps_id=history_type')->where('history_section="vpsqueue" and vps_server=:id')->bindValues(['id' => $vpsMaster['vps_id']])->query()) {
                 function_requirements('vps_queue_handler');
                 foreach ($results as $result) {
-                    echo call_user_func('vps_queue_handler', $result, 'get_queue');
+                    echo call_user_func('vps_queue_handler', $vpsMaster, 'get_queue');
                 }
             }
         } else {
