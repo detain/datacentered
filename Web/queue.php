@@ -77,7 +77,7 @@ if (isset($_POST['action']) && $_POST['action'] == 'map') {
     $ip = $_SERVER['REMOTE_ADDR'];
     if (validIp($ip)) {
         if (false !== $qsMaster = $mysql_db->select('*')->from('qs_masters')->leftJoin('qs_master_details', 'qs_masters.qs_id=qs_master_details.qs_id')->where('qs_ip = :ip')->bindValues(['ip' => $_SERVER['REMOTE_ADDR']])->row()) {
-            if (false !== $results = $mysql_db->select('*')->from('queue_log')->leftJoin('quickservers', 'qs_id=history_type')->where('history_section="qsqueue" and qs_server=:id')->bindValues(['id' => $qsMaster['qs_id']])->query()) {
+            if (false !== $results = $mysql_db->select('*')->from('queue_log')->leftJoin('quickservers', 'qs_id=history_type')->where('history_section="quickserversqueue" and qs_server=:id')->bindValues(['id' => $qsMaster['qs_id']])->query()) {
                 function_requirements('qs_queue_handler');
                 foreach ($results as $result) {
                     echo qs_queue_handler($qsMaster, 'get_queue', $result);
