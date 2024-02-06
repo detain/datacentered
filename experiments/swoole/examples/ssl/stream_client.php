@@ -10,8 +10,7 @@ $contextOptions = [
 $context = stream_context_create($contextOptions);
 
 $fp = stream_socket_client("ssl://127.0.0.1:9501", $errno, $errstr, 30, STREAM_CLIENT_CONNECT, $context);
-if (!$fp)
-{
+if (!$fp) {
     die("Unable to connect: $errstr ($errno)");
 }
 
@@ -22,4 +21,3 @@ var_dump($ret);
 $recv =  fread($fp, 8192);
 var_dump($recv);
 echo "finish\n";
-

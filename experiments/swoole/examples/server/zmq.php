@@ -11,39 +11,37 @@ $receiver->bind("tcp://*:5558");
     
 function onZMQR()
 {
-	global $receiver;
-	$string = $receiver->recv();
-	echo $string, PHP_EOL;
+    global $receiver;
+    $string = $receiver->recv();
+    echo $string, PHP_EOL;
 }
 
-$serv->set(array(
-	//'tcp_defer_accept' => 5,
-	'worker_num' => 1,
-	'reactor_num' => 1,
-	//'daemonize' => true,
-	//'log_file' => '/tmp/swoole.log'
-));
+$serv->set([
+    //'tcp_defer_accept' => 5,
+    'worker_num' => 1,
+    'reactor_num' => 1,
+    //'daemonize' => true,
+    //'log_file' => '/tmp/swoole.log'
+]);
 
-$serv->on('workerStart', function($serv, $worker_id) {
-	global $sender;
+$serv->on('workerStart', function ($serv, $worker_id) {
+    global $sender;
     global $receiver;
     
-    $rfd = $receiver->getsockopt(ZMQ::SOCKOPT_FD);  
-    swoole_event_add($rfd, 'onZMQR', NULL , SWOOLE_EVENT_READ);
+    $rfd = $receiver->getsockopt(ZMQ::SOCKOPT_FD);
+    swoole_event_add($rfd, 'onZMQR', null , SWOOLE_EVENT_READ);
     echo "worker start\n";
 });
 
-$serv->on('connect', function ($serv, $fd, $from_id){
+$serv->on('connect', function ($serv, $fd, $from_id) {
     echo "[#".posix_getpid()."]\tClient@[$fd:$from_id]: Connect.\n";
 });
 
 $serv->on('receive', function (swoole_server $serv, $fd, $from_id, $data) {
-	
     $cmd = trim($data);
     echo "[#".posix_getpid()."]\tClient[$fd]: $data\n";
     
-    if($cmd == "zmqtest")
-    {
+    if ($cmd == "zmqtest") {
         echo 'aaaaaaaaaaaa'. PHP_EOL;
         $sender->send("msg to zmq");
     }

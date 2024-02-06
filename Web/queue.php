@@ -10,19 +10,19 @@ if (isset($_POST['action']) && $_POST['action'] == 'map') {
         } else {
             $map = $memcache->get('maps'.$_SERVER['REMOTE_ADDR']);
         }
-	    if (is_array($map)) {
-		    if (array_key_exists('slice', $map)) {
-			    echo "echo '{$map['slice']}' > /root/cpaneldirect/vps.slicemap;".PHP_EOL;
-		    }
-		    if (array_key_exists('ip', $map)) {
-			    echo 'oldm="$(md5sum /root/cpaneldirect/vps.ipmap)";'.PHP_EOL;
-			    echo "echo '{$map['ip']}' > /root/cpaneldirect/vps.ipmap;".PHP_EOL;
-			    echo 'newm="$(md5sum /root/cpaneldirect/vps.ipmap)";'.PHP_EOL;
-			    echo 'if [ $(which virsh) != "" ] && [ "$newm" != "$oldm" ]; then bash /root/cpaneldirect/run_buildebtables.sh; fi;'.PHP_EOL;
-		    }
-		    if (array_key_exists('vnc', $map)) {
-			    echo "echo '{$map['vnc']}' > /root/cpaneldirect/vps.vncmap;".PHP_EOL;
-			    echo 'if [ "$(which virsh)" != "" ]; then
+        if (is_array($map)) {
+            if (array_key_exists('slice', $map)) {
+                echo "echo '{$map['slice']}' > /root/cpaneldirect/vps.slicemap;".PHP_EOL;
+            }
+            if (array_key_exists('ip', $map)) {
+                echo 'oldm="$(md5sum /root/cpaneldirect/vps.ipmap)";'.PHP_EOL;
+                echo "echo '{$map['ip']}' > /root/cpaneldirect/vps.ipmap;".PHP_EOL;
+                echo 'newm="$(md5sum /root/cpaneldirect/vps.ipmap)";'.PHP_EOL;
+                echo 'if [ $(which virsh) != "" ] && [ "$newm" != "$oldm" ]; then bash /root/cpaneldirect/run_buildebtables.sh; fi;'.PHP_EOL;
+            }
+            if (array_key_exists('vnc', $map)) {
+                echo "echo '{$map['vnc']}' > /root/cpaneldirect/vps.vncmap;".PHP_EOL;
+                echo 'if [ "$(which virsh)" != "" ]; then
 	    for vps in $(virsh list | grep -v -e "State$" -e "------$" -e "^$" | awk \'{ print $2 }\'); do
 		    ip="$(grep "$vps:" /root/cpaneldirect/vps.vncmap | cut -d: -f2)";
 		    if [ "$ip" = "" ]; then
@@ -34,11 +34,11 @@ if (isset($_POST['action']) && $_POST['action'] == 'map') {
 	    done;
     fi;
     ';
-		    }
-		    if (array_key_exists('main', $map)) {
-			    echo "echo '{$map['main']}' > /root/cpaneldirect/vps.mainips;".PHP_EOL;
-		    }
-	    }
+            }
+            if (array_key_exists('main', $map)) {
+                echo "echo '{$map['main']}' > /root/cpaneldirect/vps.mainips;".PHP_EOL;
+            }
+        }
     } catch (\Exception $e) {
         Worker::safeEcho('Caught Exception #'.$e->getCode().':'.$e->getMessage().' on '.__LINE__.'@'.__FILE__);
     }
@@ -118,7 +118,10 @@ if (isset($_POST['action']) && $_POST['action'] == 'map') {
                     echo implode(PHP_EOL, $queueArray['queue'][$_SERVER['REMOTE_ADDR']]).PHP_EOL;
                     $loopCount = 0;
                     do {
-                        $response = $memcache->get('queue', function($memcache, $key, &$value) { $value = []; return true; }, \Memcached::GET_EXTENDED);
+                        $response = $memcache->get('queue', function ($memcache, $key, &$value) {
+                            $value = [];
+                            return true;
+                        }, \Memcached::GET_EXTENDED);
                         $queue = $response['value'];
                         $cas = $response['cas'];
                         $queue['queue'][$_SERVER['REMOTE_ADDR']] = [];
@@ -135,8 +138,8 @@ if (isset($_POST['action']) && $_POST['action'] == 'map') {
         Worker::safeEcho('Caught Exception #'.$e->getCode().':'.$e->getMessage().' on '.__LINE__.'@'.__FILE__);
     }
 } else {
-	$item = ['get' => $_GET, 'post' => $_POST, 'ip' => $_SERVER['REMOTE_ADDR']];
-	$output = '';
+    $item = ['get' => $_GET, 'post' => $_POST, 'ip' => $_SERVER['REMOTE_ADDR']];
+    $output = '';
     try {
         if (USE_REDIS === true) {
             $redis->rPush('queuein|'.$_SERVER['REMOTE_ADDR'], json_encode($item));

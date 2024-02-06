@@ -8,8 +8,7 @@ $cli = new swoole_http_client('127.0.0.1', 9501);
 
 $cli->setHeaders(['User-Agent' => "swoole"]);
 
-$cli->get('/index.php', function ($cli)
-{
+$cli->get('/index.php', function ($cli) {
     var_dump($cli);
 });
 

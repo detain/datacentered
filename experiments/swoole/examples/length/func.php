@@ -1,7 +1,7 @@
 <?php
 $serv = new swoole_server("127.0.0.1", 9501);
 
-$serv->set(array(
+$serv->set([
     'open_length_check' => true,
     'dispatch_mode' => 1,
     'package_length_func' => function ($data) {
@@ -15,10 +15,9 @@ $serv->set(array(
         return $length + 8;
     },
     'package_max_length' => 2000000,  //协议最大长度
-));
+]);
 
-$serv->on('receive', function (swoole_server $serv, $fd, $from_id, $data)
-{
+$serv->on('receive', function (swoole_server $serv, $fd, $from_id, $data) {
     var_dump($data);
     echo "#{$serv->worker_id}>> received length=" . strlen($data).PHP_EOL;
 });

@@ -67,7 +67,7 @@ $request->setAllHeaders([
  * the header field name is case-insensitive:
  */
 $request->removeHeader('cookie');
-assert( ! $request->hasHeader('Cookie')); // true
+assert(! $request->hasHeader('Cookie')); // true
 
 
 
@@ -109,4 +109,4 @@ if ($request->hasHeader('CONTENT-TYPE')) {
  * Finally, you can clear all headers from a message in one fell swoop:
  */
 $request->removeAllHeaders();
-assert( ! $request->getAllHeaders());
+assert(! $request->getAllHeaders());

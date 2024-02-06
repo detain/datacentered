@@ -2,58 +2,45 @@
 
 class DebugServer
 {
-    protected $alloc_point = array();
-    protected $free_point = array();
+    protected $alloc_point = [];
+    protected $free_point = [];
     protected $index = 0;
 
-    function package_decode($pkg)
+    public function package_decode($pkg)
     {
-        list($tag, $_vars) = explode(':', $pkg, 2);
+        [$tag, $_vars] = explode(':', $pkg, 2);
         $tag = trim($tag);
         $vars = explode(',', trim($_vars));
-        $data = array();
-        foreach($vars as $str)
-        {
-            list($k, $v) = explode('=', trim($str));
+        $data = [];
+        foreach ($vars as $str) {
+            [$k, $v] = explode('=', trim($str));
             $data[$k] = $v;
         }
 
-        if ($tag == 'alloc')
-        {
+        if ($tag == 'alloc') {
             file_put_contents(__DIR__.'/alloc.log', $data['ptr']."\n", FILE_APPEND);
-        }
-        elseif($tag =='memory')
-        {
+        } elseif ($tag =='memory') {
             var_dump($tag, $data);
-        }
-        elseif ($tag == 'free')
-        {
+        } elseif ($tag == 'free') {
             file_put_contents(__DIR__.'/free.log', $data['ptr']."\n", FILE_APPEND);
-        }
-        elseif($tag == 'invalid')
-        {
-            foreach($this->alloc_point as $k => $v)
-            {
+        } elseif ($tag == 'invalid') {
+            foreach ($this->alloc_point as $k => $v) {
                 echo "$k => $v\n";
             }
-        }
-        else
-        {
+        } else {
             //var_dump($tag, $data);
         }
     }
 
-    function run()
+    public function run()
     {
         unlink(__DIR__.'/alloc.log');
         unlink(__DIR__.'/free.log');
         $socket = stream_socket_server("udp://127.0.0.1:9999", $errno, $errstr, STREAM_SERVER_BIND);
-        if (!$socket)
-        {
+        if (!$socket) {
             die("$errstr ($errno)");
         }
-        while(1)
-        {
+        while (1) {
             $pkt = stream_socket_recvfrom($socket, 65535, 0, $peer);
             $this->package_decode($pkt);
             //echo "$peer: $pkt\n";

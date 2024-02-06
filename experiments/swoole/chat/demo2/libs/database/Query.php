@@ -8,7 +8,8 @@
  * @link
  */
 
-class Query {
+class Query
+{
 
     
     /**
@@ -56,10 +57,11 @@ class Query {
     
     /**
      * 初始化
-     * 
+     *
      * @param object $db
      */
-    public function __construct($db) {
+    public function __construct($db)
+    {
         $this->db = $db;
     }
     
@@ -68,7 +70,8 @@ class Query {
      *
      * @param string $name
      */
-    public function table($name) {
+    public function table($name)
+    {
         return $this->db()->table($name);
     }
     
@@ -77,8 +80,9 @@ class Query {
      *
      * @param string $db_name
      */
-    public function selectDB($db_name) {
-        $config = isset($this->config[$db_name]) ? $this->config[$db_name] : $this->config['default'];
+    public function selectDB($db_name)
+    {
+        $config = $this->config[$db_name] ?? $this->config['default'];
         $this->db($db_name . '.' . $this->table)->selectDB($config['dbname']);
     }
     
@@ -87,7 +91,8 @@ class Query {
      *
      * @param string $name
      */
-    public function selectTable($name) {
+    public function selectTable($name)
+    {
         $this->db()->selectTable($name);
         $this->table = $name;
         return $this;
@@ -99,7 +104,8 @@ class Query {
      * @see selectTable
      * @param string $name
      */
-    public function setTable($name) {
+    public function setTable($name)
+    {
         $this->selectTable($name);
     }
     
@@ -108,7 +114,8 @@ class Query {
      *
      * @param string $sql
      */
-    public function query($sql='') {
+    public function query($sql='')
+    {
         if (!empty($sql)) {
             return $this->db()->query($sql);
         }
@@ -120,7 +127,8 @@ class Query {
      *
      * @param string $sql
      */
-    public function fetch($sql = null) {
+    public function fetch($sql = null)
+    {
         $sql = empty($sql) ? $this->getSql() : $sql;
         return $this->db()->fetch($sql);
     }
@@ -131,7 +139,8 @@ class Query {
      * @param string $sql
      * @return mixed >
      */
-    public function fetchArray($sql = null, $index = false) {
+    public function fetchArray($sql = null, $index = false)
+    {
         $sql = empty($sql) ? $this->getSql() : $sql;
         return $this->db()->fetchArray($sql, $index);
     }
@@ -143,7 +152,8 @@ class Query {
      * @param array $where
      * @return boolean
      */
-    public function increment($field) {
+    public function increment($field)
+    {
         return $this->db()->increment($this->table, $field);
     }
     
@@ -152,13 +162,14 @@ class Query {
      *
      * @return mixed
      */
-    public function getSql() {
-        $this->sql = 'SELECT ' . $this->getColumnField() . ' FROM ' 
-            . $this->db()->table($this->table) 
-            . $this->db()->getWhere() . ' ' 
-            . $this->db()->getGroup() . ' ' 
-            . $this->db()->getHaving() . ' ' 
-            . $this->db()->getOrder() . ' ' 
+    public function getSql()
+    {
+        $this->sql = 'SELECT ' . $this->getColumnField() . ' FROM '
+            . $this->db()->table($this->table)
+            . $this->db()->getWhere() . ' '
+            . $this->db()->getGroup() . ' '
+            . $this->db()->getHaving() . ' '
+            . $this->db()->getOrder() . ' '
             . $this->db()->getLimit();
         
         return $this->sql;
@@ -169,7 +180,8 @@ class Query {
      *
      * @param string $sql
      */
-    public function setSql($sql='') {
+    public function setSql($sql='')
+    {
         $this->sql = $sql;
     }
     
@@ -179,10 +191,11 @@ class Query {
      * @param string $data
      * @return Model
      */
-    public function setColumn($data = '*') {
+    public function setColumn($data = '*')
+    {
         $column_str = '';
         if (is_array($data)) {
-            foreach($data as $k => $v) {
+            foreach ($data as $k => $v) {
                 $column_str .= '`' . $v . '`,';
             }
             $this->column = trim($column_str , ',');
@@ -197,7 +210,8 @@ class Query {
      * 获取字段
      *
      */
-    public function getColumn() {
+    public function getColumn()
+    {
         return $this->column;
     }
     
@@ -209,7 +223,8 @@ class Query {
      * @param number $total
      * @param string $sql
      */
-    public function page($page = 1, $pageSize = 10, $total = 0, $sql = null) {
+    public function page($page = 1, $pageSize = 10, $total = 0, $sql = null)
+    {
         $sql = empty($sql) ? $this->getSql() : $sql;
         return $this->db()->page($sql, $page, $pageSize, $total);
     }
@@ -221,8 +236,11 @@ class Query {
      * @param string $lastInsert
      * @return mixed
      */
-    public function insert($data, $lastInsert = false) {
-        if (empty($data)) { return false;}
+    public function insert($data, $lastInsert = false)
+    {
+        if (empty($data)) {
+            return false;
+        }
         return $this->db()->insert($this->table, $data, $lastInsert);
     }
     
@@ -232,8 +250,11 @@ class Query {
      * @param array $data
      * @return boolean
      */
-    public function multiInsert($data) {
-        if (empty($data)) { return false;}
+    public function multiInsert($data)
+    {
+        if (empty($data)) {
+            return false;
+        }
         return $this->db()->multiInsert($this->table, $data);
     }
     
@@ -242,7 +263,8 @@ class Query {
      *
      * @return mixed
      */
-    public function lastInsertId() {
+    public function lastInsertId()
+    {
         return $this->db()->lastInsertId();
     }
     
@@ -251,11 +273,14 @@ class Query {
      *
      * @param array $data
      */
-    public function update($data = array(), $limit = 1) {
+    public function update($data = [], $limit = 1)
+    {
         $where = $this->db()->getWhere(false);
     
     
-        if (empty($where)) { return false;}
+        if (empty($where)) {
+            return false;
+        }
         $data = !empty($data) ? $data : $this->property;
         return $this->db()->update($this->table, $data, $where, $limit);
     }
@@ -266,10 +291,11 @@ class Query {
      * @param string $countStr
      * @return mixed
      */
-    public function count($countStr = 'count(1) as `count`') {
+    public function count($countStr = 'count(1) as `count`')
+    {
         $sql = "SELECT {$countStr} FROM " . $this->db()->table($this->table) . $this->db()->getWhere() . ' ' .
             $this->db()->getGroup() . ' ' . $this->db()->getHaving() . ' ' . $this->db()->getOrder();
-            return $this->db()->query($sql);
+        return $this->db()->query($sql);
     }
     
     /**
@@ -277,7 +303,8 @@ class Query {
      *
      * @return mixed
      */
-    public function delete($limit = 1) {
+    public function delete($limit = 1)
+    {
         return $this->db()->delete($this->table, $this->db()->getWhere(false), $limit);
     }
     
@@ -287,7 +314,8 @@ class Query {
      * @param string $str
      * @return Model
      */
-    public function limit($str) {
+    public function limit($str)
+    {
         $this->db()->setLimit($str);
         return $this;
     }
@@ -298,7 +326,8 @@ class Query {
      * @param array $data
      * @return Model
      */
-    public function where($data) {
+    public function where($data)
+    {
         $this->db->setWhere($data);
         return $this;
     }
@@ -309,7 +338,8 @@ class Query {
      * @param string $str
      * @return Model
      */
-    public function group($str) {
+    public function group($str)
+    {
         $this->db()->setGroup($str);
         return $this;
     }
@@ -320,7 +350,8 @@ class Query {
      * @param string $str
      * @return Model
      */
-    public function having($str) {
+    public function having($str)
+    {
         $this->db()->setHaving($str);
         return $this;
     }
@@ -331,7 +362,8 @@ class Query {
      * @param string $str
      * @return Model
      */
-    public function order($str) {
+    public function order($str)
+    {
         $this->db()->setOrder($str);
         return $this;
     }
@@ -340,7 +372,8 @@ class Query {
      * 启动事务
      *
      */
-    public function beginTransaction() {
+    public function beginTransaction()
+    {
         $this->db()->beginTransaction();
     }
     
@@ -348,7 +381,8 @@ class Query {
      * 提交事务
      *
      */
-    public function commit() {
+    public function commit()
+    {
         $this->db()->commit();
     }
     
@@ -356,7 +390,8 @@ class Query {
      * 回滚
      *
      */
-    public function rollback() {
+    public function rollback()
+    {
         $this->db()->rollBack();
     }
         
@@ -365,7 +400,8 @@ class Query {
      *
      * @return mixed
      */
-    public function get() {
+    public function get()
+    {
         $instance = new static;
         return $instance->fetchArray();
     }
@@ -375,8 +411,9 @@ class Query {
      *
      * @param nubmer $id
      */
-    public function find($id) {
-        return $this->db->where(array($this->primaryKey => $id))->fetch();
+    public function find($id)
+    {
+        return $this->db->where([$this->primaryKey => $id])->fetch();
     }
     
     /**
@@ -385,7 +422,8 @@ class Query {
      * @param string $lastInsert
      * @return mixed
      */
-    public function save($lastInsert = false) {
+    public function save($lastInsert = false)
+    {
         if (empty($this->property)) {
             return false;
         }
@@ -398,8 +436,9 @@ class Query {
      *
      * @param string $name
      */
-    public function __get($name) {
-        return isset($this->property[$name]) ? $this->property[$name] : null;
+    public function __get($name)
+    {
+        return $this->property[$name] ?? null;
     }
     
     /**
@@ -408,9 +447,8 @@ class Query {
      * @param string $name
      * @param mixed $value
      */
-    public function __set($name, $value) {
+    public function __set($name, $value)
+    {
         $this->property[$name] = $value;
     }
-    
-    
 }

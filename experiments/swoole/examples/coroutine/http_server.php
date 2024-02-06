@@ -21,8 +21,8 @@ class Server
 
     public function onConnect($serv, $fd, $reactorId)
     {
-		$redis = new Swoole\Coroutine\Redis();
-		$redis->connect('127.0.0.1', 6379);
+        $redis = new Swoole\Coroutine\Redis();
+        $redis->connect('127.0.0.1', 6379);
         $this->redisPool[$fd] = $redis;
     }
 
@@ -37,9 +37,9 @@ class Server
 
     public function onRequest($request, $response)
     {
-		$redis = $this->redisPool[$request->fd];
-		$ret = $redis->get('key');
-		var_dump($ret, $redis);
+        $redis = $this->redisPool[$request->fd];
+        $ret = $redis->get('key');
+        var_dump($ret, $redis);
         $response->end('xxxx');
     }
 }
@@ -47,6 +47,3 @@ class Server
 $server = new Server();
 
 $server->run();
-
-
-

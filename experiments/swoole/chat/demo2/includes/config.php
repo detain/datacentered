@@ -1,25 +1,25 @@
 <?php
 /**
  * config
- * 
- * 
+ *
+ *
  */
  
-$config['server'] = array(
+$config['server'] = [
     
-    'main' => array(
+    'main' => [
         'host' => '0.0.0.0', 'port' => 1950
-    ), 
+    ],
 
-    'login' => array(
+    'login' => [
         'host' => '0.0.0.0', 'port' => 1952
-    ),
-);
-	
-
-$config['database'] = array(
+    ],
+];
     
-    'default' => array(
+
+$config['database'] = [
+    
+    'default' => [
         'type' => 'mysqli',
         'host'=> '127.0.0.1',
         'username' => 'root',
@@ -29,7 +29,7 @@ $config['database'] = array(
         'dbname' => 'test',
         'charset' => 'utf8',
         'tableprex' => '',
-    ),
-);
+    ],
+];
 
 //return $config;

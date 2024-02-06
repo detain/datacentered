@@ -5,12 +5,13 @@ $composer = require_once __DIR__.'/../../vendor/autoload.php';
  * @param $y
  * @return \Generator
  */
-function asyncMultiply($x, $y) {
+function asyncMultiply($x, $y)
+{
     yield new Amp\Pause($millisecondsToPause = 100);
     return ($x * $y);
 }
 
-Amp\run(function() {
+Amp\run(function () {
     try {
         // Yield control until the generator resolves
         // and return its eventual result.

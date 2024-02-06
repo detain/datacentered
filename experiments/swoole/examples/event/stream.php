@@ -7,11 +7,11 @@ fwrite($fp, "HELLO world");
 
 function stream_onRead($fp)
 {
-	echo fread($fp, 1024).PHP_EOL;
-	sleep(1);
-	swoole_event_write($fp, "hello world");
-	//swoole_event_set($fp, null, null, SWOOLE_EVENT_READ | SWOOLE_EVENT_WRITE);
-	//swoole_event_del($fp);
+    echo fread($fp, 1024).PHP_EOL;
+    sleep(1);
+    swoole_event_write($fp, "hello world");
+    //swoole_event_set($fp, null, null, SWOOLE_EVENT_READ | SWOOLE_EVENT_WRITE);
+    //swoole_event_del($fp);
     //fclose($fp);
 }
 

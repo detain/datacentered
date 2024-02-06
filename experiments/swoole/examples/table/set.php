@@ -13,11 +13,11 @@ function child1($worker)
 {
     global $table;
     $s = microtime(true);
-    $table->set('tianfenghan@qq.com', array('id' => 145, 'name' => 'rango', 'num' => 3.1415));
-    $table->set('350749960@qq.com', array('id' => 358, 'name' => "Rango1234", 'num' => 3.1415));
-    $table->set('hello@qq.com', array('id' => 189, 'name' => 'rango3', 'num' => 3.1415));
-    $table->set('tianfenghan@qq.com', array('id' => 145, 'name' => 'rango', 'num' => 3.1415));
-    $table->set('350749960@qq.com', array('id' => 358, 'name' => "Rango1234", 'num' => 3.1415));
+    $table->set('tianfenghan@qq.com', ['id' => 145, 'name' => 'rango', 'num' => 3.1415]);
+    $table->set('350749960@qq.com', ['id' => 358, 'name' => "Rango1234", 'num' => 3.1415]);
+    $table->set('hello@qq.com', ['id' => 189, 'name' => 'rango3', 'num' => 3.1415]);
+    $table->set('tianfenghan@qq.com', ['id' => 145, 'name' => 'rango', 'num' => 3.1415]);
+    $table->set('350749960@qq.com', ['id' => 358, 'name' => "Rango1234", 'num' => 3.1415]);
     echo "set - 5 use: ".((microtime(true) - $s) * 1000)."ms\n";
 }
 
@@ -26,8 +26,7 @@ sleep(1);
 
 child1(1245);
 $s = microtime(true);
-for($i =0; $i < 1000; $i++)
-{
+for ($i =0; $i < 1000; $i++) {
     $arr = $table->get('350749960@qq.com');
 }
 

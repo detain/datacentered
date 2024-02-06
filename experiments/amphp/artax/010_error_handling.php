@@ -24,7 +24,7 @@ $client = new Amp\Artax\Client;
 
 // Yielding a promise that fails will result in an exception
 // being thrown back into your generator.
-Amp\run(function() use ($client, $badUri) {
+Amp\run(function () use ($client, $badUri) {
     try {
         $response = yield $client->request($badUri);
     } catch (Exception $e) {
@@ -41,8 +41,8 @@ try {
 
 // Amp\Promise::when() will never throw; errors are passed to
 // the error-first callback.
-Amp\run(function() use ($client, $badUri) {
-    $client->request($badUri)->when(function($error, $result) {
+Amp\run(function () use ($client, $badUri) {
+    $client->request($badUri)->when(function ($error, $result) {
         assert($error instanceof Exception);
         assert(null === $result);
         echo $error->getMessage(), "\n";

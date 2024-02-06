@@ -1,27 +1,30 @@
 <?php
 /**
  * talk service
- * 
+ *
  * @author zhang
  *
  */
 
-class Talk {
+class Talk
+{
     
     
     /**
      * construct
-     * 
+     *
      */
-    public function __construct() {
+    public function __construct()
+    {
         error_log('talk __construct');
     }
         
     /**
      * all
-     * 
+     *
      */
-    public function one() {
+    public function one()
+    {
         echo "[service] talk one\n";
         error_log('[service] talk one');
         
@@ -34,7 +37,7 @@ class Talk {
         $uid = $userService->getCurrentUid();
         $user = $userService->get($uid);
         
-        return array(
+        return [
             'status' => 1,
             'type' => CMD::CMD_TALK,
             'uid' => $uid,
@@ -42,14 +45,15 @@ class Talk {
             'content' => $message,
             'time' => time(),
             'date' => date('Y-m-d H:i:s'),
-        );
+        ];
     }
     
     /**
      * to one
-     * 
+     *
      */
-    public function all() {
+    public function all()
+    {
         echo "[service] talk all\n";
         error_log('[service] talk all');
         
@@ -61,7 +65,7 @@ class Talk {
         $uid = $userService->getCurrentUid();
         $user = $userService->get($uid);
         
-        $data = array(
+        $data = [
             'status' => 1,
             'type' => CMD::CMD_TALK_ALL,
             'uid' => $uid,
@@ -69,18 +73,17 @@ class Talk {
             'content' => $message,
             'time' => time(),
             'date' => date('Y-m-d H:i:s'),
-        );
+        ];
         
         $server = Service::instance()->getMainServer();
         $server->broadcast($server->getServer(), $server->connections(null, false), $data, $server->getCurrentFD());
         
-        return array(
+        return [
             'status' => 1,
             'type' => CMD::CMD_TALK_ALL,
             'uid' => $uid,
             'user' => $user,
             'content' => $message,
-        );
+        ];
     }
-
 }

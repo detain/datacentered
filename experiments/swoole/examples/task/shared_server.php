@@ -1,7 +1,7 @@
 <?php
 $serv = new swoole_server("127.0.0.1", 9501);
 
-$serv->set(array(
+$serv->set([
     'worker_num' => 1,
     //'open_eof_check' => true,
     //'package_eof' => "\r\n",
@@ -10,7 +10,7 @@ $serv->set(array(
     //'daemonize' => 1,
     //'heartbeat_idle_time' => 5,
     //'heartbeat_check_interval' => 5,
-));
+]);
 function my_onStart($serv)
 {
     echo "MasterPid={$serv->master_pid}|Manager_pid={$serv->manager_pid}\n";
@@ -59,10 +59,8 @@ function my_onWorkerStop($serv, $worker_id)
 function my_onReceive(swoole_server $serv, $fd, $from_id, $rdata)
 {
     $data = unserialize($rdata);
-    if (isset($data['cmd']))
-    {
-        switch ($data['cmd'])
-        {
+    if (isset($data['cmd'])) {
+        switch ($data['cmd']) {
             case 'get':
                 $s = microtime(true);
                 $res = $serv->taskwait($data, 0.5, 0);
@@ -86,14 +84,13 @@ function my_onReceive(swoole_server $serv, $fd, $from_id, $rdata)
 
 function my_onTask(swoole_server $serv, $task_id, $from_id, $data)
 {
-    static $datas = array();
-    if (isset($data['cmd']))
-    {
+    static $datas = [];
+    if (isset($data['cmd'])) {
         switch ($data['cmd']) {
             case 'get':
                 $key = $data['key'];
-                $val = isset($datas[$key]) ? $datas[$key] : "";
-                $serv->finish(array('key'=>$key, 'val' => $val));
+                $val = $datas[$key] ?? "";
+                $serv->finish(['key'=>$key, 'val' => $val]);
                 break;
             case "set":
                 $key = $data['key'];
@@ -103,7 +100,7 @@ function my_onTask(swoole_server $serv, $task_id, $from_id, $data)
                 break;
             case "del":
                 $key = $data['key'];
-                if(isset($datas[$key])) {
+                if (isset($datas[$key])) {
                     unset($datas[$key]);
                 }
                 break;
@@ -139,4 +136,3 @@ $serv->on('Task', 'my_onTask');
 $serv->on('Finish', 'my_onFinish');
 $serv->on('WorkerError', 'my_onWorkerError');
 $serv->start();
-

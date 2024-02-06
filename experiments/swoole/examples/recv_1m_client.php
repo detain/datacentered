@@ -6,21 +6,15 @@ $c->send("AAAAAAAAAAAAAAAA");
 
 $n_bytes = 0;
 
-while (true)
-{
+while (true) {
     $line = $c->recv();
-    if ($line === false)
-    {
+    if ($line === false) {
         echo "recv failed.\n";
         break;
-    }
-    elseif (empty($line))
-    {
+    } elseif (empty($line)) {
         echo "recv $n_bytes bytes\n";
         break;
-    }
-    else
-    {
+    } else {
         fwrite($f, $line);
         $n_bytes += strlen($line);
     }

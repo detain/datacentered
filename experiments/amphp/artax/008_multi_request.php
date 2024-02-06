@@ -20,7 +20,7 @@ $promises = (new Amp\Artax\Client)->requestMulti([
 // of our response promises succeed then this line will throw.
 $comboPromise = Amp\some($promises);
 
-list($errors, $responses) = Amp\wait($comboPromise);
+[$errors, $responses] = Amp\wait($comboPromise);
 
 // Alternatively we could use the following line to require all of our responses to succeed. If
 // any one of the response promises resolves as a failure then this line will throw:

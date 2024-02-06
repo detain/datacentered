@@ -9,7 +9,7 @@ $serv->set([
 ]);
 
 $port = $serv->listen('127.0.0.1', 9501, SWOOLE_SOCK_TCP);
-$port->on('receive', function($serv, $fd, $reactor_id, $data){
+$port->on('receive', function ($serv, $fd, $reactor_id, $data) {
     var_dump($fd, $reactor_id, $data);
     $serv->send($fd, "Swoole: $data");
 });

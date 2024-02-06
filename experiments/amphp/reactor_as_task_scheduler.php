@@ -17,7 +17,8 @@ Amp\run(function () {
  * @param $stream
  * @param $callbackData
  */
-function onInput($watcherId, $stream, $callbackData) {
+function onInput($watcherId, $stream, $callbackData)
+{
     global $myText;
     $myText = fgets($stream);
     Amp\cancel($watcherId);

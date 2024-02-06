@@ -9,16 +9,14 @@ $server = new swoole_websocket_server("0.0.0.0", 9501, SWOOLE_BASE);
 function user_handshake(swoole_http_request $request, swoole_http_response $response)
 {
     //自定定握手规则，没有设置则用系统内置的（只支持version:13的）
-    if (!isset($request->header['sec-websocket-key']))
-    {
+    if (!isset($request->header['sec-websocket-key'])) {
         //'Bad protocol implementation: it is not RFC6455.'
         $response->end();
         return false;
     }
     if (0 === preg_match('#^[+/0-9A-Za-z]{21}[AQgw]==$#', $request->header['sec-websocket-key'])
         || 16 !== strlen(base64_decode($request->header['sec-websocket-key']))
-    )
-    {
+    ) {
         //Header Sec-WebSocket-Key is illegal;
         $response->end();
         return false;
@@ -27,23 +25,21 @@ function user_handshake(swoole_http_request $request, swoole_http_response $resp
     $key = base64_encode(sha1($request->header['sec-websocket-key']
         . '258EAFA5-E914-47DA-95CA-C5AB0DC85B11',
         true));
-    $headers = array(
+    $headers = [
         'Upgrade'               => 'websocket',
         'Connection'            => 'Upgrade',
         'Sec-WebSocket-Accept'  => $key,
         'Sec-WebSocket-Version' => '13',
         'KeepAlive'             => 'off',
-    );
-    foreach ($headers as $key => $val)
-    {
+    ];
+    foreach ($headers as $key => $val) {
         $response->header($key, $val);
     }
     $response->status(101);
     $response->end();
     global $server;
     $fd = $request->fd;
-    $server->defer(function () use ($fd, $server)
-    {
+    $server->defer(function () use ($fd, $server) {
         $server->push($fd, "hello, welcome\n");
     });
     return true;
@@ -59,29 +55,23 @@ $server->on('open', function (swoole_websocket_server $_server, swoole_http_requ
 $server->on('message', function (swoole_websocket_server $_server, $frame) {
     var_dump($frame->data);
     echo "received ".strlen($frame->data)." bytes\n";
-    if ($frame->data == "close")
-    {
+    if ($frame->data == "close") {
         $_server->close($frame->fd);
-    }
-    elseif($frame->data == "task")
-    {
+    } elseif ($frame->data == "task") {
         $_server->task(['go' => 'die']);
-    }
-    else
-    {
+    } else {
         //echo "receive from {$frame->fd}:{$frame->data}, opcode:{$frame->opcode}, finish:{$frame->finish}\n";
-       // for ($i = 0; $i < 100; $i++)
+        // for ($i = 0; $i < 100; $i++)
         {
             $_send = str_repeat('B', rand(100, 800));
             $_server->push($frame->fd, $_send);
            // echo "#$i\tserver sent " . strlen($_send) . " byte \n";
         }
         $fd = $frame->fd;
-        $_server->tick(2000, function($id) use ($fd, $_server) {
+        $_server->tick(2000, function ($id) use ($fd, $_server) {
             $_send = str_repeat('B', rand(100, 5000));
             $ret = $_server->push($fd, $_send);
-            if (!$ret)
-            {
+            if (!$ret) {
                 var_dump($id);
                 var_dump($_server->clearTimer($id));
             }
@@ -93,14 +83,12 @@ $server->on('close', function ($_server, $fd) {
     echo "client {$fd} closed\n";
 });
 
-$server->on('task', function ($_server, $worker_id, $task_id, $data)
-{
+$server->on('task', function ($_server, $worker_id, $task_id, $data) {
     var_dump($worker_id, $task_id, $data);
     return "hello world\n";
 });
 
-$server->on('finish', function ($_server, $task_id, $result)
-{
+$server->on('finish', function ($_server, $task_id, $result) {
     var_dump($task_id, $result);
 });
 

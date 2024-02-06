@@ -2,7 +2,7 @@
 class Client
 {
     private $ip = "127.0.0.1";
-    const PORT = 8888;
+    public const PORT = 8888;
     private $data;
 
     public function sendRequest()

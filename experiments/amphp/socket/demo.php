@@ -18,7 +18,8 @@ amp\run(function () {
 /**
  * @param \Amp\Socket\Client $client
  */
-function onClient(socket\Client $client) {
+function onClient(socket\Client $client)
+{
     $clientId = $client->id();
     echo "+ connected: {$clientId}\n";
     while ($client->alive()) {
