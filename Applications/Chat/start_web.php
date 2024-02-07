@@ -21,7 +21,7 @@ $context = [																						// Certificate is best to apply for a certific
 ];
 $web = new Worker('http://0.0.0.0:55151', $context);
 $web->name	 = 'WebServer';
-$web->count = 10; // WebServer number of processes
+$web->count = 5; // WebServer number of processes
 //$web->transport = 'ssl';
 
 define('WEBROOT', realpath(__DIR__.'/../../Web'));
