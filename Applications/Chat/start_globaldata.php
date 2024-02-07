@@ -14,7 +14,7 @@ use Workerman\Worker;
 
 require_once __DIR__.'/../../vendor/workerman/globaldata/src/Server.php';
 
-$globaldata_server = new GlobalData\Server('127.0.0.1', 2207);
+$globaldata_server = new GlobalData\Server('0.0.0.0', 2207);
 $globaldata_server->count = 5; // WebServer number of processes
 
 $globaldata_server->onConnect = function ($connection) { // When the client is connected, set the connection onWebSocketConnect, that is, when the websocket handshake callback

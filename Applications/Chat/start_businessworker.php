@@ -14,7 +14,7 @@ if (ini_get('default_socket_timeout') < 1200 && ini_get('default_socket_timeout'
 $worker = new BusinessWorker(); // bussinessWorker process
 //$worker->name = 'ChatBusinessWorker'; // worker name
 $worker->count = 5; // bussinessWorker number of processes
-$worker->registerAddress = '127.0.0.1:1236'; // Service registration address
+$worker->registerAddress = $_SERVER['HOSTNAME'] == 'my.interserver.net' ? '127.0.0.1:1236' : '192.64.80.218:1236'; // Service registration address
 //$worker->maxSendBufferSize = 102400000;
 //$worker->sendToGatewayBufferSize = 102400000;
 $worker->onConnect = function ($connection) { // When the client is connected, set the connection onWebSocketConnect, that is, when the websocket handshake callback

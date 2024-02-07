@@ -19,7 +19,7 @@ $gateway->pingInterval = 60; // Heartbeat interval
 $gateway->pingNotResponseLimit = 2;
 //$gateway->pingData = '{"type":"ping"}'; // heartbeat data
 $gateway->pingData = ''; // heartbeat data
-$gateway->registerAddress = '127.0.0.1:1236'; // Service registration address
+$gateway->registerAddress = $_SERVER['HOSTNAME'] == 'my.interserver.net' ? '127.0.0.1:1236' : '192.64.80.218:1236'; // Service registration address
 //$gateway->onWorkerStart = function($worker) {};
 $gateway->onConnect = function ($connection) { // When the client is connected, set the connection onWebSocketConnect, that is, when the websocket handshake callback
     $connection->maxSendBufferSize = 100*1024*1024; // Set the current connection application layer send buffer size of the connection to 100mb, will override the default value
