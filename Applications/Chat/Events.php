@@ -42,14 +42,14 @@ class Events
          * @var \GlobalData\Client
          */
         global $global;
-        $global = new \GlobalData\Client($_SERVER['HOSTNAME'] == 'my.interserver.net' ? '127.0.0.1:2207' : '192.64.80.218:2207');     // initialize the GlobalData client
+        $global = new \GlobalData\Client(gethostname() == 'my.interserver.net' ? '127.0.0.1:2207' : '192.64.80.218:2207');     // initialize the GlobalData client
         /**
         * @var \Memcached
         */
         global $memcache;
         $memcache = new \Memcached();
         $memcache->addServer('localhost', 11211);
-        GlobalTimer::init($_SERVER['HOSTNAME'] == 'my.interserver.net' ? '127.0.0.1' : '192.64.80.218','3333');
+        GlobalTimer::init(gethostname() == 'my.interserver.net' ? '127.0.0.1' : '192.64.80.218','3333');
         $db_config = include '/home/my/include/config/config.db.php';
         $loop = Worker::getEventLoop();
         self::$db = new \Workerman\MySQL\Connection($db_config['db_host'], $db_config['db_port'], $db_config['db_user'], $db_config['db_pass'], $db_config['db_name'], 'utf8mb4');
@@ -69,7 +69,7 @@ class Events
         if ($worker->id == 0) {
             $args = [];
             $timers = [];
-            if ($_SERVER['HOSTNAME'] == 'my.interserver.net') {
+            if (gethostname() == 'my.interserver.net') {
                 $timers['hyperv_update_list_timer'] = GlobalTimer::add(3600, ['Events', 'hyperv_update_list_timer'], $args);
                 $timers['hyperv_queue_timer'] = GlobalTimer::add(30, ['Events', 'hyperv_queue_timer'], $args);
                 $timers['processing_queue_timer'] = GlobalTimer::add(30, ['Events', 'processing_queue_timer'], $args);
