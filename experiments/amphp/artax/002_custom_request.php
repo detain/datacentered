@@ -29,7 +29,6 @@ try {
         $response->getStatus(),
         $response->getReason()
     );
-
 } catch (Amp\Artax\ClientException $e) {
     // If something goes wrong the Promise::wait() call will throw the relevant
     // exception. The Client::request() method itself will never throw.

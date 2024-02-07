@@ -4,7 +4,7 @@ $pid = $process->start();
 
 function pyhon_process(swoole_process $worker)
 {
-    $worker->exec('/usr/bin/python', array("echo.py"));
+    $worker->exec('/usr/bin/python', ["echo.py"]);
 }
 
 $process->write("hello world\n");
@@ -12,4 +12,3 @@ echo $process->read();
 
 $ret = swoole_process::wait();
 var_dump($ret);
-

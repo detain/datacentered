@@ -1,46 +1,47 @@
 <?php
 /**
  * Server
- * 
+ *
  * @author zhang
  *
  */
 
-class Web_Socket_Server {
+class Web_Socket_Server
+{
 
     /**
      * server
-     * 
+     *
      * @var swoole_server
      */
     protected $serv = null;
     
     /**
      * current fd
-     * 
+     *
      * @var resource
      */
     protected $fd = null;
     
     /**
      * services list
-     * 
+     *
      * @var array
      */
-    protected $services = array();
+    protected $services = [];
     
     /**
      * construct
-     * 
+     *
      * @param string $host
      * @param number $port
      * @param array $config
      */
-    public function __construct($host, $port, $config = array()) {
-        
+    public function __construct($host, $port, $config = [])
+    {
         $this->serv = new swoole_websocket_server($host, $port, SWOOLE_BASE);  // SWOOLE_PROCESS, SWOOLE_SOCK_TCP
         
-        $this->serv->set(array(
+        $this->serv->set([
             
             'reactor_num' => 2, //reactor thread num
             
@@ -57,40 +58,42 @@ class Web_Socket_Server {
             'heartbeat_idle_time' => 84600,
             
             'task_worker_num' => 2
-        ));
+        ]);
         
-        $this->serv->on('open', array($this, 'onOpen'));
+        $this->serv->on('open', [$this, 'onOpen']);
         
-        $this->serv->on('handshake', array($this, 'onHandshake'));
+        $this->serv->on('handshake', [$this, 'onHandshake']);
         
-        $this->serv->on('message', array($this, 'onMessage'));
+        $this->serv->on('message', [$this, 'onMessage']);
         
-        $this->serv->on('close', array($this, 'onClose'));
+        $this->serv->on('close', [$this, 'onClose']);
         
-        $this->serv->on('task', array($this, 'onTask'));
+        $this->serv->on('task', [$this, 'onTask']);
         
-        $this->serv->on('finish', array($this, 'onFinish'));
+        $this->serv->on('finish', [$this, 'onFinish']);
         
-        $this->serv->on('packet', array($this, 'onPacket'));
+        $this->serv->on('packet', [$this, 'onPacket']);
         
-        $this->serv->on('request', array($this, 'onRequest'));
+        $this->serv->on('request', [$this, 'onRequest']);
         
-        $this->serv->on('request', array($this, 'onRequest'));
+        $this->serv->on('request', [$this, 'onRequest']);
     }
     
-    public function start() {
+    public function start()
+    {
         echo "[server] start.\n";
         
         $this->serv->start();
     }
     
-    public function onOpen(swoole_websocket_server $serv, swoole_http_request $request) {
-        
+    public function onOpen(swoole_websocket_server $serv, swoole_http_request $request)
+    {
         echo "[server] onOpen #{$serv->worker_pid}: handshake success with fd#{$request->fd}\n";
         // var_dump($serv->exist($request->fd), $serv->getClientInfo($request->fd));
     }
     
-    public function onHandshake(swoole_http_request $request, swoole_http_response $response) {
+    public function onHandshake(swoole_http_request $request, swoole_http_response $response)
+    {
         // error_log("[server] onHandshake: ");
         
         // 自定定握手规则，没有设置则用系统内置的（只支持version:13的）
@@ -107,9 +110,9 @@ class Web_Socket_Server {
         }
         
         $key = base64_encode(sha1($request->header['sec-websocket-key'] . '258EAFA5-E914-47DA-95CA-C5AB0DC85B11', true));
-        $headers = array(
+        $headers = [
             'Upgrade' => 'websocket', 'Connection' => 'Upgrade', 'Sec-WebSocket-Accept' => $key, 'Sec-WebSocket-Version' => '13', 'KeepAlive' => 'off'
-        );
+        ];
         foreach ($headers as $key => $val) {
             $response->header($key, $val);
         }
@@ -119,8 +122,8 @@ class Web_Socket_Server {
         
         $fd = $request->fd;
         $server = $this->serv;
-        $this->serv->defer(function () use($fd, $server) {
-            $content = array();
+        $this->serv->defer(function () use ($fd, $server) {
+            $content = [];
             $content['sid'] = 'token_'. mt_rand(10000, 99999);
             $content['status'] = 1;
             $content['name'] = '系统消息';
@@ -133,8 +136,8 @@ class Web_Socket_Server {
         return true;
     }
     
-    public function onMessage(swoole_server $serv, $frame) {
-        
+    public function onMessage(swoole_server $serv, $frame)
+    {
         $fd     = $frame->fd;
         $buffer = $frame->data;
         $data   = Packet::decode($buffer);
@@ -164,21 +167,21 @@ class Web_Socket_Server {
         $service = $serviceManager->get($name);
         
         // set token
-        $token = isset($data['token']) ? $data['token'] : null;
+        $token = $data['token'] ?? null;
         Loader::service('token');
         $serviceManager->get('token')->setToken($token);
         
         $action  = $service_info['action'];
-        $content = isset($data['data']) ? $data['data'] : array();
+        $content = $data['data'] ?? [];
         Param::setContent($content);
         
-        $content = call_user_func_array(array($service, $action), array());
+        $content = call_user_func_array([$service, $action], []);
         if (!isset($content['status'])) {
             $content['status'] = 0;
             $content['content'] = '系统错误';
         }
-		$content['time'] = time();
-		$content['date'] = date('Y-m-d H:i:s');
+        $content['time'] = time();
+        $content['date'] = date('Y-m-d H:i:s');
         
         $buffer = Packet::encode($content);
         
@@ -186,13 +189,13 @@ class Web_Socket_Server {
         
         /*
         $serv->tick(2000, function ($id) use($fd, $serv) {
-            
+
             $tick_data = array(
-                
+
             );
-            
+
             $buffer = Packet::encode($tick_data);
-            
+
             $_send = "server tick message";
             $ret = $serv->push($fd, $buffer);
             if (! $ret) {
@@ -203,26 +206,31 @@ class Web_Socket_Server {
         */
     }
     
-    public function onClose($serv, $fd, $from_id) {
+    public function onClose($serv, $fd, $from_id)
+    {
         echo "[server] close.\n";
     }
     
-    public function onTask($serv, $fd, $task_id, $data) {
+    public function onTask($serv, $fd, $task_id, $data)
+    {
         echo "[server] task.\n";
     }
     
-    public function onFinish($serv, $task_id, $data) {
+    public function onFinish($serv, $task_id, $data)
+    {
         echo "[server] finish.\n";
     }
     
-    public function onPacket($serv, $data, $client) {
+    public function onPacket($serv, $data, $client)
+    {
         echo "[server] onPacket.\n";
         
         echo "#".posix_getpid()."\tPacket {$data}\n";
         var_dump($client);
     }
     
-    public function onRequest(swoole_http_request $request, swoole_http_response $response) {
+    public function onRequest(swoole_http_request $request, swoole_http_response $response)
+    {
         echo "[server] onRequest.\n";
         
         $response->end(<<<HTML
@@ -249,16 +257,17 @@ HTML
     
     /**
      * onWorkerStart
-     * 
+     *
      * @param unknown $serv
      * @param unknown $worker_id
      */
-    public function onWorkerStart($serv, $worker_id) {
+    public function onWorkerStart($serv, $worker_id)
+    {
         // error_log("[server] onWorkerStart: ");
         // 在Worker进程开启时绑定定时器
         echo "[server] onWorkerStart\n";
         // 只有当worker_id为0时才添加定时器,避免重复添加
-        if( $worker_id == 0 ) {
+        if ($worker_id == 0) {
             $serv->addtimer(100);
             $serv->addtimer(500);
             $serv->addtimer(1000);
@@ -267,12 +276,13 @@ HTML
     
     /**
      * timer
-     * 
+     *
      * @param unknown $serv
      * @param unknown $interval
      */
-    public function onTimer($serv, $interval) {
-        switch( $interval ) {
+    public function onTimer($serv, $interval)
+    {
+        switch ($interval) {
             case 500: {	//
                 echo "Do Thing A at interval 500\n";
                 break;
@@ -290,17 +300,18 @@ HTML
 
     /**
      * connections list
-     * 
+     *
      * @param Web_Socket_Server $server
      * @param boolean $self_flag
      */
-    public function connections($server = null, $self_flag = true) {
+    public function connections($server = null, $self_flag = true)
+    {
         if (1 || empty($server)) {
             $server = $this->serv;
         }
         
         $start_fd = 0;
-        $conn_list = array();
+        $conn_list = [];
         while (true) {
             $temp = $server->connection_list($start_fd, 100);
             
@@ -312,7 +323,7 @@ HTML
                 }
             }
             
-            if ($temp === false or count ($temp) === 0) {
+            if ($temp === false or count($temp) === 0) {
                 echo "finish\n";
                 break;
             }
@@ -326,13 +337,14 @@ HTML
 
     /**
      * broadcast
-     * 
+     *
      * @param object $server
      * @param array $conn_list
      * @param array $data
      * @param boolean $self_flag
      */
-    public function broadcast($server, $conn_list, $data, $self_flag = null) {
+    public function broadcast($server, $conn_list, $data, $self_flag = null)
+    {
         if (empty($server)) {
             $server = $this->server;
         }
@@ -341,9 +353,9 @@ HTML
             $data['status'] = 0;
             $data['content'] = '系统错误';
         }
-		
-		$data['time'] = time();
-		$data['date'] = date('Y-m-d H:i:s');
+        
+        $data['time'] = time();
+        $data['date'] = date('Y-m-d H:i:s');
         
         $buffer = Packet::encode($data);
         
@@ -363,11 +375,12 @@ HTML
     
     /**
      * check service
-     * 
+     *
      * @param string $name
      * @return boolean
      */
-    public function serviceExists($name) {
+    public function serviceExists($name)
+    {
         if (array_key_exists($name, $this->services)) {
             return true;
         }
@@ -377,20 +390,21 @@ HTML
     
     /**
      * return swoole server
-     * 
+     *
      * @return swoole_server
      */
-    public function getServer() {
+    public function getServer()
+    {
         return $this->serv;
     }
     
     /**
      * return current fd
-     * 
+     *
      * @return resource
      */
-    public function getCurrentFD() {
+    public function getCurrentFD()
+    {
         return $this->fd;
     }
-    
 }

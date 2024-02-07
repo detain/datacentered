@@ -1,12 +1,13 @@
 <?php
 /**
  * Server
- * 
+ *
  * @author zhang
  *
  */
 
-class Server {
+class Server
+{
 
     /**
      * server
@@ -16,16 +17,16 @@ class Server {
     
     /**
      * construct
-     * 
+     *
      * @param string $host
      * @param number $port
      * @param array $config
      */
-    public function __construct($host, $port, $config = array()) {
-        
+    public function __construct($host, $port, $config = [])
+    {
         $this->serv = new swoole_server($host, $port, SWOOLE_PROCESS, SWOOLE_SOCK_TCP);
         
-        $this->serv->set(array(
+        $this->serv->set([
             
             'reactor_num' => 2, //reactor thread num
             
@@ -42,30 +43,33 @@ class Server {
             'heartbeat_idle_time' => 100,
             
             'task_worker_num' => 2
-        ));
+        ]);
         
-        $this->serv->on('connect', array($this, 'onConnect'));
+        $this->serv->on('connect', [$this, 'onConnect']);
         
-        $this->serv->on('receive', array($this, 'onReceive'));
+        $this->serv->on('receive', [$this, 'onReceive']);
         
-        $this->serv->on('close', array($this, 'onClose'));
+        $this->serv->on('close', [$this, 'onClose']);
         
-        $this->serv->on('task', array($this, 'onTask'));
+        $this->serv->on('task', [$this, 'onTask']);
         
-        $this->serv->on('finish', array($this, 'onFinish'));
+        $this->serv->on('finish', [$this, 'onFinish']);
     }
     
-    public function start() {
+    public function start()
+    {
         echo "[server] start.\n";
         
         $this->serv->start();
     }
     
-    public function onConnect($serv, $fd, $from_id) {
+    public function onConnect($serv, $fd, $from_id)
+    {
         echo "[server] connect.\n";
     }
     
-    public function onReceive(swoole_server $serv, $fd, $from_id, $buffer) {
+    public function onReceive(swoole_server $serv, $fd, $from_id, $buffer)
+    {
         echo "[server] receive {$buffer}\n";
         
         $data = Packet::decode($buffer);
@@ -87,43 +91,48 @@ class Server {
         $action = $service_info['action'];
         
         
-        $content = isset($data['content']) ? $data['content'] : array();
+        $content = $data['content'] ?? [];
         Param::setContent($content);
         Param::set('server', $serv);
         
-        $content = call_user_func_array(array($service, $action), array());
-        $buffer = Packet::encode(array('content' => $content));
+        $content = call_user_func_array([$service, $action], []);
+        $buffer = Packet::encode(['content' => $content]);
         
         error_log("server return data: " . print_r($content, 1));
         
         $serv->send($fd, $buffer);
     }
     
-    public function onClose($serv, $fd, $from_id) {
+    public function onClose($serv, $fd, $from_id)
+    {
         echo "[server] close.\n";
     }
     
-    public function onTask($serv, $task_id, $fd, $data) {
+    public function onTask($serv, $task_id, $fd, $data)
+    {
         echo "[server] task.\n";
     }
     
-    public function onFinish($serv,$task_id, $data) {
+    public function onFinish($serv,$task_id, $data)
+    {
         echo "[server] finish.\n";
     }
     
-    public function onWorkerStart($serv, $worker_id) {
+    public function onWorkerStart($serv, $worker_id)
+    {
         // 在Worker进程开启时绑定定时器
         echo "onWorkerStart\n";
         // 只有当worker_id为0时才添加定时器,避免重复添加
-        if( $worker_id == 0 ) {
+        if ($worker_id == 0) {
             $serv->addtimer(100);
             $serv->addtimer(500);
             $serv->addtimer(1000);
         }
     }
     
-    public function onTimer($serv, $interval) {
-        switch( $interval ) {
+    public function onTimer($serv, $interval)
+    {
+        switch ($interval) {
             case 500: {	//
                 echo "Do Thing A at interval 500\n";
                 break;
@@ -143,15 +152,16 @@ class Server {
      * 获取连接列表
      *
      */
-    public function connections($server = null) {
+    public function connections($server = null)
+    {
         if (empty($server)) {
             $server = $this->swoole_server;
         }
         $start_fd = 0;
-        $conn_list = array();
+        $conn_list = [];
         while (true) {
             $temp = $server->connection_list($start_fd, 100);
-            if ($temp === false or count ($temp) === 0) {
+            if ($temp === false or count($temp) === 0) {
                 echo "finish\n";
                 break;
             }
@@ -168,7 +178,8 @@ class Server {
      * @param unknown $fds
      * @param unknown $data
      */
-    public function broadcast($server, $conn_list, $data) {
+    public function broadcast($server, $conn_list, $data)
+    {
         if (empty($server)) {
             $server = $this->swoole_server;
         }
@@ -181,5 +192,4 @@ class Server {
             }
         }
     }
-    
 }

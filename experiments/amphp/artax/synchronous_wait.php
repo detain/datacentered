@@ -11,7 +11,7 @@ $promiseArray = $client->requestMulti([
 try {
     // Amp\all() flattens an array of promises into a new promise
     // that on which we can Amp\wait()
-    list($google, $bing) = Amp\wait(Amp\all($promiseArray));
+    [$google, $bing] = Amp\wait(Amp\all($promiseArray));
     var_dump($google->getStatus(), $bing->getStatus());
 } catch (Exception $e) {
     echo $e;

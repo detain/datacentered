@@ -19,43 +19,42 @@ use Meng\Soap\Interpreter;
  */
 class Factory
 {
-	/**
-	 * Create an instance of SoapClientInterface asynchronously.
-	 *
-	 * @param Client $client                An Artax HTTP client.
-	 * @param mixed $wsdl                   URI of the WSDL file or NULL if working in non-WSDL mode.
-	 * @param array $options                Supported options: location, uri, style, use, soap_version, encoding,
-	 *                                      exceptions, classmap, typemap, and feature. HTTP related options should
-	 *                                      be configured against $client, e.g., authentication, proxy, user agent,
-	 *                                      and connection timeout etc.
-	 * @return SoapClientInterface
-	 */
-	public function create(Client $client, $wsdl, array $options = [])
-	{
-		$deferredHttpBinding = new Deferred;
-		if (null === $wsdl) {
-			$deferredHttpBinding->succeed(new HttpBinding(new Interpreter($wsdl, $options), new RequestBuilder));
-		} else {
-			$wsdlRequest = new Request;
-			$wsdlRequest->setMethod('GET')->setUri($wsdl);
-			$client->request($wsdlRequest)->when(
-				function (\Exception $error = null, $response) use ($deferredHttpBinding, $options) {
-					if ($error) {
-						$deferredHttpBinding->fail($error);
-					} else {
-						/** @var Response $response */
-						$wsdl = $response->getBody();
-						$deferredHttpBinding->succeed(
-							new HttpBinding(
-								new Interpreter('data://text/plain;base64,'.base64_encode($wsdl), $options),
-								new RequestBuilder
-							)
-						);
-					}
-
-				}
-			);
-		}
-		return new SoapClient($client, $deferredHttpBinding->promise());
-	}
+    /**
+     * Create an instance of SoapClientInterface asynchronously.
+     *
+     * @param Client $client                An Artax HTTP client.
+     * @param mixed $wsdl                   URI of the WSDL file or NULL if working in non-WSDL mode.
+     * @param array $options                Supported options: location, uri, style, use, soap_version, encoding,
+     *                                      exceptions, classmap, typemap, and feature. HTTP related options should
+     *                                      be configured against $client, e.g., authentication, proxy, user agent,
+     *                                      and connection timeout etc.
+     * @return SoapClientInterface
+     */
+    public function create(Client $client, $wsdl, array $options = [])
+    {
+        $deferredHttpBinding = new Deferred;
+        if (null === $wsdl) {
+            $deferredHttpBinding->succeed(new HttpBinding(new Interpreter($wsdl, $options), new RequestBuilder));
+        } else {
+            $wsdlRequest = new Request;
+            $wsdlRequest->setMethod('GET')->setUri($wsdl);
+            $client->request($wsdlRequest)->when(
+                function (\Exception $error = null, $response) use ($deferredHttpBinding, $options) {
+                    if ($error) {
+                        $deferredHttpBinding->fail($error);
+                    } else {
+                        /** @var Response $response */
+                        $wsdl = $response->getBody();
+                        $deferredHttpBinding->succeed(
+                            new HttpBinding(
+                                new Interpreter('data://text/plain;base64,'.base64_encode($wsdl), $options),
+                                new RequestBuilder
+                            )
+                        );
+                    }
+                }
+            );
+        }
+        return new SoapClient($client, $deferredHttpBinding->promise());
+    }
 }

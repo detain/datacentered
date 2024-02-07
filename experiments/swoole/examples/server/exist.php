@@ -1,19 +1,17 @@
 <?php
 class G
 {
-	static $serv;
-    private static $buffers = array();
+    public static $serv;
+    private static $buffers = [];
 
     /**
      * @param $fd
      * @return swoole_buffer
      */
-    static function getBuffer($fd, $create = true)
+    public static function getBuffer($fd, $create = true)
     {
-        if (!isset(self::$buffers[$fd]))
-        {
-            if (!$create)
-            {
+        if (!isset(self::$buffers[$fd])) {
+            if (!$create) {
                 return false;
             }
             self::$buffers[$fd] = new swoole_buffer(1024 * 128);
@@ -22,7 +20,7 @@ class G
     }
 }
 
-$config = array(
+$config = [
    //'worker_num' => 4,
     //'open_eof_check' => true,
     //'package_eof' => "\r\n",
@@ -38,12 +36,12 @@ $config = array(
    'heartbeat_idle_time'      => 300,
     // open_cpu_affinity => 1,
     //'cpu_affinity_ignore' =>array(0,1)//如果你的网卡2个队列（或者没有多队列那么默认是cpu0来处理中断）,并且绑定了core 0和core 1,那么可以通过这个设置避免swoole的线程或者进程绑定到这2个core，防止cpu0，1被耗光而造成的丢包
-);
+];
 
 if (isset($argv[1]) and $argv[1] == 'daemon') {
-	$config['daemonize'] = true;
+    $config['daemonize'] = true;
 } else {
-	$config['daemonize'] = false;
+    $config['daemonize'] = false;
 }
 
 //$mode = SWOOLE_BASE;
@@ -78,11 +76,10 @@ function my_onClose($serv, $fd, $from_id)
 {
     my_log("Worker#{$serv->worker_pid} Client[$fd@$from_id]: fd=$fd is closed");
     $buffer = G::getBuffer($fd);
-    if ($buffer)
-    {
+    if ($buffer) {
         $buffer->clear();
     }
-    if($serv->exist($fd)) {
+    if ($serv->exist($fd)) {
         echo 'FD[' . $fd . '] exist' . PHP_EOL;
     } else {
         echo 'FD[' . $fd . '] not exist' . PHP_EOL;
@@ -91,7 +88,7 @@ function my_onClose($serv, $fd, $from_id)
 
 function my_onConnect(swoole_server $serv, $fd, $from_id)
 {
-    if($serv->exist($fd)) {
+    if ($serv->exist($fd)) {
         echo 'FD[' . $fd . '] exist' . PHP_EOL;
     } else {
         echo 'FD[' . $fd . '] not exist' . PHP_EOL;
@@ -100,7 +97,7 @@ function my_onConnect(swoole_server $serv, $fd, $from_id)
 
 function my_onReceive(swoole_server $serv, $fd, $from_id, $data)
 {
-    if($serv->exist($fd)) {
+    if ($serv->exist($fd)) {
         echo 'FD[' . $fd . '] exist' . PHP_EOL;
     } else {
         echo 'FD[' . $fd . '] not exist' . PHP_EOL;
@@ -110,8 +107,8 @@ function my_onReceive(swoole_server $serv, $fd, $from_id, $data)
 
 function my_onTask(swoole_server $serv, $task_id, $from_id, $data)
 {
-    list($str, $fd) = explode('-', $data);
-    if($serv->exist($fd)) {
+    [$str, $fd] = explode('-', $data);
+    if ($serv->exist($fd)) {
         echo 'FD[' . $fd . '] exist' . PHP_EOL ;
     } else {
         echo 'FD[' . $fd . '] not exist' . PHP_EOL;
@@ -122,7 +119,7 @@ function my_onTask(swoole_server $serv, $task_id, $from_id, $data)
 
 function my_onFinish(swoole_server $serv, $task_id, $data)
 {
-	list($str, $fd) = explode('-', $data);
+    [$str, $fd] = explode('-', $data);
     $serv->send($fd, 'Send Data To FD[' . $fd . ']');
     echo "Task Finish: result=" . $data . ". PID=" . $serv->worker_pid.PHP_EOL;
 }
@@ -134,7 +131,7 @@ $serv->on('Close', 'my_onClose');
 $serv->on('Shutdown', 'my_onShutdown');
 $serv->on('Task', 'my_onTask');
 $serv->on('Finish', 'my_onFinish');
-$serv->on('ManagerStart', function($serv) {
+$serv->on('ManagerStart', function ($serv) {
     global $argv;
     swoole_set_process_name("php {$argv[0]}: manager");
 });

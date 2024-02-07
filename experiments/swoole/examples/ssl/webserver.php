@@ -12,7 +12,7 @@ $serv->set([
 ]);
 //c158354564362fcc
 
-$serv->on('Request', function(swoole_http_request $request, swoole_http_response $response) {
+$serv->on('Request', function (swoole_http_request $request, swoole_http_response $response) {
     //var_dump($request->get);
     //var_dump($request->post);
     //var_dump($request->cookie);
@@ -21,7 +21,7 @@ $serv->on('Request', function(swoole_http_request $request, swoole_http_response
 //    var_dump($request->server);
     //global $serv;
     //$info=  $serv->getClientInfo($request->fd);
-   // var_dump($info);
+    // var_dump($info);
     //$response->cookie("User", "Swoole");
     //$response->header("X-Server", "Swoole");
     $response->end("<h1>Hello Swoole!</h1>\n");

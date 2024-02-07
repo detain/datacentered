@@ -1,8 +1,7 @@
 <?php
 $opt = getopt("c:n:k:");
 print_r($opt);
-if (empty($opt['c']) || empty($opt['n']))
-{
+if (empty($opt['c']) || empty($opt['n'])) {
     echo "examples:  php client.php -c 100 -n 10000" . PHP_EOL;
     return;
 }
@@ -17,18 +16,15 @@ $client = new WebSocketClient($host, $prot);
 $data = $client->connect();
 //echo $data;
 $data = "data";
-if (!empty($size))
-{
+if (!empty($size)) {
     $data = str_repeat("A", $size * 1024);
 }
-for ($i = 0; $i < $count; $i++)
-{
+for ($i = 0; $i < $count; $i++) {
     $client->send("hello swoole, number:" . $i . " data:" . $data);
     $recvData = "";
     //while(1) {
     $tmp = $client->recv();
-    if (empty($tmp))
-    {
+    if (empty($tmp)) {
         break;
     }
     $recvData .= $tmp;

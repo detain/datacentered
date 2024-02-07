@@ -24,7 +24,6 @@ class Server
     }
     public static function onRequest($request, $response)
     {
-
         $response->end('xxxx');
     }
 
@@ -38,6 +37,3 @@ class Server
 $server = new Server();
 
 $server->run();
-
-
-

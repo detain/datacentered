@@ -1,9 +1,9 @@
 <?php
 /**
  * bootstrap
- * 
+ *
  * @author zhang
- * 
+ *
  */
 
 
@@ -18,4 +18,3 @@ require ROOT_PATH . 'libs/service.php';
 
 require ROOT_PATH . 'libs/database/DB.php';
 require ROOT_PATH . 'libs/database/Connection.php';
-

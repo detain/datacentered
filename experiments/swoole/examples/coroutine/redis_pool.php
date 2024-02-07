@@ -3,7 +3,7 @@ $count = 0;
 $pool = new SplQueue();
 $server = new Swoole\Http\Server('127.0.0.1', 9501, SWOOLE_BASE);
 
-$server->on('Request', function($request, $response) use(&$count, $pool) {
+$server->on('Request', function ($request, $response) use (&$count, $pool) {
     if (count($pool) == 0) {
         $redis = new Swoole\Coroutine\Redis();
         $res = $redis->connect('127.0.0.1', 6379);

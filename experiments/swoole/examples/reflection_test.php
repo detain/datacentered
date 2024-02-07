@@ -2,7 +2,7 @@
 
 $Ref_swoole_server = new ReflectionClass('swoole_server');
 $methods = $Ref_swoole_server->getMethods();
-foreach($methods as $method) {
+foreach ($methods as $method) {
     echo "----------------------------------------" .PHP_EOL;
     echo "method name : " . $method->name . PHP_EOL;
     echo "----------------------------------------" . PHP_EOL;
@@ -10,4 +10,3 @@ foreach($methods as $method) {
     $params = $method->getParameters();
     print_r($params);
 }
-

@@ -8,14 +8,16 @@
  * @return \Generator
  */
 
-function xrange($start, $end, $step = 1) {
+function xrange($start, $end, $step = 1)
+{
     for ($i = $start; $i <= $end; $i += $step) {
         yield $i;
     }
 }
 
-foreach (xrange(1, 1000000) as $num)
-	    echo $num, "\n";
+foreach (xrange(1, 1000000) as $num) {
+    echo $num, "\n";
+}
 
 /**
 * The xrange() function shown above provides the same functionality as the built-in range() function. The only difference is that range() will return an array with one million numbers in the above case, whereas xrange() returns an iterator that will emit these numbers, but never actually compute an array with all of them.

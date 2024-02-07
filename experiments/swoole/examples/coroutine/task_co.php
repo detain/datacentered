@@ -18,8 +18,7 @@ $server->on('Finish', function (swoole_server $serv, $task_id, $data) {
     echo "Task#$task_id finished, data_len=".strlen($data).PHP_EOL;
 });
 
-$server->on('Request', function ($request, $response) use ($server)
-{
+$server->on('Request', function ($request, $response) use ($server) {
     $result = $server->taskCo(["hello world", ['data' => 1234, 'code' => 200]], 0.5);
     $response->end('Test End, Result: '.var_export($result, true));
 });

@@ -1,38 +1,39 @@
 <?php
 /**
  * Services Manager
- * 
+ *
  * @author zhang
  *
  */
 
-class Service {
+class Service
+{
     
     
     /**
      * instance
-     * 
+     *
      * @var Service
      */
     private static $instance = null;
     
     /**
      * fd
-     * 
+     *
      * @var number
      */
     private $fd;
     
     /**
      * server
-     * 
+     *
      * @var Web_Socket_Server
      */
     private $server;
     
     /**
      * services
-     * 
+     *
      * @var array
      */
     private $services = [];
@@ -40,11 +41,11 @@ class Service {
     
     /**
      * instance
-     * 
+     *
      * @param Web_Socket_Server $server
      */
-    public static function instance($server = null) {
-        
+    public static function instance($server = null)
+    {
         if (self::$instance !== null) {
             return self::$instance;
         }
@@ -53,15 +54,15 @@ class Service {
         self::$instance->server = $server;
         
         return self::$instance;
-    } 
+    }
     
     /**
      * get
-     *  
+     *
      * @param string $name
      */
-    public function get($name) {
-        
+    public function get($name)
+    {
         $name = ucfirst($name);
         if ($this->exists($name)) {
             $service = $this->services[$name];
@@ -74,11 +75,12 @@ class Service {
     
     /**
      * exists
-     * 
+     *
      * @param string $name
      * @return boolean
      */
-    public function exists($name) {
+    public function exists($name)
+    {
         $name = ucfirst($name);
         if (array_key_exists($name, $this->services)) {
             return true;
@@ -89,21 +91,21 @@ class Service {
     
     /**
      * get server
-     * 
+     *
      * @return Web_Socket_Server
      */
-    public function getMainServer() {
+    public function getMainServer()
+    {
         return $this->server;
     }
     
     /**
      * set server
-     * 
+     *
      * @param Web_Socket_Server $server
      */
-    public function setServer($server) {
+    public function setServer($server)
+    {
         $this->server = $server;
     }
-    
-
 }

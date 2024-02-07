@@ -8,73 +8,74 @@
  * @link
  */
 
-class ActiveRecord {
+class ActiveRecord
+{
 
     
-	/**
-	 * 数据表
-	 * 
-	 * @var string
-	 */
-	protected $table;
-	
-	/**
-	 * model
-	 * 
-	 * @var object
-	 */
-	protected $model;
-	
-	/**
-	 * 自动验证
-	 * 
-	 * @var array
-	 */
-	protected $validate = array();  // 自动验证定义
-	
-	/**
-	 * 
-	 * @var array
-	 */
-	protected $auto = array();  // 自动完成定义
-	
-	/**
-	 * 对象属性， 对应数据库字段
-	 * 
-	 * @var array
-	 */
-	protected $property = array();
-	
-	/**
-	 * primary key
-	 * 
-	 * @var string
-	 */
-	protected $primaryKey = 'id';
-	
-	/**
-	 * column
-	 * 
-	 * @var string
-	 */
-	protected $column = '*';
-	
-	/**
-	 * sql
-	 * 
-	 * @var string
-	 */
-	protected $sql;
-	
-	
-	/**
+    /**
+     * 数据表
+     *
+     * @var string
+     */
+    protected $table;
+    
+    /**
+     * model
+     *
+     * @var object
+     */
+    protected $model;
+    
+    /**
+     * 自动验证
+     *
+     * @var array
+     */
+    protected $validate = [];  // 自动验证定义
+    
+    /**
+     *
+     * @var array
+     */
+    protected $auto = [];  // 自动完成定义
+    
+    /**
+     * 对象属性， 对应数据库字段
+     *
+     * @var array
+     */
+    protected $property = [];
+    
+    /**
+     * primary key
+     *
+     * @var string
+     */
+    protected $primaryKey = 'id';
+    
+    /**
+     * column
+     *
+     * @var string
+     */
+    protected $column = '*';
+    
+    /**
+     * sql
+     *
+     * @var string
+     */
+    protected $sql;
+    
+    
+    /**
      * 初始化
-     * 
+     *
      * @param Connection $db
      * @param Model $model
      */
-    public function __construct($db, $table, $alias = null) {
-        
+    public function __construct($db, $table, $alias = null)
+    {
         $this->table = $table;
         
         $this->db = $db;
@@ -86,17 +87,19 @@ class ActiveRecord {
     
     /**
      * return db connection
-     * 
+     *
      */
-    public function db() {
+    public function db()
+    {
         return $this->db;
     }
     
     /**
      * return table name
-     * 
+     *
      */
-    public function getTable() {
+    public function getTable()
+    {
         return $this->table;
     }
       
@@ -105,7 +108,8 @@ class ActiveRecord {
      *
      * @param string $name
      */
-    public function table($name) {
+    public function table($name)
+    {
         $this->table = $name;
         
         return $this;
@@ -116,7 +120,8 @@ class ActiveRecord {
      *
      * @param string $sql
      */
-    public function query($sql='') {
+    public function query($sql='')
+    {
         if (empty($sql)) {
             return false;
         }
@@ -129,7 +134,8 @@ class ActiveRecord {
      *
      * @param string $sql
      */
-    public function get() {
+    public function get()
+    {
         return $this->db()->fetch();
     }
     
@@ -138,7 +144,8 @@ class ActiveRecord {
      *
      * @param string $sql
      */
-    public function fetch($sql = null) {
+    public function fetch($sql = null)
+    {
         return $this->db()->fetch($sql);
     }
 
@@ -147,7 +154,8 @@ class ActiveRecord {
      *
      * @param nubmer $id
      */
-    public function find($id, $column = array('*')) {
+    public function find($id, $column = ['*'])
+    {
         $this->where($this->primaryKey, '=', $id);
         
         $this->select($column);
@@ -161,7 +169,8 @@ class ActiveRecord {
      * @param string $sql
      * @return mixed >
      */
-    public function all($column = array('*')) {
+    public function all($column = ['*'])
+    {
         $this->select($column);
         
         return $this->db()->fetchAll(null, null);
@@ -174,7 +183,8 @@ class ActiveRecord {
      * @param array $where
      * @return boolean
      */
-    public function increment($field, $step = 1) {
+    public function increment($field, $step = 1)
+    {
         if (empty($this->db()->getWhere())) {
             $this->db()->setLimit(1);
         }
@@ -188,7 +198,8 @@ class ActiveRecord {
      * @param array $where
      * @return boolean
      */
-    public function decrement($field, $step = 1) {
+    public function decrement($field, $step = 1)
+    {
         if (empty($this->db()->getWhere())) {
             $this->db()->setLimit(1);
         }
@@ -203,7 +214,8 @@ class ActiveRecord {
      * @param number $total
      * @param string $sql
      */
-    public function page($page = 1, $size = 10, $total = 0, $sql = null) {
+    public function page($page = 1, $size = 10, $total = 0, $sql = null)
+    {
         return $this->db()->page($sql, $page, $size, $total);
     }
     
@@ -214,7 +226,8 @@ class ActiveRecord {
      * @param string $lastInsertId
      * @return mixed
      */
-    public function insert($data, $lastInsertId = false) {
+    public function insert($data, $lastInsertId = false)
+    {
         return $this->db()->insert($this->table, $data, $lastInsertId);
     }
     
@@ -224,7 +237,8 @@ class ActiveRecord {
      * @param array $data
      * @return boolean
      */
-    public function multiInsert($data) {
+    public function multiInsert($data)
+    {
         return $this->db()->multiInsert($this->table, $data);
     }
     
@@ -233,7 +247,8 @@ class ActiveRecord {
      *
      * @return mixed
      */
-    public function lastInsertId() {
+    public function lastInsertId()
+    {
         return $this->db()->lastInsertId();
     }
     
@@ -242,11 +257,14 @@ class ActiveRecord {
      *
      * @param array $data
      */
-    public function update($data = array()) {
+    public function update($data = [])
+    {
         $where = $this->db()->getWhere(false);
         $limit = $this->db()->getLimit();
     
-        if (empty($where)) { return false;}
+        if (empty($where)) {
+            return false;
+        }
         $data = !empty($data) ? $data : $this->property;
         return $this->db()->update($this->table, $data);
     }
@@ -257,7 +275,8 @@ class ActiveRecord {
      * @param string $countStr
      * @return mixed
      */
-    public function count($countStr = 'count(1) as `count`') {
+    public function count($countStr = 'count(1) as `count`')
+    {
         $sql = "SELECT {$countStr} FROM " . $this->db()->table($this->table) . $this->db()->getWhere() . ' ' .
             $this->db()->getGroup() . ' ' . $this->db()->getHaving() . ' ' . $this->db()->getOrder();
         return $this->db()->fetch($sql);
@@ -268,7 +287,8 @@ class ActiveRecord {
      *
      * @return boolean
      */
-    public function delete($limit = 1) {
+    public function delete($limit = 1)
+    {
         return $this->db()->delete($this->table, $limit);
     }
 
@@ -277,42 +297,45 @@ class ActiveRecord {
      *
      * @param string $sql
      */
-    public function setSql($sql = null) {
+    public function setSql($sql = null)
+    {
         $this->sql = $sql;
-    }                       
+    }
     
     /**
      * return sql
      *
      * @return string
      */
-    public function getSql() {
+    public function getSql()
+    {
         return $this->sql;
     }
 
     /**
      * sum
-     * 
+     *
      * @param string $field
      * @param string $alias
      */
-    public function sum($field, $alias = null) {
+    public function sum($field, $alias = null)
+    {
         $field = !empty($alias) ? "SUM({$field}) AS {$alias}" : "SUM({$field})";
-        $this->select(array($field));
+        $this->select([$field]);
         
         return $this->get();
     }
     
-    public function min() {
-        
+    public function min()
+    {
     }
     
-    public function max() {
-        
+    public function max()
+    {
     }
     
-    public function ave() {
-        
+    public function ave()
+    {
     }
     
     /**
@@ -321,7 +344,8 @@ class ActiveRecord {
      * @param array $column
      * @return ActiveRecord
      */
-    public function select($column = ['*']) {
+    public function select($column = ['*'])
+    {
         $this->db()->setColumn($column);
         
         return $this;
@@ -333,7 +357,8 @@ class ActiveRecord {
      * @param string $str
      * @return ActiveRecord
      */
-    public function limit($str) {
+    public function limit($str)
+    {
         $this->db()->setLimit($str);
         
         return $this;
@@ -345,7 +370,8 @@ class ActiveRecord {
      * @param array $data
      * @return ActiveRecord
      */
-    public function where($data) {
+    public function where($data)
+    {
         if (is_array($data)) {
             foreach ($data as $k => $v) {
                 if (!is_array($v)) {
@@ -370,12 +396,13 @@ class ActiveRecord {
     
     /**
      * or
-     * 
+     *
      * @param string $field
      * @param string $value
      * @param string $mode
      */
-    public function whereOr($field, $mode, $value) {
+    public function whereOr($field, $mode, $value)
+    {
         $this->where($field, $mode, $value, 'OR');
         
         return $this;
@@ -383,12 +410,13 @@ class ActiveRecord {
     
     /**
      * in where
-     * 
+     *
      * @param string $field
      * @param string $value
      * @param string $boolean
      */
-    public function whereIn($field, $value, $boolean = 'AND') {
+    public function whereIn($field, $value, $boolean = 'AND')
+    {
         $this->db()->setWhereIn($field, $value, $boolean);
         
         return $this;
@@ -396,10 +424,11 @@ class ActiveRecord {
     
     /**
      * exists
-     * 
+     *
      * @param string $where
      */
-    public function whereExists($where) {
+    public function whereExists($where)
+    {
         $this->db()->setWhereExists($where, $boolean);
         
         return $this;
@@ -407,21 +436,22 @@ class ActiveRecord {
     
     /**
      * parse where
-     * 
+     *
      * @param array $data
      * @throws ImpException
      * @return array
      */
-    public function parseWhere($data) {
+    public function parseWhere($data)
+    {
         if (count($data) < 2) {
             throw new ImpException('sql where error');
         }
         
-        $params = array();
+        $params = [];
         $params[0] = $data[0];
-        $params[1] = isset($data[1]) ? $data[1] : '=';
-        $params[2] = isset($data[2]) ? $data[2] : null;
-        $params[3] = isset($data[3]) ? $data[3] : 'AND';
+        $params[1] = $data[1] ?? '=';
+        $params[2] = $data[2] ?? null;
+        $params[3] = $data[3] ?? 'AND';
         
         return $params;
     }
@@ -434,7 +464,8 @@ class ActiveRecord {
      * @param string $mode
      * @param string $boolean
      */
-    protected function setWhere($field, $mode = '=', $value = null, $boolean = 'AND') {
+    protected function setWhere($field, $mode = '=', $value = null, $boolean = 'AND')
+    {
         $value = is_numeric($this->db()->getBuilder()->parseValue($value)) ? $this->db()->getBuilder()->parseValue($value) : "'". $this->db()->getBuilder()->parseValue($value) . "'";
         $where = $this->db()->getBuilder()->parseField($field) . ' ' . $mode . ' ' . $value;
         $where = !empty($this->db()->getWhere()) ? ($boolean . $where) : $where;
@@ -445,12 +476,13 @@ class ActiveRecord {
     }
     
     /**
-     * join 
-     * 
+     * join
+     *
      * @param string $table
      * @param string $alias
      */
-    public function join($table, $mode = NULL, $alias = null) {
+    public function join($table, $mode = null, $alias = null)
+    {
         $this->db()->join($table, $mode, $alias);
         
         return $this;
@@ -458,12 +490,13 @@ class ActiveRecord {
     
     /**
      * left join
-     * 
+     *
      * @param string $table
      * @param string $alias
      * @return ActiveRecord
      */
-    public function leftJoin($table, $alias = null) {
+    public function leftJoin($table, $alias = null)
+    {
         $this->db()->join($table, 'LEFT', $alias);
         
         return $this;
@@ -476,7 +509,8 @@ class ActiveRecord {
      * @param string $alias
      * @return ActiveRecord
      */
-    public function rightJoin($table, $alias = null) {
+    public function rightJoin($table, $alias = null)
+    {
         $this->db()->join($table, 'RIGHT', $alias);
         
         return $this;
@@ -489,7 +523,8 @@ class ActiveRecord {
      * @param string $alias
      * @return ActiveRecord
      */
-    public function crossJoin($table, $alias = null) {
+    public function crossJoin($table, $alias = null)
+    {
         $this->db()->join($table, 'CROSS', $alias);
         
         return $this;
@@ -502,7 +537,8 @@ class ActiveRecord {
      * @param string $alias
      * @return ActiveRecord
      */
-    public function on($table, $first, $mode, $second, $boolean = 'AND') {
+    public function on($table, $first, $mode, $second, $boolean = 'AND')
+    {
         $this->db()->on($table, $first, $mode, $second, $boolean);
         
         return $this;
@@ -514,7 +550,8 @@ class ActiveRecord {
      * @param string $str
      * @return ActiveRecord
      */
-    public function having($str) {
+    public function having($str)
+    {
         $this->db()->setHaving($str);
         
         return $this;
@@ -526,7 +563,8 @@ class ActiveRecord {
      * @param string $str
      * @return ActiveRecord
      */
-    public function groupBy($str) {
+    public function groupBy($str)
+    {
         $this->db()->setGroup($str);
         
         return $this;
@@ -538,7 +576,8 @@ class ActiveRecord {
      * @param string $str
      * @return ActiveRecord
      */
-    public function orderBy($str) {
+    public function orderBy($str)
+    {
         $this->db()->setOrder($str);
         
         return $this;
@@ -548,7 +587,8 @@ class ActiveRecord {
      * 启动事务
      *
      */
-    public function beginTransaction() {
+    public function beginTransaction()
+    {
         $this->db()->beginTransaction();
     }
     
@@ -556,7 +596,8 @@ class ActiveRecord {
      * commit
      *
      */
-    public function commit() {
+    public function commit()
+    {
         $this->db()->commit();
     }
     
@@ -564,17 +605,18 @@ class ActiveRecord {
      * rollback
      *
      */
-    public function rollback() {
+    public function rollback()
+    {
         $this->db()->rollback();
     }
         
     /**
      * set result type
-     * 
+     *
      * @param string $type
      */
-    public function type($type = 'object') {
+    public function type($type = 'object')
+    {
         $this->db()->setResultType($type);
     }
-
 }

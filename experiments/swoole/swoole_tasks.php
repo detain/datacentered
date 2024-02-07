@@ -1,7 +1,7 @@
 <?php
 $server = new swoole_server("127.0.0.1", 9502);
-$server->set(array('task_worker_num' => 4));
-$server->on('receive', function($server, $fd, $from_id, $data) {
+$server->set(['task_worker_num' => 4]);
+$server->on('receive', function ($server, $fd, $from_id, $data) {
     $task_id = $server->task("Async");
     echo "Dispath AsyncTask: [id=$task_id]\n";
 });

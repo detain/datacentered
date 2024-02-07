@@ -4,7 +4,7 @@ use Amp\Process;
 
 include __DIR__. '/../vendor/autoload.php';
 
-\Amp\run(function() {
+\Amp\run(function () {
     $proc = new Process('read ; echo "$REPLY"');
     $promise = $proc->exec(Process::BUFFER_ALL);
 

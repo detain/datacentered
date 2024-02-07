@@ -9,7 +9,8 @@
  * @return \Generator
  */
 
-function xrange($start, $end, $step = 1) {
+function xrange($start, $end, $step = 1)
+{
     for ($i = $start; $i <= $end; $i += $step) {
         yield $i;
     }

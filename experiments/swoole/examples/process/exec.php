@@ -4,7 +4,7 @@ $pid = $process->start();
 
 function callback_function(swoole_process $worker)
 {
-    $worker->exec('/usr/local/bin/php', array(__DIR__.'/stdin_stdout.php'));
+    $worker->exec('/usr/local/bin/php', [__DIR__.'/stdin_stdout.php']);
 }
 
 echo "From Worker: ".$process->read();
@@ -13,4 +13,3 @@ echo "From Worker: ".$process->read();
 
 $ret = swoole_process::wait();
 var_dump($ret);
-

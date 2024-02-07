@@ -1,31 +1,32 @@
 <?php
 /**
  * generator
- * 
+ *
  * @author zhang
  * @date   2016-12-05
  *
  */
 
-class Creator {
+class Creator
+{
     
     
     /**
      * return token
-     * 
+     *
      */
-    public function genToken() {
-        
+    public function genToken()
+    {
         return $this->_genToken(16);
     }
     
     /**
      * generate token
-     * 
+     *
      * @param number $num
      */
-    private function _genToken($num = 16) {
-        
+    private function _genToken($num = 16)
+    {
         $str = '1234567890abcdefghijklmnopqrstuvwxyz';
         $len = strlen($str);
         $token = '';
@@ -37,6 +38,4 @@ class Creator {
   
         return $token;
     }
-    
 }
-

@@ -5,17 +5,14 @@ $ch = curl_init();
 curl_setopt($ch, CURLOPT_URL, "http://127.0.0.1:9501");
 curl_setopt($ch, CURLOPT_HEADER, 0);
 curl_setopt($ch, CURLOPT_POST, 1);//设置为POST方式
-curl_setopt($ch, CURLOPT_HTTPHEADER, array('Expect:'));
+curl_setopt($ch, CURLOPT_HTTPHEADER, ['Expect:']);
 
-$post_data = array('test' => str_repeat('a', 80));
+$post_data = ['test' => str_repeat('a', 80)];
 
-if (function_exists("curl_file_create"))
-{
+if (function_exists("curl_file_create")) {
     $cfile = curl_file_create(__DIR__ . '/../test.jpg');
     $post_data['file'] = $cfile;
-}
-else
-{
+} else {
     $post_data['file'] = '@' . __DIR__ . '/../test.jpg';
 }
 

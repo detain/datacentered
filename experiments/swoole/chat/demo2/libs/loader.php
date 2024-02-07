@@ -1,26 +1,28 @@
 <?php
 /**
  * loader
- * 
+ *
  * @author zhang
  *
  */
 
-class Loader {
+class Loader
+{
     
     
     /**
      * class map
-     * 
-     */    
+     *
+     */
     protected static $map;
 
     /**
      * load service
      *
-     * @param string $class            
+     * @param string $class
      */
-    public static function service($class) {
+    public static function service($class)
+    {
         if (isset(self::$map[$class])) {
             return true;
         }
@@ -35,7 +37,8 @@ class Loader {
      *
      * @param string $class
      */
-    public static function import($class) {
+    public static function import($class)
+    {
         if (isset(self::$map[$class])) {
             return true;
         }
@@ -44,6 +47,4 @@ class Loader {
     
         return require dirname(__FILE__) . '/' . $class . '.php';
     }
-    
-
 }

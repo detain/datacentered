@@ -8,7 +8,8 @@ require __DIR__.'/../../../vendor/autoload.php';
  *
  * @param array $notifyData
  */
-function myNotifyCallback(array $notifyData) {
+function myNotifyCallback(array $notifyData)
+{
     $event = array_shift($notifyData);
     switch ($event) {
         case Amp\Artax\Notify::SOCK_PROCURED:

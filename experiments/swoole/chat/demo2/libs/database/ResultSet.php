@@ -8,15 +8,16 @@
  * @link
  */
 
-class ResultSet {
+class ResultSet
+{
 
     /**
      * return result as array
      *
      */
-    public function toArray() {
-        
-        $data = array();
+    public function toArray()
+    {
+        $data = [];
         
         $result = Connection::getConnector()->db()->getResult();
         foreach ($result as $k => $v) {
@@ -36,7 +37,8 @@ class ResultSet {
      * @param string $option
      * @return string
      */
-    public function toJson($option = JSON_UNESCAPED_UNICODE) {
+    public function toJson($option = JSON_UNESCAPED_UNICODE)
+    {
         return json_encode(Connection::getConnector()->db()->getResult(), $option);
     }
 
@@ -44,8 +46,8 @@ class ResultSet {
      * return the result as serialize
      *
      */
-    public function toSerialize() {
+    public function toSerialize()
+    {
         return serialize(Connection::getConnector()->db()->getResult());
     }
-    
 }
