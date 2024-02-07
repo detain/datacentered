@@ -1,9 +1,6 @@
 <?php
 
 use \Workerman\Worker;
-use \Workerman\GlobalTimer;
-
-//require_once __DIR__.'/../../vendor/workerman/global-timer/src/GlobalTimer.php';
 
 if (ini_get('default_socket_timeout') < 1200 && ini_get('default_socket_timeout') > 1) {
     ini_set('default_socket_timeout', 1200);

@@ -32,7 +32,7 @@ define('GLOBAL_START', 1); // The flag is globally activated
 //foreach (glob(__DIR__.'/Applications/*/start*.php') as $start_file) {
 $services = ['task', 'gateway', 'gateway_ssl', 'businessworker', 'web'];
 if (gethostname() == 'my.interserver.net')
-    $services = array_merge(['globaltimer', 'globaldata', 'register'], $services);
+    $services = array_merge(['globaldata', 'channel', 'register'], $services);
 foreach ($services as $start_part) {
     $start_file = __DIR__.'/Applications/Chat/start_'.$start_part.'.php';
     require_once $start_file;
