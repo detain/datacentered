@@ -248,10 +248,11 @@ class Events
          */
         global $global;
         $var = 'processsing_queue';
+        $lastVar = $var.'_last';
         if (!isset($global->$var)) {
             $global->$var = 0;
         }
-        if ($global->cas($var, 0, 1)) {
+        if ($global->cas($var, 0, time())) {
             /**
              * @var \React\MySQL\Connection
              */
@@ -260,6 +261,7 @@ class Events
             if (is_array($results) && sizeof($results) > 0) {
                 self::process_results($results);
             } else {
+                $global->$lastVar = time();
                 $global->$var = 0;
             }
         }
@@ -315,6 +317,8 @@ class Events
                      */
                     global $global;
                     $var = 'processsing_queue';
+                    $lastVar = $var.'_last';
+                    $global->$lastVar = time();
                     $global->$var = 0;
                 }
                 Worker::safeEcho("finished queued payment processing task (post close)\n");
@@ -325,6 +329,8 @@ class Events
                  */
                 global $global;
                 $var = 'processsing_queue';
+                $lastVar = $var.'_last';
+                $global->$lastVar = time();
                 $global->$var = 0;
             };
             $task_connection->connect();
@@ -334,6 +340,8 @@ class Events
              */
             global $global;
             $var = 'processsing_queue';
+            $lastVar = $var.'_last';
+            $global->$lastVar = time();
             $global->$var = 0;
         }
     }
