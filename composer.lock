@@ -620,12 +620,12 @@
             "source": {
                 "type": "git",
                 "url": "https://github.com/doctrine/inflector.git",
-                "reference": "d718c589c01ce614e03ed0ab3be831e4201bfb79"
+                "reference": "f587d8c05c6e00f99cbfb32d565e4f6743c07ee4"
             },
             "dist": {
                 "type": "zip",
-                "url": "https://api.github.com/repos/doctrine/inflector/zipball/d718c589c01ce614e03ed0ab3be831e4201bfb79",
-                "reference": "d718c589c01ce614e03ed0ab3be831e4201bfb79",
+                "url": "https://api.github.com/repos/doctrine/inflector/zipball/f587d8c05c6e00f99cbfb32d565e4f6743c07ee4",
+                "reference": "f587d8c05c6e00f99cbfb32d565e4f6743c07ee4",
                 "shasum": ""
             },
             "require": {
@@ -703,7 +703,7 @@
                     "type": "tidelift"
                 }
             ],
-            "time": "2024-01-15T18:12:41+00:00"
+            "time": "2024-02-18T21:47:00+00:00"
         },
         {
             "name": "evenement/evenement",
@@ -2882,12 +2882,12 @@
             "source": {
                 "type": "git",
                 "url": "https://github.com/Roave/SecurityAdvisories.git",
-                "reference": "683c8e7acb9c333990683edd7faed421c87d3954"
+                "reference": "624324975ceed0b788160bdec5b7f22125d8de14"
             },
             "dist": {
                 "type": "zip",
-                "url": "https://api.github.com/repos/Roave/SecurityAdvisories/zipball/683c8e7acb9c333990683edd7faed421c87d3954",
-                "reference": "683c8e7acb9c333990683edd7faed421c87d3954",
+                "url": "https://api.github.com/repos/Roave/SecurityAdvisories/zipball/624324975ceed0b788160bdec5b7f22125d8de14",
+                "reference": "624324975ceed0b788160bdec5b7f22125d8de14",
                 "shasum": ""
             },
             "conflict": {
@@ -3077,7 +3077,7 @@
                 "funadmin/funadmin": "<=3.2|>=3.3.2,<=3.3.3",
                 "gaoming13/wechat-php-sdk": "<=1.10.2",
                 "genix/cms": "<=1.1.11",
-                "getgrav/grav": "<=1.7.42.1",
+                "getgrav/grav": "<1.7.44",
                 "getkirby/cms": "<3.5.8.3-dev|>=3.6,<3.6.6.3-dev|>=3.7,<3.7.5.2-dev|>=3.8,<3.8.4.1-dev|>=3.9,<3.9.6",
                 "getkirby/kirby": "<=2.5.12",
                 "getkirby/panel": "<2.5.14",
@@ -3135,7 +3135,7 @@
                 "joomla/archive": "<1.1.12|>=2,<2.0.1",
                 "joomla/filesystem": "<1.6.2|>=2,<2.0.1",
                 "joomla/filter": "<1.4.4|>=2,<2.0.1",
-                "joomla/framework": "<1.5.4|>=2.5.4,<=3.8.12",
+                "joomla/framework": "<1.5.7|>=2.5.4,<=3.8.12",
                 "joomla/input": ">=2,<2.0.2",
                 "joomla/joomla-cms": ">=2.5,<3.9.12",
                 "joomla/session": "<1.3.1",
@@ -3611,7 +3611,7 @@
                     "type": "tidelift"
                 }
             ],
-            "time": "2024-02-14T16:04:39+00:00"
+            "time": "2024-02-19T06:05:04+00:00"
         },
         {
             "name": "symfony/class-loader",
@@ -4368,16 +4368,17 @@
             "source": {
                 "type": "git",
                 "url": "https://github.com/walkor/GatewayWorker.git",
-                "reference": "c1552dd9fec670ecf8d5db9bfaf61e1821636f32"
+                "reference": "21d8216a496bd885c045fcab24c6e4788b81fdb6"
             },
             "dist": {
                 "type": "zip",
-                "url": "https://api.github.com/repos/walkor/GatewayWorker/zipball/c1552dd9fec670ecf8d5db9bfaf61e1821636f32",
-                "reference": "c1552dd9fec670ecf8d5db9bfaf61e1821636f32",
+                "url": "https://api.github.com/repos/walkor/GatewayWorker/zipball/21d8216a496bd885c045fcab24c6e4788b81fdb6",
+                "reference": "21d8216a496bd885c045fcab24c6e4788b81fdb6",
                 "shasum": ""
             },
             "require": {
-                "workerman/workerman": "^4.0.0"
+                "php": ">=7.0",
+                "workerman/workerman": "^4.0.30"
             },
             "default-branch": true,
             "type": "library",
@@ -4402,7 +4403,7 @@
             ],
             "support": {
                 "issues": "https://github.com/walkor/GatewayWorker/issues",
-                "source": "https://github.com/walkor/GatewayWorker/tree/v3.1.5"
+                "source": "https://github.com/walkor/GatewayWorker/tree/v3.1.6"
             },
             "funding": [
                 {
@@ -4414,7 +4415,7 @@
                     "type": "patreon"
                 }
             ],
-            "time": "2023-12-27T12:36:59+00:00"
+            "time": "2024-02-19T00:58:32+00:00"
         },
         {
             "name": "workerman/gatewayclient",
@@ -4548,16 +4549,16 @@
         },
         {
             "name": "workerman/workerman",
-            "version": "v4.1.14",
+            "version": "v4.1.15",
             "source": {
                 "type": "git",
                 "url": "https://github.com/walkor/workerman.git",
-                "reference": "f7c9667c7b5387c01fa9e50ee79ed931e93ee76e"
+                "reference": "afc8242fc769ab7cf22eb4ac22b97cb59d465e4e"
             },
             "dist": {
                 "type": "zip",
-                "url": "https://api.github.com/repos/walkor/workerman/zipball/f7c9667c7b5387c01fa9e50ee79ed931e93ee76e",
-                "reference": "f7c9667c7b5387c01fa9e50ee79ed931e93ee76e",
+                "url": "https://api.github.com/repos/walkor/workerman/zipball/afc8242fc769ab7cf22eb4ac22b97cb59d465e4e",
+                "reference": "afc8242fc769ab7cf22eb4ac22b97cb59d465e4e",
                 "shasum": ""
             },
             "require": {
@@ -4607,7 +4608,7 @@
                     "type": "patreon"
                 }
             ],
-            "time": "2023-08-09T03:37:45+00:00"
+            "time": "2024-02-19T02:10:39+00:00"
         }
     ],
     "packages-dev": [
@@ -5541,12 +5542,12 @@
             "source": {
                 "type": "git",
                 "url": "https://github.com/sebastianbergmann/phpunit.git",
-                "reference": "828c5ab97f96e1045250b57f935d70aa7277da07"
+                "reference": "2783e11fe23ae3e5d68276c56b6461be989afbb7"
             },
             "dist": {
                 "type": "zip",
-                "url": "https://api.github.com/repos/sebastianbergmann/phpunit/zipball/828c5ab97f96e1045250b57f935d70aa7277da07",
-                "reference": "828c5ab97f96e1045250b57f935d70aa7277da07",
+                "url": "https://api.github.com/repos/sebastianbergmann/phpunit/zipball/2783e11fe23ae3e5d68276c56b6461be989afbb7",
+                "reference": "2783e11fe23ae3e5d68276c56b6461be989afbb7",
                 "shasum": ""
             },
             "require": {
@@ -5634,7 +5635,7 @@
                     "type": "tidelift"
                 }
             ],
-            "time": "2024-02-14T07:01:37+00:00"
+            "time": "2024-02-19T13:53:14+00:00"
         },
         {
             "name": "satooshi/php-coveralls",

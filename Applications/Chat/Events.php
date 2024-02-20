@@ -64,7 +64,10 @@ class Events
                     'messages' => [],
                 ]
             ];
-            Events::hyperv_update_list_timer();
+            if (gethostname() == 'my.interserver.net') {
+            } else {
+                Events::hyperv_update_list_timer();
+            }
         }
         if ($worker->id == 0) {
             $args = [];
