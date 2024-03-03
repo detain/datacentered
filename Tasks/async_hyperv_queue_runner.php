@@ -23,11 +23,13 @@ function async_hyperv_queue_runner($args)
             myadmin_log('myadmin', 'info', 'Processing New VPS for '.$service_master['vps_name'], __LINE__, __FILE__, 'vps');
             vps_queue_handler($service_master, 'get_new_vps', $service_master['newvps']);
         }
+        $global->$var = time();
         $global->$requestVar = 'get_queue';
         if (sizeof($service_master['queue']) > 0) {
             myadmin_log('myadmin', 'info', 'Processing VPS Queue for '.$service_master['vps_name'], __LINE__, __FILE__, 'vps');
             vps_queue_handler($service_master, 'get_queue', $service_master['queue']);
         }
+        $global->$var = time();
         $global->$requestVar = 'server_list';
         vps_queue_handler($service_master, 'server_list');
         $global->$var = 0;
