@@ -32,6 +32,7 @@ function async_hyperv_queue_runner($args)
         vps_queue_handler($service_master, 'server_list');
         $global->$var = 0;
     } else {
-        Worker::safeEcho("timer couldnt get lock to start hyperv async queue processing for {$service_master['vps_name']}\n");
+        $delay = (int)time() - (int)$global->$var;
+        Worker::safeEcho("timer couldnt get lock to start hyperv async queue processing for {$service_master['vps_name']} (currently running {$global->$requestVar} for {$delay} seconds)\n");
     }
 }

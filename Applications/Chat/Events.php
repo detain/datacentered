@@ -82,7 +82,7 @@ class Events
             } else {
                 $rows = self::$db->select('vps_id')->from('vps_masters')->where('vps_type=11')->query();
                 foreach ($rows as $row) {
-                    $var = 'vps_host_'.$row['vps_id'].'_request';
+                    $var = 'vps_host_'.$row['vps_id'];
                     $global->$var = 0;
                 }
                 $timers['hyperv_update_list_timer'] = GlobalTimer::add(3600, ['Events', 'hyperv_update_list_timer'], $args);
