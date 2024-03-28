@@ -23,7 +23,7 @@
 		"roave/security-advisories": "*",
 		"react/child-process": "*@stable",
 		"react/event-loop": "*@stable",
-		"react/http": "*@stable",
+		"react/http": "1.9.0@stable",
 		"react/mysql": "*@stable",
 		"guzzlehttp/guzzle": ">=6.0@stable",
 		"danielstjules/php-pretty-datetime": "*",
