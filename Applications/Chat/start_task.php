@@ -8,6 +8,7 @@ if (ini_get('default_socket_timeout') < 1200 && ini_get('default_socket_timeout'
     ini_set('default_socket_timeout', 1200);
 }
 
+$GLOBALS['disable_db_queries'] = true;
 $task_worker = new Worker('Text://127.0.0.1:2208');		// task worker, using the Text protocol
 $task_worker->count = 20; 								// number of task processes can be opened more than needed
 $task_worker->name = 'TaskWorker';
@@ -30,6 +31,7 @@ $task_worker->onWorkerStart = function ($worker) {
         ]);
         $influx_v2_database = $influx_v2_client->createWriteApi(['writeType' => \InfluxDB2\WriteType::BATCHING, 'batchSize' => 1000]);
     }
+    $GLOBALS['disable_db_queries'] = true;
     $global = new \GlobalData\Client(gethostname() == 'my.interserver.net' ? '127.0.0.1:2207' : '192.64.80.218:2207');
     $queuehosts = [];
     $functions = [];

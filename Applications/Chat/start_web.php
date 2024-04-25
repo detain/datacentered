@@ -19,6 +19,7 @@ $context = [																						// Certificate is best to apply for a certific
         'verify_peer_name' => false,
     ]
 ];
+$GLOBALS['disable_db_queries'] = true;
 $web = new Worker('http://0.0.0.0:55151', $context);
 $web->name	 = 'WebServer';
 $web->count = 5; // WebServer number of processes
