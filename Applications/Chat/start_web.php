@@ -104,6 +104,7 @@ $web->onWorkerStart = function ($worker) {
     $mysql_db = new \Workerman\MySQL\Connection($db_config['db_host'], $db_config['db_port'], $db_config['db_user'], $db_config['db_pass'], $db_config['db_name'], 'utf8mb4');
     $zone_db = new \Workerman\MySQL\Connection(ZONEMTA_MYSQL_HOST, ZONEMTA_MYSQL_PORT, ZONEMTA_MYSQL_USERNAME, ZONEMTA_MYSQL_PASSWORD, ZONEMTA_MYSQL_DB, 'utf8mb4');
     $GLOBALS['log_queries'] = false;
+    $GLOBALS['disable_db_queries'] = false;
     require_once '/home/my/include/functions.inc.php';
     ini_set('error_reporting', E_ALL & ~E_NOTICE);
     $tf->session->sessionid = 'WorkerManWeb';
