@@ -8,6 +8,7 @@ if (ini_get('default_socket_timeout') < 1200 && ini_get('default_socket_timeout'
     ini_set('default_socket_timeout', 1200);
 }
 
+define('LAST_DB_HOST', true);
 $GLOBALS['disable_db_queries'] = true;
 $task_worker = new Worker('Text://127.0.0.1:2208');		// task worker, using the Text protocol
 $task_worker->count = 20; 								// number of task processes can be opened more than needed
@@ -19,7 +20,7 @@ $task_worker->onWorkerStart = function ($worker) {
     $db_config = include '/home/my/include/config/config.db.php';
     $GLOBALS['tf']->db->haltOnError = 'report';
     $loop = Worker::getEventLoop();
-    $worker_db = new \Workerman\MySQL\Connection($db_config['db_host'], $db_config['db_port'], $db_config['db_user'], $db_config['db_pass'], $db_config['db_name'], 'utf8mb4');
+    $worker_db = new \Workerman\MySQL\Connection(isset($db_config['db_hosts']) ? $db_config['db_hosts'][count($db_config['db_hosts']) - 1] : $db_config['db_host'], $db_config['db_port'], $db_config['db_user'], $db_config['db_pass'], $db_config['db_name'], 'utf8mb4');
     if (INFLUX_V2 === true) {
         $influx_v2_client = new \InfluxDB2\Client([
             'url' => INFLUX_V2_URL,

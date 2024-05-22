@@ -67,7 +67,7 @@ function async_hyperv_get_list_server(\React\Http\Browser &$browser, $service_ma
                     //echo $service_master['vps_name'] . ' Got VM List'.PHP_EOL;
                     } else {
                         \StatisticClient::report('Hyper-V', 'GetVMList', false, 100, 'Missing expected output fields', STATISTICS_SERVER);
-                        //echo $service_master['vps_name'].' ERROR: Command Completed but missing expected fields! Output: '.json_encode($result).PHP_EOL;
+                        echo $service_master['vps_name'].' ERROR: Command Completed but missing expected fields! Output: '.json_encode($result).PHP_EOL;
                         $global->$requestVar = 'cleanup_resources';
                         if (isset($result->Success) && $result->Success == 'false' && $global->$var < 3) {
                             $task_connection = new AsyncTcpConnection('Text://127.0.0.1:2208');                                                // Asynchronous link with the remote task service
@@ -81,7 +81,7 @@ function async_hyperv_get_list_server(\React\Http\Browser &$browser, $service_ma
                     $global->$var = 0;
                 },
                 function (Exception $e) use ($service_master) {
-                    //echo $service_master['vps_name'].' GetVMList ERROR: ' . $e->getMessage() . PHP_EOL;
+                    echo $service_master['vps_name'].' GetVMList ERROR: ' . $e->getMessage() . PHP_EOL;
                     \StatisticClient::report('Hyper-V', 'GetVMList', false, $e->getCode(), $e->getMessage(), STATISTICS_SERVER);
                     /**
                     * @var \GlobalData\Client
@@ -94,7 +94,7 @@ function async_hyperv_get_list_server(\React\Http\Browser &$browser, $service_ma
         },
         function (\Exception $e) use ($service_master) {
             \StatisticClient::report('Hyper-V', 'GetVMList', false, $e->getCode(), $e->getMessage(), STATISTICS_SERVER);
-            //echo 'Error: an error occured while trying to download the WSDL'.PHP_EOL;
+            echo $service_master['vps_name'].' Error: an error occured while trying to download the WSDL'.PHP_EOL;
             /**
             * @var \GlobalData\Client
             */

@@ -52,7 +52,7 @@ class Events
         GlobalTimer::init(gethostname() == 'my.interserver.net' ? '127.0.0.1' : '192.64.80.218','3333');
         $db_config = include '/home/my/include/config/config.db.php';
         $loop = Worker::getEventLoop();
-        self::$db = new \Workerman\MySQL\Connection($db_config['db_host'], $db_config['db_port'], $db_config['db_user'], $db_config['db_pass'], $db_config['db_name'], 'utf8mb4');
+        self::$db = new \Workerman\MySQL\Connection(isset($db_config['db_hosts']) ? $db_config['db_hosts'][count($db_config['db_hosts']) - 1] : $db_config['db_host'], $db_config['db_port'], $db_config['db_user'], $db_config['db_pass'], $db_config['db_name'], 'utf8mb4');
         if ($global->add('running', [])) {
             $global->hosts = [];
             $global->rooms = [
@@ -313,7 +313,7 @@ class Events
                         Worker::safeEcho('['.$try.'/'.$maxTries.'] Got PDO Exception #'.$e->getCode().': "'.$e->getMessage()."\"\n");
                         sleep($delay);
                         $db_config = include '/home/my/include/config/config.db.php';
-                        Events::$db = new \Workerman\MySQL\Connection($db_config['db_host'], $db_config['db_port'], $db_config['db_user'], $db_config['db_pass'], $db_config['db_name'], 'utf8mb4');
+                        Events::$db = new \Workerman\MySQL\Connection(isset($db_config['db_hosts']) ? $db_config['db_hosts'][count($db_config['db_hosts']) - 1] : $db_config['db_host'], $db_config['db_port'], $db_config['db_user'], $db_config['db_pass'], $db_config['db_name'], 'utf8mb4');
                     }
                 }
                 $task_connection->close();
