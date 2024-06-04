@@ -9,7 +9,6 @@ require_once __DIR__ . '/../../my/vendor/autoload.php';
 
 TcpConnection::$defaultMaxSendBufferSize = 1024*1024*100; // sets the connections send write buffer size to 10mb (default 1mb)
 
-//ini_set('mysqli.reconnect', 'on');
 ini_set('display_errors', 'on');
 ini_set('post_max_size', '100M');
 ini_set('upload_max_filesize', '100M');
