@@ -6,7 +6,7 @@ global $memcache, $redis;
 if (isset($_POST['action']) && $_POST['action'] == 'map') {
     try {
         if (USE_REDIS === true) {
-            $map = json_decode($redis->get('maps|'.$_SERVER['REMOTE_ADDR']), true);
+            $map = json_decode($redis->get('maps:'.$_SERVER['REMOTE_ADDR']), true);
         } else {
             $map = $memcache->get('maps'.$_SERVER['REMOTE_ADDR']);
         }
@@ -105,7 +105,7 @@ if (isset($_POST['action']) && $_POST['action'] == 'map') {
 } elseif (isset($_POST['action']) && $_POST['action'] == 'queue') {
     try {
         if (USE_REDIS === true) {
-            while (false !== $queue = $redis->lPop('queue|'.$_SERVER['REMOTE_ADDR'])) {
+            while (false !== $queue = $redis->lPop('queue:'.$_SERVER['REMOTE_ADDR'])) {
                 echo $queue.PHP_EOL;
             }
         } else {
@@ -142,7 +142,7 @@ if (isset($_POST['action']) && $_POST['action'] == 'map') {
     $output = '';
     try {
         if (USE_REDIS === true) {
-            $redis->rPush('queuein|'.$_SERVER['REMOTE_ADDR'], json_encode($item));
+            $redis->rPush('queuein:'.$_SERVER['REMOTE_ADDR'], json_encode($item));
         } else {
             $queuein = 'queuein'.$_SERVER['REMOTE_ADDR'];
             $loopCount = 0;

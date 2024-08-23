@@ -93,7 +93,7 @@ function map_queue_task($args)
             }
             if (USE_REDIS === true) {
                 try {
-                    $redis->set('maps|'.$server[$prefix.'_ip'], json_encode($maps));
+                    $redis->set('maps:'.$server[$prefix.'_ip'], json_encode($maps));
                 } catch (\Exception $e) {
                     Worker::safeEcho('Caught Exception #'.$e->getCode().':'.$e->getMessage().' on '.__LINE__.'@'.__FILE__);
                 }

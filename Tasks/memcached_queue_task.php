@@ -90,7 +90,7 @@ function memcached_queue_task($args)
     $processQueue = [];
     foreach ($queuehosts as $hostIp) {
         if (USE_REDIS === true) {
-            while (false !== $queue = $redis->lPop('queuein|'.$hostIp)) {
+            while (false !== $queue = $redis->lPop('queuein:'.$hostIp)) {
                 $queue = json_decode($queue, true);
                 $processQueue[] = $queue;
             }
@@ -127,7 +127,7 @@ function memcached_queue_task($args)
             $influx_table = $prefix.'_bandwidth';
         }
         if (USE_REDIS === true) {
-            $server = $redis->get($module.'_masters|'.$queue['ip']);
+            $server = $redis->get($module.'_masters:'.$queue['ip']);
         } else {
             $server = $memcache->get($module.'_masters'.$queue['ip']);
         }
@@ -160,7 +160,7 @@ function memcached_queue_task($args)
                 continue;
             }
             if (USE_REDIS === true) {
-                $redis->setEx($module.'_masters|'.$queue['ip'], 3600, json_encode($server));
+                $redis->setEx($module.'_masters:'.$queue['ip'], 3600, json_encode($server));
             } else {
                 $memcache->set($module.'_masters'.$queue['ip'], $server, 3600);
             }
@@ -181,7 +181,7 @@ function memcached_queue_task($args)
                 $serialized_server_usage = json_encode($server_usage);
                 $points = [];
                 if (USE_REDIS === true) {
-                    $serverDetails = $redis->get($module.'_master_details|'.$server[$prefix.'_id']);
+                    $serverDetails = $redis->get($module.'_master_details:'.$server[$prefix.'_id']);
                 } else {
                     $serverDetails = $memcache->get($module.'_master_details'.$server[$prefix.'_id']);
                 }
@@ -245,7 +245,7 @@ function memcached_queue_task($args)
                             $prefix.'_cpu_usage' => $serialized_server_usage
                         ];
                         if (USE_REDIS === true) {
-                            $redis->setEx($module.'_master_details|'.$server[$prefix.'_id'], 3600, json_encode($serverDetails));
+                            $redis->setEx($module.'_master_details:'.$server[$prefix.'_id'], 3600, json_encode($serverDetails));
                         } else {
                             $memcache->set($module.'_master_details'.$server[$prefix.'_id'], $serverDetails, 3600);
                         }
@@ -281,13 +281,13 @@ function memcached_queue_task($args)
                     $serverDetails[$prefix.'_cpu_avg'] = $cpu_avg;
                     $serverDetails[$prefix.'_cpu_usage'] = $serialized_server_usage;
                     if (USE_REDIS === true) {
-                        $redis->setEx($module.'_master_details|'.$server[$prefix.'_id'], 3600, json_encode($serverDetails));
+                        $redis->setEx($module.'_master_details:'.$server[$prefix.'_id'], 3600, json_encode($serverDetails));
                     } else {
                         $memcache->set($module.'_master_details'.$server[$prefix.'_id'], $serverDetails, 3600);
                     }
                 }
                 if (USE_REDIS === true) {
-                    $serverVps = $redis->get($module.'_vps|'.$server[$prefix.'_id']);
+                    $serverVps = $redis->get($module.'_vps:'.$server[$prefix.'_id']);
                 } else {
                     $serverVps = $memcache->get($module.'_vps'.$server[$prefix.'_id']);
                 }
@@ -345,7 +345,7 @@ function memcached_queue_task($args)
                             if ($row !== false) {
                                 $serverVps[$veid] = $row[$prefix.'_id'];
                                 if (USE_REDIS === true) {
-                                    $redis->setEx($module.'_vps|'.$server[$prefix.'_id'], 3600, json_encode($serverVps));
+                                    $redis->setEx($module.'_vps:'.$server[$prefix.'_id'], 3600, json_encode($serverVps));
                                 } else {
                                     $memcache->set($module.'_vps'.$server[$prefix.'_id'], $serverVps, 3600);
                                 }
@@ -393,7 +393,7 @@ function memcached_queue_task($args)
                 $servers = json_decode($servers,true);
                 if (is_array($bandwidth)) {
                     if (USE_REDIS === true) {
-                        $serverVps = $redis->get($module.'_vps|'.$server[$prefix.'_id']);
+                        $serverVps = $redis->get($module.'_vps:'.$server[$prefix.'_id']);
                     } else {
                         $serverVps = $memcache->get($module.'_vps'.$server[$prefix.'_id']);
                     }
@@ -423,7 +423,7 @@ function memcached_queue_task($args)
                             }
                             $serverVps[$veid] = $row[$prefix.'_id'];
                             if (USE_REDIS === true) {
-                                $redis->setEx($module.'_vps|'.$server[$prefix.'_id'], 3600, json_encode($serverVps));
+                                $redis->setEx($module.'_vps:'.$server[$prefix.'_id'], 3600, json_encode($serverVps));
                             } else {
                                 $memcache->set($module.'_vps'.$server[$prefix.'_id'], $serverVps, 3600);
                             }
@@ -465,7 +465,7 @@ function memcached_queue_task($args)
                 $detailfields = ['ioping'];
                 $skipfields = ['load', 'hdfree', 'iowait', 'cpu_mhz'];
                 foreach ($skipfields as $field) {
-                    $key = $module.'|host|'.$server[$prefix.'_id'].'|'.$field;
+                    $key = $module.':host:'.$server[$prefix.'_id'].':'.$field;
                     if (isset($servers[$field])) {
                         //Worker::safeEcho('server_info setting '.$key.'='.$servers[$field].PHP_EOL);
                         if (USE_REDIS === true) {
@@ -476,7 +476,7 @@ function memcached_queue_task($args)
                     }
                 }
                 foreach ($detailfields as $field) {
-                    $key = '|'.$module.'|hostd|'.$server[$prefix.'_id'].'|'.$field;
+                    $key = $module.':hostd:'.$server[$prefix.'_id'].':'.$field;
                     if (isset($servers[$field])) {
                         if (USE_REDIS === true) {
                             $redis->set($key, $servers[$field]);
@@ -520,7 +520,7 @@ function memcached_queue_task($args)
                         }
                     }
                     if (USE_REDIS === true) {
-                        $redis->setEx($module.'_masters|'.$queue['ip'], 3600, json_encode($server));
+                        $redis->setEx($module.'_masters:'.$queue['ip'], 3600, json_encode($server));
                     } else {
                         $memcache->set($module.'_masters'.$queue['ip'], $server, 3600);
                     }
