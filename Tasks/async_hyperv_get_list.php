@@ -32,7 +32,7 @@ function async_hyperv_get_list_server(\React\Http\Browser &$browser, $service_ma
             try {
                 $client = new \Clue\React\Soap\Client($browser, (string)$response->getBody(), ['soap_version' => SOAP_1_2]);
             } catch (\SoapFault $e) {
-                //echo 'Error: ' . $e->getMessage() . PHP_EOL;
+                echo 'Error: ' . $e->getMessage() . PHP_EOL;
                 $global->$var = 0;
                 return;
             }

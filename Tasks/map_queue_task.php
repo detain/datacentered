@@ -73,7 +73,7 @@ function map_queue_task($args)
                             if ($ipRow['ips_used'] != 1) {
                                 $uptext[] = 'Changing Used to 1';
                             }
-                            if ($ipRow['ips_main'] != 0) {
+                            if ($ipRow['ips_main'] != 0 && $ip != $row[$prefix.'_ip']) {
                                 $uptext[] = 'Changing Main to 0';
                             }
                             if ($ipRow['ips_'.$prefix] != $row[$prefix.'_id']) {
