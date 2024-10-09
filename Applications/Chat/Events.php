@@ -69,10 +69,6 @@ class Events
                     'messages' => [],
                 ]
             ];
-            if (gethostname() == 'my.interserver.net') {
-            } else {
-                Events::hyperv_update_list_timer();
-            }
         }
         if ($worker->id == 0) {
             $args = [];
@@ -92,6 +88,7 @@ class Events
                 }
                 $timers['hyperv_update_list_timer'] = GlobalTimer::add(3600, ['Events', 'hyperv_update_list_timer'], $args);
                 $timers['hyperv_queue_timer'] = GlobalTimer::add(30, ['Events', 'hyperv_queue_timer'], $args);                
+                Events::hyperv_update_list_timer();
             }
             $global->timers = $timers;
         }
