@@ -137,7 +137,7 @@ function memcached_queue_task($args)
             while ($success == false && $try < $maxTries) {
                 $try++;
                 try {
-                    $server = $worker_db->select($prefix.'_id,'.$prefix.'_name,'.$prefix.'_hdsize,'.$prefix.'_bits,'.$prefix.'_ram,'.$prefix.'_cpu_model,'.$prefix.'_kernel,'.$prefix.'_cores,'.$prefix.'_raid_status,'.$prefix.'_raid_building,'.$prefix.'_mounts,'.$prefix.'_drive_type')
+                    $server = $worker_db->select($prefix.'_id,'.$prefix.'_name,'.$prefix.'_hdsize,'.$prefix.'_iowait,'.$prefix.'_cpu_mhz,'.$prefix.'_hdfree,'.$prefix.'_load,'.$prefix.'_bits,'.$prefix.'_ram,'.$prefix.'_cpu_model,'.$prefix.'_kernel,'.$prefix.'_cores,'.$prefix.'_raid_status,'.$prefix.'_raid_building,'.$prefix.'_mounts,'.$prefix.'_drive_type')
                         ->from($prefix.'_masters')
                         ->where($prefix.'_ip = :ip')
                         ->bindValues(['ip' => $queue['ip']])
