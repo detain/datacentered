@@ -488,7 +488,7 @@ function memcached_queue_task($args)
                 $cols = [];
                 $values = [];
                 foreach ($fields as $field) {
-                    if (!in_array($field, $skipfields) && isset($servers[$field]) && isset($server[$prefix.'_'.$field]) && $server[$prefix.'_'.$field] != $servers[$field]) {
+                    if (isset($servers[$field]) && isset($server[$prefix.'_'.$field]) && $server[$prefix.'_'.$field] != $servers[$field]) {
                         $cols[] = $prefix.'_'.$field;
                         $values[$prefix.'_'.$field] = $servers[$field];
                         $server[$prefix.'_'.$field] = $servers[$field];
