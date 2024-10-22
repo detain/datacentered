@@ -134,7 +134,7 @@ class Events
         global $global;
         //Worker::safeEcho("[{$client_id}] client:{$_SERVER['REMOTE_ADDR']}:{$_SERVER['REMOTE_PORT']} gateway:{$_SERVER['GATEWAY_ADDR']}:{$_SERVER['GATEWAY_PORT']} session:".json_encode($_SESSION)."\n onMessage:".serialize($message).PHP_EOL); // debug
         $message_data = json_decode($message, true); // Client is passed json data
-        if (!$message_data) {
+        if (empty($message_data)) {
             return ;
         }
         if (!isset($message_data['type'])) {
