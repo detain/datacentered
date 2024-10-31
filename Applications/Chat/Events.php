@@ -43,6 +43,7 @@ class Events
          */
         global $global;
         $global = new \GlobalData\Client(gethostname() == 'my.interserver.net' ? '127.0.0.1:2207' : '192.64.80.218:2207');     // initialize the GlobalData client
+        $global->queuein = 0;
         /**
         * @var \Memcached
         */
