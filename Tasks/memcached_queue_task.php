@@ -391,6 +391,9 @@ function memcached_queue_task($args)
                 $servers = base64_decode($servers);
                 $servers = gzuncompress($servers);
                 $servers = json_decode($servers,true);
+                if ($queue['ip'] == '174.138.179.227') {
+                    print_r($bandwidth);
+                }
                 if (is_array($bandwidth)) {
                     if (USE_REDIS === true) {
                         $serverVps = $redis->get($module.'_vps:'.$server[$prefix.'_id']);

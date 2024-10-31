@@ -81,6 +81,7 @@ class Events
                 //$timers[] = GlobalTimer::add(60, ['Events', 'queue_queue_timer'], $args);
                 //$timer_id = GlobalTimer::add(1, function() use (&$timer_id, $timers) { echo "worker[0] tick timer_id:$timer_id:'".print_r($timers,true)."\n"; });
                 $global->timers = $timers;
+                Events::memcache_queue_timer();
             } elseif (gethostname() == 'my-web-2.interserver.net') {
                 $timers = $global->timers;
                 $rows = self::$db->select('vps_id')->from('vps_masters')->where('vps_type=11')->query();
@@ -90,8 +91,8 @@ class Events
                 }
                 $timers['hyperv_update_list_timer'] = GlobalTimer::add(3600, ['Events', 'hyperv_update_list_timer'], $args);
                 $timers['hyperv_queue_timer'] = GlobalTimer::add(30, ['Events', 'hyperv_queue_timer'], $args);                
-                Events::hyperv_update_list_timer();
                 $global->timers = $timers;
+                Events::hyperv_update_list_timer();
             }
         }
     }
