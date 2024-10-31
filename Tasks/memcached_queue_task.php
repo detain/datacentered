@@ -38,7 +38,7 @@ function memcached_queue_task($args)
         $global->queuein = 0;
     }
     if (!$global->cas('queuein', 0, 1)) {
-        Worker::safeEcho('Cannot Get global queuein Lock, Returning after '.(time() - $start).' seconds'.PHP_EOL);
+        Worker::safeEcho('Cannot Get global queuein Lock for memcached_queue_task, Returning after '.(time() - $start).' seconds'.PHP_EOL);
         return;
     }
     // - Loop through vps, quickservers - $module
