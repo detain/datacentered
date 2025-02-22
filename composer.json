@@ -35,7 +35,7 @@
 		"workerman/globaldata": "*",
 		"workerman/global-timer": "*",
 		"workerman/mysql": "*",
-		"workerman/workerman": "*@stable",
+		"workerman/workerman": "^4.1@stable",
 		"workerman/statistics": "*"
 	},
 	"require-dev": {
