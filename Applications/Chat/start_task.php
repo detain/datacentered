@@ -38,7 +38,7 @@ $task_worker->onWorkerStart = function ($worker) {
         $influx_v2_database = $influx_v2_client->createWriteApi(['writeType' => \InfluxDB2\WriteType::BATCHING, 'batchSize' => 1000]);
     }
     $GLOBALS['disable_db_queries'] = true;
-    $global = new \GlobalData\Client(gethostname() == 'my.interserver.net' ? '127.0.0.1:2207' : '192.64.80.218:2207');
+    $global = new \GlobalData\Client(gethostname() == 'myadmin1.interserver.net' ? '127.0.0.1:2207' : '216.158.226.14:2207');
     $queuehosts = [];
     $functions = [];
     foreach (glob(__DIR__.'/../../Tasks/*.php') as $file) {

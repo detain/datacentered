@@ -42,7 +42,7 @@ class Events
          * @var \GlobalData\Client
          */
         global $global;
-        $global = new \GlobalData\Client(gethostname() == 'my.interserver.net' ? '127.0.0.1:2207' : '192.64.80.218:2207');     // initialize the GlobalData client
+        $global = new \GlobalData\Client(gethostname() == 'myadmin1.interserver.net' ? '127.0.0.1:2207' : '216.158.226.14:2207');     // initialize the GlobalData client
         $global->queuein = 0;
         /**
         * @var \Memcached
@@ -50,7 +50,7 @@ class Events
         global $memcache;
         $memcache = new \Memcached();
         $memcache->addServer('localhost', 11211);
-        GlobalTimer::init(gethostname() == 'my.interserver.net' ? '127.0.0.1' : '192.64.80.218','3333');
+        GlobalTimer::init(gethostname() == 'myadmin1.interserver.net' ? '127.0.0.1' : '216.158.226.14','3333');
         $db_config = include '/home/my/include/config/config.db.php';
         $loop = Worker::getEventLoop();
         global $useMysqlRouter;
@@ -74,17 +74,14 @@ class Events
         if ($worker->id == 0) {
             $args = [];
             $timers = [];
-            if (gethostname() == 'my.interserver.net') {
+            if (gethostname() == 'myadmin1.interserver.net') {
                 $timers['processing_queue_timer'] = GlobalTimer::add(30, ['Events', 'processing_queue_timer'], $args);
                 $timers['vps_queue_queue_timer'] = GlobalTimer::add(30, ['Events', 'vps_queue_timer'], $args);
                 $timers['memcache_queue_timer'] = GlobalTimer::add(30, ['Events', 'memcache_queue_timer'], $args);
                 $timers['map_queue_timer'] = GlobalTimer::add(60, ['Events', 'map_queue_timer'], $args);
                 //$timers[] = GlobalTimer::add(60, ['Events', 'queue_queue_timer'], $args);
                 //$timer_id = GlobalTimer::add(1, function() use (&$timer_id, $timers) { echo "worker[0] tick timer_id:$timer_id:'".print_r($timers,true)."\n"; });
-                $global->timers = $timers;
-                Events::memcache_queue_timer();
-            } elseif (gethostname() == 'my-web-2.interserver.net') {
-                $timers = $global->timers;
+
                 $rows = self::$db->select('vps_id')->from('vps_masters')->where('vps_type=11')->query();
                 foreach ($rows as $row) {
                     $var = 'vps_host_'.$row['vps_id'];
@@ -92,8 +89,15 @@ class Events
                 }
                 $timers['hyperv_update_list_timer'] = GlobalTimer::add(3600, ['Events', 'hyperv_update_list_timer'], $args);
                 $timers['hyperv_queue_timer'] = GlobalTimer::add(30, ['Events', 'hyperv_queue_timer'], $args);                
+                
                 $global->timers = $timers;
+                Events::memcache_queue_timer();
                 Events::hyperv_update_list_timer();
+            } elseif (gethostname() == 'my-web-2.interserver.net') {
+                /*
+                $timers = $global->timers;
+                $global->timers = $timers;
+                */
             }
         }
     }
