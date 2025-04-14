@@ -12,7 +12,7 @@ TcpConnection::$defaultMaxSendBufferSize = 1024*1024*100; // sets the connection
 ini_set('display_errors', 'on');
 ini_set('post_max_size', '100M');
 ini_set('upload_max_filesize', '100M');
-ini_set('memory_limit', '4096M');
+ini_set('memory_limit', '16384M');
 // Reporting all.
 error_reporting(E_ALL);
 // Reset opcache.
