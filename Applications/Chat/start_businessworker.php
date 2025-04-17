@@ -11,6 +11,11 @@ if (ini_get('default_socket_timeout') < 1200 && ini_get('default_socket_timeout'
     ini_set('default_socket_timeout', 1200);
 }
 
+if (!defined('GLOBALDATA_IP')) {
+    require_once '/home/my/include/config/config.settings.php';
+}
+
+
 $worker = new BusinessWorker(); // bussinessWorker process
 //$worker->name = 'ChatBusinessWorker'; // worker name
 $worker->count = 5; // bussinessWorker number of processes
