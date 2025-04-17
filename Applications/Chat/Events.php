@@ -42,7 +42,7 @@ class Events
          * @var \GlobalData\Client
          */
         global $global;
-        $global = new \GlobalData\Client(gethostname() == 'myadmin1.interserver.net' ? '127.0.0.1:2207' : '216.158.226.14:2207');     // initialize the GlobalData client
+        $global = new \GlobalData\Client(GLOBALDATA_IP.':2207');     // initialize the GlobalData client
         $global->queuein = 0;
         /**
         * @var \Memcached
@@ -50,7 +50,7 @@ class Events
         global $memcache;
         $memcache = new \Memcached();
         $memcache->addServer('localhost', 11211);
-        GlobalTimer::init(gethostname() == 'myadmin1.interserver.net' ? '127.0.0.1' : '216.158.226.14','3333');
+        GlobalTimer::init(GLOBALDATA_IP,'3333');
         $db_config = include '/home/my/include/config/config.db.php';
         $loop = Worker::getEventLoop();
         global $useMysqlRouter;
