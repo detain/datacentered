@@ -19,7 +19,7 @@ if (!defined('GLOBALDATA_IP')) {
 $worker = new BusinessWorker(); // bussinessWorker process
 //$worker->name = 'ChatBusinessWorker'; // worker name
 $worker->count = 5; // bussinessWorker number of processes
-$worker->registerAddress = GLOBALDATA_IP.':1236'; // Service registration address
+$worker->registerAddress = '127.0.0.1:1236'; // Service registration address
 //$worker->maxSendBufferSize = 102400000;
 //$worker->sendToGatewayBufferSize = 102400000;
 $worker->onConnect = function ($connection) { // When the client is connected, set the connection onWebSocketConnect, that is, when the websocket handshake callback
