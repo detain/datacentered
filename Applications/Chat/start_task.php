@@ -8,7 +8,7 @@ if (ini_get('default_socket_timeout') < 1200 && ini_get('default_socket_timeout'
     ini_set('default_socket_timeout', 1200);
 }
 
-define('LAST_DB_HOST', true);
+$GLOBALS['LAST_DB_HOST'] = true;
 $GLOBALS['disable_db_queries'] = true;
 $task_worker = new Worker('Text://127.0.0.1:2208');		// task worker, using the Text protocol
 $task_worker->count = 20; 								// number of task processes can be opened more than needed

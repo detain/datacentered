@@ -8,7 +8,7 @@ use GatewayWorker\Gateway;
 use GatewayWorker\BusinessWorker;
 use Workerman\Autoloader;
 
-define('LAST_DB_HOST', true);
+$GLOBALS['LAST_DB_HOST'] = true;
 $context = [																						// Certificate is best to apply for a certificate
     'ssl' => [																						// use the absolute/full paths
         //'local_cert' => '/home/my/files/apache_setup/interserver.net.crt',							// can also be a crt file
