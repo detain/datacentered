@@ -58,7 +58,7 @@ class Events
             self::$db = new \Workerman\MySQL\Connection($db_config['db_host'], $db_config['db_port'], $db_config['db_user'], $db_config['db_pass'], $db_config['db_name'], 'utf8mb4');
         } else {
             self::$db = new \Workerman\MySQL\Connection(isset($db_config['db_hosts']) ? $db_config['db_hosts'][count($db_config['db_hosts']) - 1] : $db_config['db_host'], $db_config['db_port'], $db_config['db_user'], $db_config['db_pass'], $db_config['db_name'], 'utf8mb4');
-        }        
+        }
         if ($global->add('running', [])) {
             $global->hosts = [];
             $global->rooms = [
@@ -75,6 +75,7 @@ class Events
             $args = [];
             $timers = [];
             if (gethostname() == 'myadmin1.interserver.net') {
+            } elseif (gethostname() == 'my.interserver.net') {
                 $timers['processing_queue_timer'] = GlobalTimer::add(30, ['Events', 'processing_queue_timer'], $args);
                 $timers['vps_queue_queue_timer'] = GlobalTimer::add(30, ['Events', 'vps_queue_timer'], $args);
                 $timers['memcache_queue_timer'] = GlobalTimer::add(30, ['Events', 'memcache_queue_timer'], $args);
@@ -88,8 +89,8 @@ class Events
                     $global->$var = 0;
                 }
                 $timers['hyperv_update_list_timer'] = GlobalTimer::add(3600, ['Events', 'hyperv_update_list_timer'], $args);
-                $timers['hyperv_queue_timer'] = GlobalTimer::add(30, ['Events', 'hyperv_queue_timer'], $args);                
-                
+                $timers['hyperv_queue_timer'] = GlobalTimer::add(30, ['Events', 'hyperv_queue_timer'], $args);
+
                 $global->timers = $timers;
                 Events::memcache_queue_timer();
                 Events::hyperv_update_list_timer();
@@ -301,7 +302,7 @@ class Events
                 $check = 'SQLSTATE[40000]: Transaction rollback: 3101 Plugin instructed the server to rollback the current transaction.';
                 Worker::safeEcho('['.$try.'/'.$maxTries.'] Got PDO Exception #'.$e->getCode().': "'.$e->getMessage()."\"\n");
                 sleep($delay);
-                $db_config = include '/home/my/include/config/config.db.php';                
+                $db_config = include '/home/my/include/config/config.db.php';
                 Events::$db = new \Workerman\MySQL\Connection($db_config['db_host'], $db_config['db_port'], $db_config['db_user'], $db_config['db_pass'], $db_config['db_name'], 'utf8mb4');
             }
         }
@@ -328,7 +329,7 @@ class Events
                             Events::$db = new \Workerman\MySQL\Connection($db_config['db_host'], $db_config['db_port'], $db_config['db_user'], $db_config['db_pass'], $db_config['db_name'], 'utf8mb4');
                         } else {
                             Events::$db = new \Workerman\MySQL\Connection(isset($db_config['db_hosts']) ? $db_config['db_hosts'][count($db_config['db_hosts']) - 1] : $db_config['db_host'], $db_config['db_port'], $db_config['db_user'], $db_config['db_pass'], $db_config['db_name'], 'utf8mb4');
-                        }                        
+                        }
                     }
                 }
                 $task_connection->close();
