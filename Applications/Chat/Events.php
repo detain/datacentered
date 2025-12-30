@@ -74,8 +74,8 @@ class Events
         if ($worker->id == 0) {
             $args = [];
             $timers = [];
-            if (gethostname() == 'myadmin1.interserver.net') {
-            } elseif (gethostname() == 'my.interserver.net') {
+            if (gethostname() == 'my.interserver.net') {
+            } elseif (gethostname() == 'myadmin1.interserver.net') {
                 $timers['processing_queue_timer'] = GlobalTimer::add(30, ['Events', 'processing_queue_timer'], $args);
                 $timers['vps_queue_queue_timer'] = GlobalTimer::add(30, ['Events', 'vps_queue_timer'], $args);
                 $timers['memcache_queue_timer'] = GlobalTimer::add(30, ['Events', 'memcache_queue_timer'], $args);
