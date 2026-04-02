@@ -10,7 +10,6 @@ class Process
     public $fd;
     public $tag = '';
     public $process_stdout;
-    public $process_stdin;
     public $process_stderr;
     // To do this, PHP_CAN_DO_PTS must be enabled. See ext/standard/proc_open.c in PHP directory.
     public $descriptorspec = [
@@ -50,8 +49,8 @@ class Process
         $this->process_stdout->onClose = function ($process_connection) {
             Gateway::closeClient($this->client_id);  // Close WebSocket connection on process exit.
         };
-        $this->process_stdin = new TcpConnection($this->pipes[2]);
-        $this->process_stdin->onMessage = function ($process_connection, $data) {
+        $this->process_stderr = new TcpConnection($this->pipes[2]);
+        $this->process_stderr->onMessage = function ($process_connection, $data) {
             Gateway::sendToClient($this->client_id, json_encode(['type' => 'phptty', 'content' => $data]));
         };
         return $this;

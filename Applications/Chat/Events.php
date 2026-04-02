@@ -30,6 +30,59 @@ class Events
     public static $running = [];
 
     /**
+     * Create a Workerman MySQL connection using the appropriate host config.
+     *
+     * @return \Workerman\MySQL\Connection
+     */
+    public static function createDbConnection()
+    {
+        $db_config = include '/home/my/include/config/config.db.php';
+        global $useMysqlRouter;
+        if ($useMysqlRouter === true) {
+            return new \Workerman\MySQL\Connection($db_config['db_host'], $db_config['db_port'], $db_config['db_user'], $db_config['db_pass'], $db_config['db_name'], 'utf8mb4');
+        }
+        $host = isset($db_config['db_hosts']) ? $db_config['db_hosts'][count($db_config['db_hosts']) - 1] : $db_config['db_host'];
+        return new \Workerman\MySQL\Connection($host, $db_config['db_port'], $db_config['db_user'], $db_config['db_pass'], $db_config['db_name'], 'utf8mb4');
+    }
+
+    /**
+     * Dispatch a task to the TaskWorker asynchronously.
+     *
+     * @param string $type task function name
+     * @param array $args task arguments
+     * @param callable|null $onResult optional callback receiving (string $task_result)
+     */
+    public static function dispatchTask($type, $args = [], $onResult = null, $onError = null)
+    {
+        $task_connection = new AsyncTcpConnection('Text://127.0.0.1:2208');
+        $task_connection->send(json_encode(['type' => $type, 'args' => $args]));
+        $responded = false;
+        $task_connection->onMessage = function ($connection, $task_result) use ($task_connection, $onResult, &$responded) {
+            $responded = true;
+            if ($onResult) {
+                $onResult($task_result);
+            }
+            $task_connection->close();
+        };
+        $task_connection->onClose = function ($connection) use ($type, $onError, &$responded) {
+            if (!$responded) {
+                Worker::safeEcho("TaskWorker connection closed without response for task {$type}".PHP_EOL);
+                if ($onError) {
+                    $onError();
+                }
+            }
+        };
+        $task_connection->onError = function ($connection, $code, $msg) use ($type, $onError, &$responded) {
+            Worker::safeEcho("TaskWorker connection error for task {$type}: [{$code}] {$msg}".PHP_EOL);
+            if (!$responded && $onError) {
+                $responded = true;
+                $onError();
+            }
+        };
+        $task_connection->connect();
+    }
+
+    /**
      * when the workerman thread starts
      *
      * @param Workerman\Worker $worker
@@ -51,14 +104,8 @@ class Events
         $memcache = new \Memcached();
         $memcache->addServer('localhost', 11211);
         GlobalTimer::init(GLOBALDATA_IP,'3333');
-        $db_config = include '/home/my/include/config/config.db.php';
         $loop = Worker::getEventLoop();
-        global $useMysqlRouter;
-        if ($useMysqlRouter === true) {
-            self::$db = new \Workerman\MySQL\Connection($db_config['db_host'], $db_config['db_port'], $db_config['db_user'], $db_config['db_pass'], $db_config['db_name'], 'utf8mb4');
-        } else {
-            self::$db = new \Workerman\MySQL\Connection(isset($db_config['db_hosts']) ? $db_config['db_hosts'][count($db_config['db_hosts']) - 1] : $db_config['db_host'], $db_config['db_port'], $db_config['db_user'], $db_config['db_pass'], $db_config['db_name'], 'utf8mb4');
-        }
+        self::$db = self::createDbConnection();
         if ($global->add('running', [])) {
             $global->hosts = [];
             $global->rooms = [
@@ -141,11 +188,13 @@ class Events
         global $global;
         //Worker::safeEcho("[{$client_id}] client:{$_SERVER['REMOTE_ADDR']}:{$_SERVER['REMOTE_PORT']} gateway:{$_SERVER['GATEWAY_ADDR']}:{$_SERVER['GATEWAY_PORT']} session:".json_encode($_SESSION)."\n onMessage:".serialize($message).PHP_EOL); // debug
         $message_data = json_decode($message, true); // Client is passed json data
-        if (empty($message_data)) {
-            return ;
+        if (!is_array($message_data)) {
+            Worker::safeEcho("[{$client_id}] Invalid JSON from {$_SERVER['REMOTE_ADDR']}: ".substr($message, 0, 200).PHP_EOL);
+            return;
         }
         if (!isset($message_data['type'])) {
-            Worker::safeEcho("[{$client_id}] Got message {$message} but no type passed".PHP_EOL);
+            Worker::safeEcho("[{$client_id}] Got message but no type passed from {$_SERVER['REMOTE_ADDR']}".PHP_EOL);
+            return;
         }
         $method = 'msg'.str_replace(' ', '', ucwords(str_replace(['-','_'], [' ',' '], $message_data['type'])));
         if (method_exists('Events', $method)) {
@@ -192,9 +241,15 @@ class Events
             if (isset($_SESSION['ima'])) {
                 if ($_SESSION['ima'] == 'host') {
                     $id = str_replace('vps', '', $_SESSION['uid']);
+                    $casRetries = 0;
                     do {
                         $old_value = $new_value = $global->hosts;
                         unset($new_value[$id]);
+                        $casRetries++;
+                        if ($casRetries > 100) {
+                            Worker::safeEcho("[{$client_id}] CAS loop exceeded max retries removing host {$id}".PHP_EOL);
+                            break;
+                        }
                     } while (!$global->cas('hosts', $old_value, $new_value));
                 } else {
                     if (count($clientIds) == 1) {
@@ -208,14 +263,22 @@ class Events
                                     Gateway::sendToUid($run['host'], json_encode(['type' => 'stop_run', 'id' => $run['id']]));
                                 }
                             }
-                            /* if ($remove === TRUE) {
+                            if ($remove === true) {
+                                $casRetries = 0;
                                 do {
                                     $old_value = $new_value = $global->running;
-                                    foreach ($new_value as $idx => $run)
-                                        if ($run['for'] == $_SESSION['uid'])
-                                            unset($new_values[$idx]);
-                                } while(!$global->cas('running', $old_value, $new_value));
-                            } */
+                                    foreach ($new_value as $idx => $run) {
+                                        if ($run['for'] == $_SESSION['uid']) {
+                                            unset($new_value[$idx]);
+                                        }
+                                    }
+                                    $casRetries++;
+                                    if ($casRetries > 100) {
+                                        Worker::safeEcho("[{$client_id}] CAS loop exceeded max retries cleaning running tasks".PHP_EOL);
+                                        break;
+                                    }
+                                } while (!$global->cas('running', $old_value, $new_value));
+                            }
                         }
                     }
                 }
@@ -226,34 +289,17 @@ class Events
     public static function queue_queue_timer()
     {
         Worker::safeEcho('Timer running for '.__METHOD__."\n");
-        $task_connection = new AsyncTcpConnection('Text://127.0.0.1:2208');
-        $task_connection->send(json_encode(['type' => 'queue_queue_task', 'args' => []]));
-        $task_connection->onMessage = function ($connection, $task_result) use ($task_connection) {
-            $task_connection->close();
-        };
-        $task_connection->connect();
+        self::dispatchTask('queue_queue_task');
     }
 
     public static function map_queue_timer()
     {
-        //Worker::safeEcho('Timer running for '.__METHOD__."\n");
-        $task_connection = new AsyncTcpConnection('Text://127.0.0.1:2208');
-        $task_connection->send(json_encode(['type' => 'map_queue_task', 'args' => []]));
-        $task_connection->onMessage = function ($connection, $task_result) use ($task_connection) {
-            $task_connection->close();
-        };
-        $task_connection->connect();
+        self::dispatchTask('map_queue_task');
     }
 
     public static function memcache_queue_timer()
     {
-        //Worker::safeEcho('Timer running for '.__METHOD__."\n");
-        $task_connection = new AsyncTcpConnection('Text://127.0.0.1:2208');
-        $task_connection->send(json_encode(['type' => 'memcached_queue_task', 'args' => []]));
-        $task_connection->onMessage = function ($connection, $task_result) use ($task_connection) {
-            $task_connection->close();
-        };
-        $task_connection->connect();
+        self::dispatchTask('memcached_queue_task');
     }
 
     /**
@@ -266,108 +312,81 @@ class Events
          * @var \GlobalData\Client
          */
         global $global;
-        $var = 'processsing_queue';
+        $var = 'processing_queue';
         $lastVar = $var.'_last';
         if (!isset($global->$var)) {
             $global->$var = 0;
         }
         if ($global->cas($var, 0, time())) {
-            /**
-             * @var \React\MySQL\Connection
-             */
             $results = self::$db->select('*')->from('queue_log')->where('history_section="process_payment" and history_new_value="pending"')->query();
-            Worker::safeEcho("Got Results ".json_encode($results,true)."\n");
+            Worker::safeEcho("Got Results ".json_encode($results, true)."\n");
             if (is_array($results) && sizeof($results) > 0) {
                 self::process_results($results);
             } else {
-                $global->$lastVar = time();
-                $global->$var = 0;
+                self::releaseProcessingLock();
             }
+        }
+    }
+
+    /**
+     * Release the processing queue lock and record last-run time.
+     */
+    private static function releaseProcessingLock()
+    {
+        global $global;
+        $var = 'processing_queue';
+        $lastVar = $var.'_last';
+        $global->$lastVar = time();
+        $global->$var = 0;
+    }
+
+    /**
+     * Attempt a DB update with async timer-based retry (non-blocking).
+     *
+     * @param string $status the history_new_value to set
+     * @param int $historyId the history_id to update
+     * @param callable $onSuccess called when the update succeeds
+     * @param int $try current attempt number
+     * @param int $maxTries maximum retries
+     */
+    private static function dbUpdateWithRetry($status, $historyId, $onSuccess, $try = 0, $maxTries = 30)
+    {
+        $try++;
+        try {
+            self::$db->update('queue_log')->cols(['history_new_value' => $status])->where('history_id='.$historyId)->query();
+            $onSuccess();
+        } catch (\PDOException $e) {
+            Worker::safeEcho('['.$try.'/'.$maxTries.'] Got PDO Exception #'.$e->getCode().': "'.$e->getMessage()."\"\n");
+            if ($try >= $maxTries) {
+                Worker::safeEcho("Max retries reached for history_id={$historyId}, releasing lock\n");
+                self::releaseProcessingLock();
+                return;
+            }
+            self::$db = self::createDbConnection();
+            Timer::add(1, function () use ($status, $historyId, $onSuccess, $try, $maxTries) {
+                self::dbUpdateWithRetry($status, $historyId, $onSuccess, $try, $maxTries);
+            }, [], false);
         }
     }
 
     public static function process_results($results)
     {
         $result = array_shift($results);
-        $maxTries = 30;
-        $delay = 1;
-        $try = 0;
-        $updated = false;
-        while ($updated === false && $try < $maxTries) {
-            $try++;
-            try {
-                self::$db->update('queue_log')->cols(['history_new_value' => 'processing'])->where('history_id='.$result['history_id'])->query();
-                $updated = true;
-            } catch (\PDOException $e) {
-                $check = 'SQLSTATE[40000]: Transaction rollback: 3101 Plugin instructed the server to rollback the current transaction.';
-                Worker::safeEcho('['.$try.'/'.$maxTries.'] Got PDO Exception #'.$e->getCode().': "'.$e->getMessage()."\"\n");
-                sleep($delay);
-                $db_config = include '/home/my/include/config/config.db.php';
-                Events::$db = new \Workerman\MySQL\Connection($db_config['db_host'], $db_config['db_port'], $db_config['db_user'], $db_config['db_pass'], $db_config['db_name'], 'utf8mb4');
-            }
-        }
-        if ($updated === true) {
-            Worker::safeEcho("payment processing about to spawn task for ".json_encode($result,true)."\n");
-            $task_connection = new AsyncTcpConnection('Text://127.0.0.1:2208');
-            $task_connection->send(json_encode(['type' => 'processing_queue_task', 'args' => $result]));
-            $task_connection->onMessage = function ($connection, $task_result) use ($result, $results, $task_connection, $maxTries, $delay) {
-                //Worker::safeEcho("finished queued payment processing task\n");
-                $try = 0;
-                $updated = false;
-                while ($updated === false && $try < $maxTries) {
-                    $try++;
-                    try {
-                        Events::$db->update('queue_log')->cols(['history_new_value' => 'completed'])->where('history_id='.$result['history_id'])->query();
-                        $updated = true;
-                    } catch (\PDOException $e) {
-                        //$check = 'SQLSTATE[40000]: Transaction rollback: 3101 Plugin instructed the server to rollback the current transaction.';
-                        Worker::safeEcho('['.$try.'/'.$maxTries.'] Got PDO Exception #'.$e->getCode().': "'.$e->getMessage()."\"\n");
-                        sleep($delay);
-                        $db_config = include '/home/my/include/config/config.db.php';
-                        global $useMysqlRouter;
-                        if ($useMysqlRouter === true) {
-                            Events::$db = new \Workerman\MySQL\Connection($db_config['db_host'], $db_config['db_port'], $db_config['db_user'], $db_config['db_pass'], $db_config['db_name'], 'utf8mb4');
-                        } else {
-                            Events::$db = new \Workerman\MySQL\Connection(isset($db_config['db_hosts']) ? $db_config['db_hosts'][count($db_config['db_hosts']) - 1] : $db_config['db_host'], $db_config['db_port'], $db_config['db_user'], $db_config['db_pass'], $db_config['db_name'], 'utf8mb4');
-                        }
+        self::dbUpdateWithRetry('processing', $result['history_id'], function () use ($result, $results) {
+            Worker::safeEcho("payment processing about to spawn task for ".json_encode($result, true)."\n");
+            self::dispatchTask('processing_queue_task', $result, function ($task_result) use ($result, $results) {
+                self::dbUpdateWithRetry('completed', $result['history_id'], function () use ($results) {
+                    if (count($results) > 0) {
+                        self::process_results($results);
+                    } else {
+                        self::releaseProcessingLock();
                     }
-                }
-                $task_connection->close();
-                if (count($results) > 0) {
-                    Events::process_results($results);
-                } else {
-                    /**
-                     * @var \GlobalData\Client
-                     */
-                    global $global;
-                    $var = 'processsing_queue';
-                    $lastVar = $var.'_last';
-                    $global->$lastVar = time();
-                    $global->$var = 0;
-                }
-                Worker::safeEcho("finished queued payment processing task (post close)\n");
-            };
-            $task_connection->onClose = function ($connection) {
-                /**
-                 * @var \GlobalData\Client
-                 */
-                global $global;
-                $var = 'processsing_queue';
-                $lastVar = $var.'_last';
-                $global->$lastVar = time();
-                $global->$var = 0;
-            };
-            $task_connection->connect();
-        } else {
-            /**
-             * @var \GlobalData\Client
-             */
-            global $global;
-            $var = 'processsing_queue';
-            $lastVar = $var.'_last';
-            $global->$lastVar = time();
-            $global->$var = 0;
-        }
+                    Worker::safeEcho("finished queued payment processing task\n");
+                });
+            }, function () {
+                self::releaseProcessingLock();
+            });
+        });
     }
 
 
@@ -424,21 +443,17 @@ class Events
                         $global->$var = 0;
                     }
                     if ($global->cas($var, 0, 1)) {
-                        $task_connection = new AsyncTcpConnection('Text://127.0.0.1:2208');
-                        $task_connection->send(json_encode(['type' => 'vps_queue_task', 'args' => [
-                            'id' => $server_id,
-                        ]]));
-                        $task_connection->onMessage = function ($connection, $task_result) use ($task_connection, $server_id, $server_data) {
+                        $releaseLock = function () use ($var) {
+                            global $global;
+                            $global->$var = 0;
+                        };
+                        self::dispatchTask('vps_queue_task', ['id' => $server_id], function ($task_result) use ($server_id, $releaseLock) {
                             $task_result = json_decode($task_result, true);
-                            //Worker::safeEcho("Got Result ".var_export($task_result, true).PHP_EOL);
-                            //Worker::safeEcho("Bandwidth Update for ".$_SESSION['name']." content: ".json_encode($message_data['content'])." returned:".var_export($task_result,TRUE).PHP_EOL);
                             if (trim($task_result['return']) != '') {
                                 self::run_command($server_id, $task_result['return'], false, 'room_1', 80, 24, true);
                             }
-                            $task_connection->close();
-                        };
-                        $task_connection->connect();
-                        $global->$var = 0;
+                            $releaseLock();
+                        }, $releaseLock);
                     }
                 }
             }
@@ -451,20 +466,8 @@ class Events
      */
     public static function hyperv_update_list_timer()
     {
-        /*$new_message = [
-            'type' => 'log',
-            'content' => nl2br(htmlspecialchars('Running Update VPS List Timer')),
-            'time' => date('Y-m-d H:i:s'),
-        ];
-        Gateway::sendToAll(json_encode($new_message));*/
         Worker::safeEcho("timer starting hyperv update list\n");
-        $task_connection = new AsyncTcpConnection('Text://127.0.0.1:2208');
-        $task_connection->send(json_encode(['type' => 'async_hyperv_get_list', 'args' => []]));
-        $task_connection->onMessage = function ($connection, $task_result) use ($task_connection) {
-            //var_dump($task_result);
-            $task_connection->close();
-        };
-        $task_connection->connect();
+        self::dispatchTask('async_hyperv_get_list');
     }
 
     /**
@@ -473,20 +476,7 @@ class Events
      */
     public static function hyperv_queue_timer()
     {
-        /*$new_message = [
-            'type' => 'log',
-            'content' => nl2br(htmlspecialchars('Running VPS Queue Timer')),
-            'time' => date('Y-m-d H:i:s'),
-        ];
-        Gateway::sendToAll(json_encode($new_message));*/
-        //Worker::safeEcho("timer starting hyperv queue check\n");
-        $task_connection = new AsyncTcpConnection('Text://127.0.0.1:2208');
-        $task_connection->send(json_encode(['type' => 'sync_hyperv_queue', 'args' => []]));
-        $task_connection->onMessage = function ($connection, $task_result) use ($task_connection) {
-            //var_dump($task_result);
-            $task_connection->close();
-        };
-        $task_connection->connect();
+        self::dispatchTask('sync_hyperv_queue');
     }
 
     /**
@@ -500,7 +490,7 @@ class Events
     public static function run_local($client_id, $cmd, $tag)
     {
         $process = new Process($client_id, $cmd, $tag);
-        self::$running[] = $run;
+        self::$running[] = $process;
         /*
         $worker->onMessage = function($connection, $data) {
             if(ALLOW_CLIENT_INPUT) {
@@ -635,23 +625,11 @@ class Events
             Worker::safeEcho("[{$client_id}] error with vps list content " . var_export($message_data['content'], true).PHP_EOL);
             return;
         }
-        //Worker::safeEcho("[{$client_id}] got vps list content " . var_export($message_data['content'], true).PHP_EOL);
-        $task_connection = new AsyncTcpConnection('Text://127.0.0.1:2208');
-        $task_connection->send(json_encode([
-            'type' => 'vps_get_list',
-            'args' => [
-                'name' => $_SESSION['name'],
-                'id' => str_replace('vps', '', $_SESSION['uid']),
-                'content' => $message_data['content']
-            ]
-        ]));
-        $task_connection->onMessage = function ($connection, $task_result) use ($task_connection, $client_id, $message_data) {
-            //$task_result = json_decode($task_result, true);
-            //Worker::safeEcho("[{$client_id}] Process VPS List for ".$_SESSION['name']." returned:".$task_result.PHP_EOL);
-            $task_connection->close();
-        };
-        $task_connection->connect();
-        return;
+        self::dispatchTask('vps_get_list', [
+            'name' => $_SESSION['name'],
+            'id' => str_replace('vps', '', $_SESSION['uid']),
+            'content' => $message_data['content']
+        ]);
     }
 
     /**
@@ -666,23 +644,11 @@ class Events
             Worker::safeEcho("[{$client_id}] error with vps info content " . var_export($message_data['content'], true).PHP_EOL);
             return;
         }
-        //Worker::safeEcho("[{$client_id}] got vps list content " . var_export($message_data['content'], true).PHP_EOL);
-        $task_connection = new AsyncTcpConnection('Text://127.0.0.1:2208');
-        $task_connection->send(json_encode([
-            'type' => 'vps_update_info',
-            'args' => [
-                'name' => $_SESSION['name'],
-                'id' => str_replace('vps', '', $_SESSION['uid']),
-                'content' => $message_data['content']
-            ]
-        ]));
-        $task_connection->onMessage = function ($connection, $task_result) use ($task_connection, $client_id, $message_data) {
-            //$task_result = json_decode($task_result, true);
-            //Worker::safeEcho("[{$client_id}] Process VPS Info for ".$_SESSION['name']." returned:".$task_result.PHP_EOL);
-            $task_connection->close();
-        };
-        $task_connection->connect();
-        return;
+        self::dispatchTask('vps_update_info', [
+            'name' => $_SESSION['name'],
+            'id' => str_replace('vps', '', $_SESSION['uid']),
+            'content' => $message_data['content']
+        ]);
     }
 
     /**
@@ -693,29 +659,15 @@ class Events
      */
     public static function msgGetMap($client_id, $message_data)
     {
-        //Worker::safeEcho("[{$client_id}] got vps list content " . var_export($message_data['content'], true).PHP_EOL);
-        //Worker::safeEcho("[{$client_id}] ".json_encode($_SESSION).PHP_EOL);
         $uid = $_SESSION['uid'];
         $id = str_replace('vps', '', $uid);
-        //Worker::safeEcho("[{$client_id}] GetMap event calling get_map task uid $uid id $id".PHP_EOL);
-        $task_connection = new AsyncTcpConnection('Text://127.0.0.1:2208');
-        $task_connection->send(json_encode([
-            'type' => 'get_map',
-            'args' => [
-                'id' => $id
-            ]
-        ]));
-        $task_connection->onMessage = function ($connection, $task_result) use ($task_connection, $client_id, $uid, $message_data) {
+        self::dispatchTask('get_map', ['id' => $id], function ($task_result) use ($client_id) {
             $task_result = json_decode($task_result, true);
-            //Gateway::sendToUid($uid, json_encode([
             Gateway::sendToClient($client_id, json_encode([
                 'type' => 'get_map',
                 'content' => $task_result
             ]));
-            $task_connection->close();
-        };
-        $task_connection->connect();
-        return;
+        });
     }
 
 
@@ -731,22 +683,11 @@ class Events
             Worker::safeEcho("[{$client_id}] error with bandwidth content " . var_export($message_data['content'], true).PHP_EOL);
             return;
         }
-        //Worker::safeEcho("msgBandwidth called with ($client_id, ".json_encode($message_data).")");
-        $task_connection = new AsyncTcpConnection('Text://127.0.0.1:2208');
-        $task_connection->send(json_encode([
-            'type' => 'bandwidth',
-            'args' => [
-                'name' => $_SESSION['name'],
-                'uid' => $_SESSION['uid'],
-                'content' => $message_data['content']
-            ]
-        ]));
-        $task_connection->onMessage = function ($connection, $task_result) use ($task_connection, $client_id, $message_data) {
-            //Worker::safeEcho("[{$client_id}] Bandwidth Update for ".$_SESSION['name']." content: ".json_encode($message_data['content'])." returned:".var_export($task_result,TRUE).PHP_EOL);
-            $task_connection->close();
-        };
-        $task_connection->connect();
-        return;
+        self::dispatchTask('bandwidth', [
+            'name' => $_SESSION['name'],
+            'uid' => $_SESSION['uid'],
+            'content' => $message_data['content']
+        ]);
     }
 
     /**
@@ -1130,13 +1071,24 @@ class Events
                 break;
             case 'admin':
                 if (isset($message_data['session_id'])) {
-                    $results = self::$db->query('select accounts.*, account_value from sessions left join accounts on session_owner=accounts.account_id left join accounts_ext on accounts.account_id=accounts_ext.account_id and accounts_ext.account_key="picture" where account_ima="admin" and session_id="'.$message_data['session_id'].'"');
+                    $results = self::$db->select('accounts.*, account_value')
+                        ->from('sessions')
+                        ->leftJoin('accounts', 'session_owner=accounts.account_id')
+                        ->leftJoin('accounts_ext', 'accounts.account_id=accounts_ext.account_id and accounts_ext.account_key="picture"')
+                        ->where('account_ima="admin" and session_id= :session_id')
+                        ->bindValues(['session_id' => $message_data['session_id']])
+                        ->query();
                 } else {
-                    $results = self::$db->query('select accounts.*, account_value from accounts left join accounts_ext on accounts.account_id=accounts_ext.account_id and accounts_ext.account_key="picture" where account_ima="admin" and account_lid="'.$message_data['username'].'" and account_passwd="'.md5($message_data['password']).'"');
+                    $results = self::$db->select('accounts.*, account_value')
+                        ->from('accounts')
+                        ->leftJoin('accounts_ext', 'accounts.account_id=accounts_ext.account_id and accounts_ext.account_key="picture"')
+                        ->where('account_ima="admin" and account_lid= :username and account_passwd= :password')
+                        ->bindValues(['username' => $message_data['username'], 'password' => md5($message_data['password'])])
+                        ->query();
                 }
                 if (sizeof($results) == 0 || $results[0] === false) {
                     //error
-                    $msg = "[{$client_id}] Invalid Credentials Specified For User {$mesage_data['username']}";
+                    $msg = "[{$client_id}] Invalid Credentials Specified For User {$message_data['username']}";
                     Worker::safeEcho($msg.PHP_EOL);
                     $new_message = [ // Send the error response
                         'type' => 'error',

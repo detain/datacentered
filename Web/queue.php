@@ -12,16 +12,16 @@ if (isset($_POST['action']) && $_POST['action'] == 'map') {
         }
         if (is_array($map)) {
             if (array_key_exists('slice', $map)) {
-                echo "echo '{$map['slice']}' > /root/cpaneldirect/vps.slicemap;".PHP_EOL;
+                echo "echo ".escapeshellarg($map['slice'])." > /root/cpaneldirect/vps.slicemap;".PHP_EOL;
             }
             if (array_key_exists('ip', $map)) {
                 echo 'oldm="$(md5sum /root/cpaneldirect/vps.ipmap)";'.PHP_EOL;
-                echo "echo '{$map['ip']}' > /root/cpaneldirect/vps.ipmap;".PHP_EOL;
+                echo "echo ".escapeshellarg($map['ip'])." > /root/cpaneldirect/vps.ipmap;".PHP_EOL;
                 echo 'newm="$(md5sum /root/cpaneldirect/vps.ipmap)";'.PHP_EOL;
-                echo 'if [ $(which virsh) != "" ] && [ "$newm" != "$oldm" ]; then bash /root/cpaneldirect/run_buildebtables.sh; fi;'.PHP_EOL;
+                echo 'if [ "$(which virsh)" != "" ] && [ "$newm" != "$oldm" ]; then bash /root/cpaneldirect/run_buildebtables.sh; fi;'.PHP_EOL;
             }
             if (array_key_exists('vnc', $map)) {
-                echo "echo '{$map['vnc']}' > /root/cpaneldirect/vps.vncmap;".PHP_EOL;
+                echo "echo ".escapeshellarg($map['vnc'])." > /root/cpaneldirect/vps.vncmap;".PHP_EOL;
                 echo 'if [ "$(which virsh)" != "" ]; then
 	    for vps in $(virsh list | grep -v -e "State$" -e "------$" -e "^$" | awk \'{ print $2 }\'); do
 		    ip="$(grep "$vps:" /root/cpaneldirect/vps.vncmap | cut -d: -f2)";
@@ -36,7 +36,7 @@ if (isset($_POST['action']) && $_POST['action'] == 'map') {
     ';
             }
             if (array_key_exists('main', $map)) {
-                echo "echo '{$map['main']}' > /root/cpaneldirect/vps.mainips;".PHP_EOL;
+                echo "echo ".escapeshellarg($map['main'])." > /root/cpaneldirect/vps.mainips;".PHP_EOL;
             }
         }
     } catch (\Exception $e) {
