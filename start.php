@@ -28,18 +28,6 @@ if (!extension_loaded('pcntl')) {
 if (!extension_loaded('posix')) {
     exit("Please install posix extension. See http://doc3.workerman.net/appendices/install-extension.html\n");
 }
-// Trap any bare "false" output and log where it comes from
-ob_start(function($chunk) {
-    if (trim($chunk) === 'false' || trim($chunk) === 'false'.PHP_EOL) {
-        $trace = debug_backtrace(DEBUG_BACKTRACE_IGNORE_ARGS, 10);
-        $traceStr = '';
-        foreach ($trace as $i => $frame) {
-            $traceStr .= "  #{$i} " . ($frame['file'] ?? '?') . ':' . ($frame['line'] ?? '?') . ' ' . ($frame['function'] ?? '') . "\n";
-        }
-        file_put_contents(__DIR__.'/false_debug.log', date('H:i:s') . " OUTPUT='".trim($chunk)."'\n" . $traceStr . "\n", FILE_APPEND);
-    }
-    return $chunk;
-}, 1);
 define('GLOBAL_START', 1); // The flag is globally activated
 //foreach (glob(__DIR__.'/Applications/*/start*.php') as $start_file) {
 $services = ['task', 'gateway', 'gateway_ssl', 'businessworker', 'web'];
