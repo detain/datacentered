@@ -37,12 +37,28 @@ class Events
     public static function createDbConnection()
     {
         $db_config = include '/home/my/include/config/config.db.php';
-        global $useMysqlRouter;
-        if ($useMysqlRouter === true) {
-            return new \Workerman\MySQL\Connection($db_config['db_host'], $db_config['db_port'], $db_config['db_user'], $db_config['db_pass'], $db_config['db_name'], 'utf8mb4');
+        if (!is_array($db_config)) {
+            Worker::safeEcho("Events::createDbConnection - config.db.php returned non-array\n");
+            return null;
         }
-        $host = isset($db_config['db_hosts']) ? $db_config['db_hosts'][count($db_config['db_hosts']) - 1] : $db_config['db_host'];
-        return new \Workerman\MySQL\Connection($host, $db_config['db_port'], $db_config['db_user'], $db_config['db_pass'], $db_config['db_name'], 'utf8mb4');
+        global $useMysqlRouter;
+        $maxTries = 5;
+        for ($try = 1; $try <= $maxTries; $try++) {
+            try {
+                if ($useMysqlRouter === true) {
+                    return new \Workerman\MySQL\Connection($db_config['db_host'], $db_config['db_port'], $db_config['db_user'], $db_config['db_pass'], $db_config['db_name'], 'utf8mb4');
+                }
+                $host = isset($db_config['db_hosts']) ? $db_config['db_hosts'][count($db_config['db_hosts']) - 1] : $db_config['db_host'];
+                return new \Workerman\MySQL\Connection($host, $db_config['db_port'], $db_config['db_user'], $db_config['db_pass'], $db_config['db_name'], 'utf8mb4');
+            } catch (\Throwable $e) {
+                Worker::safeEcho("Events::createDbConnection attempt {$try}/{$maxTries} failed: {$e->getMessage()}\n");
+                if ($try < $maxTries) {
+                    sleep(1);
+                }
+            }
+        }
+        Worker::safeEcho("Events::createDbConnection giving up after {$maxTries} attempts\n");
+        return null;
     }
 
     /**
@@ -307,6 +323,10 @@ class Events
      */
     public static function processing_queue_timer()
     {
+        if (is_null(self::$db)) {
+            self::$db = self::createDbConnection();
+            if (is_null(self::$db)) return;
+        }
         /**
          * @var \GlobalData\Client
          */
@@ -407,6 +427,10 @@ class Events
      */
     public static function vps_queue_timer()
     {
+        if (is_null(self::$db)) {
+            self::$db = self::createDbConnection();
+            if (is_null(self::$db)) return;
+        }
         /**
          * @var \GlobalData\Client
          */
