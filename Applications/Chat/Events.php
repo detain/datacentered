@@ -317,9 +317,21 @@ class Events
             $global->$var = 0;
         }
         if ($global->cas($var, 0, time())) {
-            $results = self::$db->select('*')->from('queue_log')->where('history_section="process_payment" and history_new_value="pending"')->query();
-            Worker::safeEcho("Got Results ".json_encode($results, true)."\n");
-            if (is_array($results) && sizeof($results) > 0) {
+            try {
+                $results = self::$db->select('*')->from('queue_log')->where('history_section="process_payment" and history_new_value="pending"')->query();
+            } catch (\Exception $e) {
+                Worker::safeEcho("processing_queue_timer DB error: {$e->getMessage()}\n");
+                self::$db = self::createDbConnection();
+                self::releaseProcessingLock();
+                return;
+            }
+            if (!is_array($results)) {
+                Worker::safeEcho("processing_queue_timer: DB query returned non-array, reconnecting\n");
+                self::$db = self::createDbConnection();
+                self::releaseProcessingLock();
+                return;
+            }
+            if (sizeof($results) > 0) {
                 self::process_results($results);
             } else {
                 self::releaseProcessingLock();
@@ -399,11 +411,18 @@ class Events
          * @var \GlobalData\Client
          */
         global $global;
-        /**
-         * @var \React\MySQL\Connection
-         */
-        $results = self::$db->select('*')->from('queue_log')->leftJoin('vps', 'vps_id=history_type')->where('history_section="vpsqueue"')->query();
-        if (is_array($results) && sizeof($results) > 0) {
+        try {
+            $results = self::$db->select('*')->from('queue_log')->leftJoin('vps', 'vps_id=history_type')->where('history_section="vpsqueue"')->query();
+        } catch (\Exception $e) {
+            Worker::safeEcho("vps_queue_timer DB error: {$e->getMessage()}\n");
+            self::$db = self::createDbConnection();
+            return;
+        }
+        if (!is_array($results)) {
+            self::$db = self::createDbConnection();
+            return;
+        }
+        if (sizeof($results) > 0) {
             $queues = [];
             foreach ($results as $results[0]) {
                 if (is_numeric($results[0]['history_type'])) {

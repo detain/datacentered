@@ -20,11 +20,16 @@ $task_worker->onWorkerStart = function ($worker) {
     $db_config = include '/home/my/include/config/config.db.php';
     $GLOBALS['tf']->db->haltOnError = 'report';
     global $useMysqlRouter;
-    if ($useMysqlRouter === true) {
-        $worker_db = new \Workerman\MySQL\Connection($db_config['db_host'], $db_config['db_port'], $db_config['db_user'], $db_config['db_pass'], $db_config['db_name'], 'utf8mb4');
-    } else {
-        $worker_db = new \Workerman\MySQL\Connection(isset($db_config['db_hosts']) ? $db_config['db_hosts'][count($db_config['db_hosts']) - 1] : $db_config['db_host'], $db_config['db_port'], $db_config['db_user'], $db_config['db_pass'], $db_config['db_name'], 'utf8mb4');
-    } 
+    try {
+        if ($useMysqlRouter === true) {
+            $worker_db = new \Workerman\MySQL\Connection($db_config['db_host'], $db_config['db_port'], $db_config['db_user'], $db_config['db_pass'], $db_config['db_name'], 'utf8mb4');
+        } else {
+            $worker_db = new \Workerman\MySQL\Connection(isset($db_config['db_hosts']) ? $db_config['db_hosts'][count($db_config['db_hosts']) - 1] : $db_config['db_host'], $db_config['db_port'], $db_config['db_user'], $db_config['db_pass'], $db_config['db_name'], 'utf8mb4');
+        }
+    } catch (\Exception $e) {
+        Worker::safeEcho("TaskWorker DB connection failed: {$e->getMessage()}\n");
+        $worker_db = null;
+    }
     if (INFLUX_V2 === true) {
         $influx_v2_client = new \InfluxDB2\Client([
             'url' => INFLUX_V2_URL,
@@ -75,15 +80,36 @@ $task_worker->onError = function ($connection, $code, $msg) {
 };
 
 $task_worker->onMessage = function ($connection, $task_data) {
-    global $functions;
-    $task_data = json_decode($task_data, true);			// Suppose you send json data
-    //echo "Starting Task {$task_data['type']}\n";
-    $return = false;
+    global $functions, $worker_db;
+    $task_data = json_decode($task_data, true);
+    $type = $task_data['type'] ?? 'unknown';
+    $return = '';
     if (isset($task_data['type']) && in_array($task_data['type'], $functions)) {
-        if (isset($task_data['args'])) {
-            $return = call_user_func($task_data['type'], $task_data['args']);
-        } else {
-            $return = call_user_func($task_data['type']);
+        try {
+            if (isset($task_data['args'])) {
+                $return = call_user_func($task_data['type'], $task_data['args']);
+            } else {
+                $return = call_user_func($task_data['type']);
+            }
+        } catch (\PDOException $e) {
+            Worker::safeEcho("TaskWorker task {$type} DB error: {$e->getMessage()}\n");
+            // reconnect worker_db for next task
+            try {
+                $db_config = include '/home/my/include/config/config.db.php';
+                global $useMysqlRouter;
+                if ($useMysqlRouter === true) {
+                    $worker_db = new \Workerman\MySQL\Connection($db_config['db_host'], $db_config['db_port'], $db_config['db_user'], $db_config['db_pass'], $db_config['db_name'], 'utf8mb4');
+                } else {
+                    $worker_db = new \Workerman\MySQL\Connection(isset($db_config['db_hosts']) ? $db_config['db_hosts'][count($db_config['db_hosts']) - 1] : $db_config['db_host'], $db_config['db_port'], $db_config['db_user'], $db_config['db_pass'], $db_config['db_name'], 'utf8mb4');
+                }
+            } catch (\Exception $re) {
+                Worker::safeEcho("TaskWorker DB reconnect failed: {$re->getMessage()}\n");
+                $worker_db = null;
+            }
+            $return = '';
+        } catch (\Throwable $e) {
+            Worker::safeEcho("TaskWorker task {$type} error: {$e->getMessage()}\n");
+            $return = '';
         }
     }
     $connection->send(json_encode(['return' => $return]));
