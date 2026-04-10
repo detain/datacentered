@@ -6,7 +6,6 @@ use Workerman\Protocols\Http\Response;
 use Workerman\Connection\TcpConnection;
 use GatewayWorker\Gateway;
 use GatewayWorker\BusinessWorker;
-use Workerman\Autoloader;
 
 $GLOBALS['LAST_DB_HOST'] = true;
 $context = [																						// Certificate is best to apply for a certificate

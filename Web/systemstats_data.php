@@ -4,11 +4,7 @@ include_once __DIR__.'/../../vps_hosts/workerman/SystemStats.php';
 include_once __DIR__.'/../../vps_hosts/workerman/NetworkStats.php';
 include_once __DIR__.'/../../vps_hosts/workerman/StorageStats.php';
 
-if (method_exists('Workerman\\Protocols\\Http', 'header')) {
-    \Workerman\Protocols\Http::header('Content-type: application/json');
-} else {
-    header('Content-type: application/json');
-}
+header('Content-type: application/json');
 $stats = [];
 if ($_GET['q'] == 'all') {
     foreach (['System','Network','Storage'] as $base) {

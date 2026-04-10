@@ -104,7 +104,6 @@ class Events
         $memcache = new \Memcached();
         $memcache->addServer('localhost', 11211);
         GlobalTimer::init(GLOBALDATA_IP,'3333');
-        $loop = Worker::getEventLoop();
         self::$db = self::createDbConnection();
         if ($global->add('running', [])) {
             $global->hosts = [];

@@ -4,7 +4,6 @@ use \Workerman\Worker;
 use \GatewayWorker\Lib\Gateway;
 use \GatewayWorker\BusinessWorker;
 use \Workerman\Connection\TcpConnection;
-use \Workerman\Autoloader;
 use \GlobalData\Client as GlobalDataClient;
 
 if (ini_get('default_socket_timeout') < 1200 && ini_get('default_socket_timeout') > 1) {

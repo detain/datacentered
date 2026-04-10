@@ -2,7 +2,6 @@
 
 use \Workerman\Worker;
 use \GatewayWorker\Gateway;
-use \Workerman\Autoloader;
 
 //require __DIR__.'/Events.php';
 

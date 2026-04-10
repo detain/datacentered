@@ -16,14 +16,14 @@
 		}
 	],
 	"require": {
-		"php": ">=7.0.0",
+		"php": ">=8.2",
 		"ext-curl": "*",
 		"corneltek/cliframework": "*",
 		"clue/soap-react": "*",
 		"roave/security-advisories": "*",
 		"react/child-process": "*@stable",
 		"react/event-loop": "*@stable",
-		"react/http": "1.9.0@stable",
+		"react/http": "*@stable",
 		"react/mysql": "*@stable",
 		"guzzlehttp/guzzle": ">=6.0@stable",
 		"danielstjules/php-pretty-datetime": "*",
@@ -35,11 +35,11 @@
 		"workerman/globaldata": "*",
 		"workerman/global-timer": "*",
 		"workerman/mysql": "*",
-		"workerman/workerman": "^4.1@stable",
+		"workerman/workerman": "*@stable",
 		"workerman/statistics": "*"
 	},
 	"require-dev": {
-		"react/promise": "^2.10",
+		"react/promise": "*",
 		"phpunit/phpunit": "*",
 		"vlucas/phpdotenv": "*",
 		"satooshi/php-coveralls": "*",
