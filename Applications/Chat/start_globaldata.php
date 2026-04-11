@@ -14,22 +14,10 @@ use Workerman\Worker;
 
 require_once __DIR__.'/../../vendor/workerman/globaldata/src/Server.php';
 
+// Note: GlobalData\Server wraps a Worker internally (protected $_worker) with count=1.
+// Properties like count/onConnect/onBufferFull/etc. cannot be set on the Server wrapper
+// — they must be set on the Worker itself. The Server class does not expose its Worker.
 $globaldata_server = new GlobalData\Server('0.0.0.0', 2207);
-$globaldata_server->count = 5; // WebServer number of processes
-
-$globaldata_server->onConnect = function ($connection) { // When the client is connected, set the connection onWebSocketConnect, that is, when the websocket handshake callback
-    $connection->maxSendBufferSize = 100*1024*1024; // Set the current connection application layer send buffer size of the connection to 100mb, will override the default value
-    $connection->maxPackageSize = 100*1024*1024; // Set the current connection application layer received packet size to 100mb (default 10mb)
-};
-$globaldata_server->onBufferFull = function ($connection) {
-    Worker::safeEcho("GlobalData bufferFull and do not send again\n");
-};
-$globaldata_server->onBufferDrain = function ($connection) {
-    Worker::safeEcho("GlobalData buffer drain and continue send\n");
-};
-$globaldata_server->onError = function ($connection, $code, $msg) {
-    Worker::safeEcho("GlobalData error {$code} {$msg}\n");
-};
 
 if (!defined('GLOBAL_START')) { // If it is not started in the root directory, run the runAll method
     Worker::runAll();
