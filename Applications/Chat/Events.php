@@ -336,6 +336,11 @@ class Events
         if (!isset($global->$var)) {
             $global->$var = 0;
         }
+        $lockValue = $global->$var;
+        if ($lockValue !== 0 && (time() - (int)$lockValue) > 900) {
+            Worker::safeEcho("processing_queue_timer: stale lock held since ".date('c', (int)$lockValue).", force-resetting\n");
+            $global->$var = 0;
+        }
         if ($global->cas($var, 0, time())) {
             try {
                 $results = self::$db->select('*')->from('queue_log')->where('history_section="process_payment" and history_new_value="pending"')->query();
