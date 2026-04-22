@@ -7,6 +7,9 @@ function processing_queue_task($args)
     $return = false;
     try {
         require_once '/home/my/include/functions.inc.php';
+        if (isset($GLOBALS['tf'])) {
+            \MyAdmin\App::setContainer(\MyAdmin\App\ContainerFactory::build($GLOBALS['tf']));
+        }
         $GLOBALS['tf']->db->haltOnError = 'report';
         $GLOBALS['default_dbh']->haltOnError = 'report';
         $GLOBALS['helpdesk_dbh']->haltOnError = 'report';
