@@ -79,7 +79,7 @@ Each file exports one `function filename($args)`. Auto-loaded from `Tasks/` on `
 - `sync_hyperv_queue` / `async_hyperv_queue_runner` — HyperV queue sync with CAS
 - `hyperv_cleanupresources` — SOAP `CleanUpResources` call via `SoapClient`
 - `get_map` — returns VPS IP/VNC/slice map for a host
-- `memcached_queue_task` / `vps_update_info` — queue processing helpers
+- `memcached_queue_task` — processes `cpu_usage`/`bandwidth`/`server_info` queue entries from Memcached/Redis for `vps` and `quickservers`; InnoDB cluster retry with exponential backoff; writes CPU + bandwidth metrics to InfluxDB v2
 
 ## Web Endpoints (`Web/`)
 - `queue.php` — VPS/QS queue dispatch; actions: `map`, `get_queue`, `get_new_vps`, `queue`
@@ -132,3 +132,20 @@ caliber refresh && git add CLAUDE.md .claude/ .cursor/ .github/copilot-instructi
 Read `CALIBER_LEARNINGS.md` for patterns and anti-patterns learned from previous sessions.
 These are auto-extracted from real tool usage — treat them as project-specific rules.
 <!-- /caliber:managed:learnings -->
+
+<!-- caliber:managed:model-config -->
+## Model Configuration
+
+Recommended default: `claude-sonnet-4-6` with high effort (stronger reasoning; higher cost and latency than smaller models).
+Smaller/faster models trade quality for speed and cost — pick what fits the task.
+Pin your choice (`/model` in Claude Code, or `CALIBER_MODEL` when using Caliber with an API provider) so upstream default changes do not silently change behavior.
+
+<!-- /caliber:managed:model-config -->
+
+<!-- caliber:managed:sync -->
+## Context Sync
+
+This project uses [Caliber](https://github.com/caliber-ai-org/ai-setup) to keep AI agent configs in sync across Claude Code, Cursor, Copilot, and Codex.
+Configs update automatically before each commit via `/home/my/.nvm/versions/node/v24.15.0/bin/caliber refresh`.
+If the pre-commit hook is not set up, run `/setup-caliber` to configure everything automatically.
+<!-- /caliber:managed:sync -->

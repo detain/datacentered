@@ -31,8 +31,43 @@ function memcached_queue_task($args)
     }
     $start = time();
     $maxTries = 5;
-    $delay = 1;
     //Worker::safeEcho('Task handler Started memcached_queue_task'.PHP_EOL);
+
+    // Retry helper: runs $fn, retries on InnoDB cluster rollbacks with exponential backoff.
+    // Only reconnects $worker_db on genuine connection-loss errors (2006, 2013).
+    $dbRetry = function (callable $fn) use ($maxTries, &$worker_db, $global): bool {
+        $clusterErrors = [40000, 3101, 1180]; // GR certification failure — connection is fine, just retry
+        $connErrors    = [2006, 2013];         // gone-away / lost connection — reconnect needed
+        for ($try = 1; $try <= $maxTries; $try++) {
+            try {
+                $fn();
+                return true;
+            } catch (\PDOException $e) {
+                Worker::safeEcho('['.$try.'/'.$maxTries.'] Got PDO Exception #'.$e->getCode().': "'.$e->getMessage()."\"\n");
+                if (in_array($e->getCode(), $clusterErrors)) {
+                    // Exponential backoff with jitter: 50–150 ms, 100–300 ms, 200–600 ms …
+                    usleep((int)(50000 * (2 ** ($try - 1)) * (0.75 + lcg_value() * 0.5)));
+                } elseif (in_array($e->getCode(), $connErrors)) {
+                    usleep((int)(100000 * $try));
+                    try {
+                        $db_config = include '/home/my/include/config/config.db.php';
+                        global $useMysqlRouter;
+                        $host = ($useMysqlRouter === true || !isset($db_config['db_hosts']))
+                            ? $db_config['db_host']
+                            : $db_config['db_hosts'][count($db_config['db_hosts']) - 1];
+                        $worker_db = new \Workerman\MySQL\Connection($host, $db_config['db_port'], $db_config['db_user'], $db_config['db_pass'], $db_config['db_name'], 'utf8mb4');
+                    } catch (\Exception $re) {
+                        Worker::safeEcho('DB reconnect failed: '.$re->getMessage()."\n");
+                    }
+                } else {
+                    $global->queuein = 0;
+                    throw $e; // unrecoverable, bubble up
+                }
+            }
+        }
+        return false;
+    };
+
     // - Get Lock to ensure its not ran a 2nd time in parallel - queuein
     if (!isset($global->queuein)) {
         $global->queuein = 0;
@@ -55,33 +90,17 @@ function memcached_queue_task($args)
             $prefix = 'qs';
             $influx_table = $prefix.'_bandwidth';
         }
-        $success = false;
-        $try = 0;
-        while ($success == false && $try < $maxTries) {
-            $try++;
-            try {
-                // - Load all vps/qs_masters making an array of the host ip 0 - $queuehosts
-                $queuehosts = array_merge($queuehosts, $worker_db->select($prefix.'_ip')
-                            ->from($prefix.'_masters')
-                            ->column());
-                $success= true;
-            } catch (\PDOException $e) {
-                Worker::safeEcho('['.$try.'/'.$maxTries.'] Got PDO Exception #'.$e->getCode().': "'.$e->getMessage()."\"\n");
-                if (in_array($e->getCode(), [40000, 3101, 1180])) {
-                    sleep($delay);
-                    $db_config = include '/home/my/include/config/config.db.php';
-                    Events::$db = new \Workerman\MySQL\Connection($db_config['db_host'], $db_config['db_port'], $db_config['db_user'], $db_config['db_pass'], $db_config['db_name'], 'utf8mb4');
-                } else {
-                    $global->queuein = 0;
-                    return;
-                }
-            }
-        }
-        if ($success === false) {
-            Worker::safeEcho('['.$try.'/'.$maxTries.'] Bailing after failed query'."\n");
+        $ips = [];
+        $ok = $dbRetry(function () use (&$ips, &$worker_db, $prefix) {
+            // - Load all vps/qs_masters making an array of the host ip 0 - $queuehosts
+            $ips = $worker_db->select($prefix.'_ip')->from($prefix.'_masters')->column();
+        });
+        if (!$ok) {
+            Worker::safeEcho('['.$maxTries.'/'.$maxTries.'] Bailing after failed query'."\n");
             $global->queuein = 0;
             return;
         }
+        $queuehosts = array_merge($queuehosts, $ips);
     }
     if (!is_array($queuehosts)) {
         echo 'Queue Hosts is not array:'.var_export($queuehosts,true);
@@ -132,29 +151,13 @@ function memcached_queue_task($args)
             $server = $memcache->get($module.'_masters'.$queue['ip']);
         }
         if ($server === false) {
-            $success = false;
-            $try = 0;
-            while ($success == false && $try < $maxTries) {
-                $try++;
-                try {
-                    $server = $worker_db->select($prefix.'_id,'.$prefix.'_name,'.$prefix.'_hdsize,'.$prefix.'_iowait,'.$prefix.'_cpu_mhz,'.$prefix.'_hdfree,'.$prefix.'_load,'.$prefix.'_bits,'.$prefix.'_ram,'.$prefix.'_cpu_model,'.$prefix.'_kernel,'.$prefix.'_cores,'.$prefix.'_raid_status,'.$prefix.'_raid_building,'.$prefix.'_mounts,'.$prefix.'_drive_type')
-                        ->from($prefix.'_masters')
-                        ->where($prefix.'_ip = :ip')
-                        ->bindValues(['ip' => $queue['ip']])
-                        ->row();
-                    $success= true;
-                } catch (\PDOException $e) {
-                    Worker::safeEcho('['.$try.'/'.$maxTries.'] Got PDO Exception #'.$e->getCode().': "'.$e->getMessage()."\"\n");
-                    if (in_array($e->getCode(), [40000, 3101, 1180])) {
-                        sleep($delay);
-                        $db_config = include '/home/my/include/config/config.db.php';
-                        Events::$db = new \Workerman\MySQL\Connection($db_config['db_host'], $db_config['db_port'], $db_config['db_user'], $db_config['db_pass'], $db_config['db_name'], 'utf8mb4');
-                    } else {
-                        $global->queuein = 0;
-                        return;
-                    }
-                }
-            }
+            $dbRetry(function () use (&$server, &$worker_db, $prefix, $queue) {
+                $server = $worker_db->select($prefix.'_id,'.$prefix.'_name,'.$prefix.'_hdsize,'.$prefix.'_iowait,'.$prefix.'_cpu_mhz,'.$prefix.'_hdfree,'.$prefix.'_load,'.$prefix.'_bits,'.$prefix.'_ram,'.$prefix.'_cpu_model,'.$prefix.'_kernel,'.$prefix.'_cores,'.$prefix.'_raid_status,'.$prefix.'_raid_building,'.$prefix.'_mounts,'.$prefix.'_drive_type')
+                    ->from($prefix.'_masters')
+                    ->where($prefix.'_ip = :ip')
+                    ->bindValues(['ip' => $queue['ip']])
+                    ->row();
+            });
             if ($server === false) {
                 // a queue for a server on a diff module
                 continue;
@@ -186,58 +189,26 @@ function memcached_queue_task($args)
                     $serverDetails = $memcache->get($module.'_master_details'.$server[$prefix.'_id']);
                 }
                 if ($serverDetails === false) {
-                    $success = false;
-                    $try = 0;
-                    while ($success == false && $try < $maxTries) {
-                        $try++;
-                        try {
-                            $serverDetails = $worker_db->select($prefix.'_cpu_avg,'.$prefix.'_cpu_usage')
-                                ->from($prefix.'_master_details')
-                                ->where($prefix.'_id = :id')
-                                ->bindValues(['id' => $server[$prefix.'_id']])
-                                ->row();
-                            $success= true;
-                        } catch (\PDOException $e) {
-                            Worker::safeEcho('['.$try.'/'.$maxTries.'] Got PDO Exception #'.$e->getCode().': "'.$e->getMessage()."\"\n");
-                            if (in_array($e->getCode(), [40000, 3101, 1180])) {
-                                sleep($delay);
-                                $db_config = include '/home/my/include/config/config.db.php';
-                                Events::$db = new \Workerman\MySQL\Connection($db_config['db_host'], $db_config['db_port'], $db_config['db_user'], $db_config['db_pass'], $db_config['db_name'], 'utf8mb4');
-                            } else {
-                                $global->queuein = 0;
-                                return;
-                            }
-                        }
-                    }
-                    if ($success === false) {
+                    $ok = $dbRetry(function () use (&$serverDetails, &$worker_db, $prefix, $server) {
+                        $serverDetails = $worker_db->select($prefix.'_cpu_avg,'.$prefix.'_cpu_usage')
+                            ->from($prefix.'_master_details')
+                            ->where($prefix.'_id = :id')
+                            ->bindValues(['id' => $server[$prefix.'_id']])
+                            ->row();
+                    });
+                    if (!$ok) {
                         continue 2;
                     }
                     if ($serverDetails === false) {
-                        $success = false;
-                        $try = 0;
-                        while ($success == false && $try < $maxTries) {
-                            $try++;
-                            try {
-                                $worker_db->insert($prefix.'_master_details')
-                                    ->cols([
-                                        $prefix.'_id' => $server[$prefix.'_id'],
-                                        $prefix.'_cpu_avg' => $cpu_avg,
-                                        $prefix.'_cpu_usage' => $serialized_server_usage
-                                    ])->query();
-                                $success= true;
-                            } catch (\PDOException $e) {
-                                Worker::safeEcho('['.$try.'/'.$maxTries.'] Got PDO Exception #'.$e->getCode().': "'.$e->getMessage()."\"\n");
-                                if (in_array($e->getCode(), [40000, 3101, 1180])) {
-                                    sleep($delay);
-                                    $db_config = include '/home/my/include/config/config.db.php';
-                                    Events::$db = new \Workerman\MySQL\Connection($db_config['db_host'], $db_config['db_port'], $db_config['db_user'], $db_config['db_pass'], $db_config['db_name'], 'utf8mb4');
-                                } else {
-                                    $global->queuein = 0;
-                                    return;
-                                }
-                            }
-                        }
-                        if ($success === false) {
+                        $ok = $dbRetry(function () use (&$worker_db, $prefix, $server, $cpu_avg, $serialized_server_usage) {
+                            $worker_db->insert($prefix.'_master_details')
+                                ->cols([
+                                    $prefix.'_id' => $server[$prefix.'_id'],
+                                    $prefix.'_cpu_avg' => $cpu_avg,
+                                    $prefix.'_cpu_usage' => $serialized_server_usage
+                                ])->query();
+                        });
+                        if (!$ok) {
                             continue 2;
                         }
                         $serverDetails = [
@@ -255,29 +226,13 @@ function memcached_queue_task($args)
                     $serverDetails = json_decode($serverDetails, true);
                 }
                 if ($serverDetails[$prefix.'_cpu_usage'] != $serialized_server_usage || $serverDetails[$prefix.'_cpu_avg'] != $cpu_avg) {
-                    $success = false;
-                    $try = 0;
-                    while ($success == false && $try < $maxTries) {
-                        $try++;
-                        try {
-                            $worker_db->update($prefix.'_master_details')
-                                ->cols([$prefix.'_cpu_avg', $prefix.'_cpu_usage'])
-                                ->where($prefix.'_id='.$server[$prefix.'_id'])
-                                ->bindValues([$prefix.'_cpu_avg' => $cpu_avg, $prefix.'_cpu_usage' => $serialized_server_usage])
-                                ->query();
-                            $success= true;
-                        } catch (\PDOException $e) {
-                            Worker::safeEcho('['.$try.'/'.$maxTries.'] Got PDO Exception #'.$e->getCode().': "'.$e->getMessage()."\"\n");
-                            if (in_array($e->getCode(), [40000, 3101, 1180])) {
-                                sleep($delay);
-                                $db_config = include '/home/my/include/config/config.db.php';
-                                Events::$db = new \Workerman\MySQL\Connection($db_config['db_host'], $db_config['db_port'], $db_config['db_user'], $db_config['db_pass'], $db_config['db_name'], 'utf8mb4');
-                            } else {
-                                $global->queuein = 0;
-                                return;
-                            }
-                        }
-                    }
+                    $dbRetry(function () use (&$worker_db, $prefix, $server, $cpu_avg, $serialized_server_usage) {
+                        $worker_db->update($prefix.'_master_details')
+                            ->cols([$prefix.'_cpu_avg', $prefix.'_cpu_usage'])
+                            ->where($prefix.'_id='.$server[$prefix.'_id'])
+                            ->bindValues([$prefix.'_cpu_avg' => $cpu_avg, $prefix.'_cpu_usage' => $serialized_server_usage])
+                            ->query();
+                    });
                     $serverDetails[$prefix.'_cpu_avg'] = $cpu_avg;
                     $serverDetails[$prefix.'_cpu_usage'] = $serialized_server_usage;
                     if (USE_REDIS === true) {
@@ -319,29 +274,14 @@ function memcached_queue_task($args)
                                 $influx_v2_database->write($point);
                             }
                         } else {
-                            $success = false;
-                            $try = 0;
-                            while ($success == false && $try < $maxTries) {
-                                $try++;
-                                try {
-                                    $row = $worker_db->select($prefix.'_id,'.$prefix.'_vzid')
-                                        ->from($table)
-                                        ->where($prefix.'_server = :server and '.$prefix.'_vzid = :veid')
-                                        ->bindValues(['server' => $server[$prefix.'_id'], 'veid' => $veid])
-                                        ->row();
-                                    $success= true;
-                                } catch (\PDOException $e) {
-                                    Worker::safeEcho('['.$try.'/'.$maxTries.'] Got PDO Exception #'.$e->getCode().': "'.$e->getMessage()."\"\n");
-                                    if (in_array($e->getCode(), [40000, 3101, 1180])) {
-                                        sleep($delay);
-                                        $db_config = include '/home/my/include/config/config.db.php';
-                                        Events::$db = new \Workerman\MySQL\Connection($db_config['db_host'], $db_config['db_port'], $db_config['db_user'], $db_config['db_pass'], $db_config['db_name'], 'utf8mb4');
-                                    } else {
-                                        $global->queuein = 0;
-                                        return;
-                                    }
-                                }
-                            }
+                            $row = false;
+                            $dbRetry(function () use (&$row, &$worker_db, $prefix, $table, $server, $veid) {
+                                $row = $worker_db->select($prefix.'_id,'.$prefix.'_vzid')
+                                    ->from($table)
+                                    ->where($prefix.'_server = :server and '.$prefix.'_vzid = :veid')
+                                    ->bindValues(['server' => $server[$prefix.'_id'], 'veid' => $veid])
+                                    ->row();
+                            });
                             if ($row !== false) {
                                 $serverVps[$veid] = $row[$prefix.'_id'];
                                 if (USE_REDIS === true) {
@@ -495,35 +435,19 @@ function memcached_queue_task($args)
                     }
                 }
                 if (count($cols) > 0) {
-                    $success = false;
+                    $dbRetry(function () use (&$worker_db, $prefix, $server, $cols, $values) {
+                        $worker_db->update($prefix.'_masters')
+                            ->cols($cols)
+                            ->where($prefix.'_id='.$server[$prefix.'_id'])
+                            ->bindValues($values)
+                            ->query();
+                    });
                 }
-                    $try = 0;
-                    while ($success == false && $try < $maxTries) {
-                        $try++;
-                        try {
-                            $worker_db->update($prefix.'_masters')
-                                ->cols($cols)
-                                ->where($prefix.'_id='.$server[$prefix.'_id'])
-                                ->bindValues($values)
-                                ->query();
-                            $success= true;
-                        } catch (\PDOException $e) {
-                            Worker::safeEcho('['.$try.'/'.$maxTries.'] Got PDO Exception #'.$e->getCode().': "'.$e->getMessage()."\"\n");
-                            if (in_array($e->getCode(), [40000, 3101, 1180])) {
-                                sleep($delay);
-                                $db_config = include '/home/my/include/config/config.db.php';
-                                Events::$db = new \Workerman\MySQL\Connection($db_config['db_host'], $db_config['db_port'], $db_config['db_user'], $db_config['db_pass'], $db_config['db_name'], 'utf8mb4');
-                            } else {
-                                $global->queuein = 0;
-                                return;
-                            }
-                        }
-                    }
-                    if (USE_REDIS === true) {
-                        $redis->setEx($module.'_masters:'.$queue['ip'], 3600, json_encode($server));
-                    } else {
-                        $memcache->set($module.'_masters'.$queue['ip'], $server, 3600);
-                    }
+                if (USE_REDIS === true) {
+                    $redis->setEx($module.'_masters:'.$queue['ip'], 3600, json_encode($server));
+                } else {
+                    $memcache->set($module.'_masters'.$queue['ip'], $server, 3600);
+                }
                 break;
             default:
                 Worker::safeEcho('Dont know how to handel this Queued Entry: '.json_encode($queue, true).PHP_EOL);
