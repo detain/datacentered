@@ -33,7 +33,7 @@ description: Creates a new PHP task function in `Tasks/` following the project's
    }
    ```
 
-   Remove `require_once` only if the function needs no PEAR DB / `$GLOBALS['tf']` access (rare — see `bandwidth.php`).
+   Remove `require_once` only if the function needs no PEAR DB / `MyAdmin\App` access (rare — see `bandwidth.php`).
 
 3. **Add database queries** using one of these two patterns — pick the one that matches your access needs:
 
@@ -43,13 +43,16 @@ description: Creates a new PHP task function in `Tasks/` following the project's
        ->bindValues(['id' => $args['id']])->row();
    ```
 
-   *PEAR DB via `$GLOBALS['tf']->db` (needed when other `$GLOBALS['tf']` state is required):*
+   *PEAR DB via `MyAdmin\App::db()` (needed when session/accounts state is also required — `App::session()`, `App::accounts()`):*
    ```php
-   $db = $GLOBALS['tf']->db;
+   use MyAdmin\App;
+   $db = App::db();
    $db->query("SELECT * FROM vps WHERE id=".(int)$args['id']);
    $db->next_record(MYSQL_ASSOC);
    $row = $db->Record;
    ```
+
+   The container is initialised once per worker process when `functions.inc.php` first loads — never call `App::setContainer()` inside a task. Do not reach into `$GLOBALS['tf']` directly; that path is being removed.
 
 4. **Add a GlobalData CAS lock** if the task must not run concurrently per resource:
 

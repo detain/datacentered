@@ -1,5 +1,6 @@
 <?php
 
+use MyAdmin\App;
 use Workerman\Worker;
 
 function queue_queue_task($args)
@@ -20,7 +21,7 @@ function queue_queue_task($args)
     $hosts = 0;
     $memcached_start = time();
     //Worker::safeEcho('Task handler Started queue_queue_task'.PHP_EOL);
-    $db = $GLOBALS['tf']->db;
+    $db = App::db();
     $db2 = clone $db;
     $masters = [];
     $output = $memcache->get('queue');

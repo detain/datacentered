@@ -1,5 +1,6 @@
 <?php
 
+use MyAdmin\App;
 use Workerman\Worker;
 use Workerman\Connection\AsyncTcpConnection;
 
@@ -10,7 +11,7 @@ function sync_hyperv_queue($args)
     * @var \GlobalData\Client
     */
     global $global;
-    $db = $GLOBALS['tf']->db;
+    $db = App::db();
     $db->query("select * from vps_masters left join vps_master_details using (vps_id) where vps_type=".get_service_define('HYPERV'));
     $rows = [];
     $sids = [];

@@ -18,7 +18,7 @@ $task_worker->onWorkerStart = function ($worker) {
     require_once '/home/my/include/functions.inc.php';
     include_once '/home/my/include/config/config.settings.php';
     $db_config = include '/home/my/include/config/config.db.php';
-    $GLOBALS['tf']->db->haltOnError = 'report';
+    \MyAdmin\App::db()->haltOnError = 'report';
     global $useMysqlRouter;
     try {
         if ($useMysqlRouter === true) {

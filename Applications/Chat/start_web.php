@@ -84,10 +84,6 @@ if (!defined('GLOBAL_START')) { // If it is not started in the root directory, r
 $web->onWorkerStart = function ($worker) {
     global $memcache, $redis;
     global $mysql_db, $zone_db;
-    /**
-    * @var MyAdmin\tf $tf
-    */
-    global $tf;
     include_once '/home/my/include/config/config.settings.php';
     if (USE_REDIS === true) {
         try {
@@ -113,9 +109,9 @@ $web->onWorkerStart = function ($worker) {
     $GLOBALS['disable_db_queries'] = true;
     require_once '/home/my/include/functions.inc.php';
     ini_set('error_reporting', E_ALL & ~E_NOTICE);
-    $tf->session->sessionid = 'WorkerManWeb';
-    $tf->session->account_id = 160308;
-    $tf->session->appnocache('ima', 'services');
+    \MyAdmin\App::session()->sessionid = 'WorkerManWeb';
+    \MyAdmin\App::session()->account_id = 160308;
+    \MyAdmin\App::session()->appnocache('ima', 'services');
 };
 
 $web->onWorkerStop = function ($worker) {

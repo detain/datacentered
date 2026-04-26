@@ -1,5 +1,6 @@
 <?php
 
+use MyAdmin\App;
 use Workerman\Worker;
 
 function vps_queue_task($args)
@@ -9,7 +10,7 @@ function vps_queue_task($args)
     * @var \GlobalData\Client
     */
     global $global;
-    $db = $GLOBALS['tf']->db;
+    $db = App::db();
     $db->query("select * from vps_masters left join vps_master_details using (vps_id) where vps_id=".$args['id']);
     $rows = [];
     $sids = [];
