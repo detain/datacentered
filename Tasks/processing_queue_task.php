@@ -1,5 +1,6 @@
 <?php
 
+use MyAdmin\App;
 use Workerman\Worker;
 
 function processing_queue_task($args)
@@ -7,26 +8,24 @@ function processing_queue_task($args)
     $return = false;
     try {
         require_once '/home/my/include/functions.inc.php';
-        if (isset($GLOBALS['tf'])) {
-            \MyAdmin\App::setContainer(\MyAdmin\App\ContainerFactory::build($GLOBALS['tf']));
-        }
-        $GLOBALS['tf']->db->haltOnError = 'report';
+        // Container is initialized once per worker process when functions.inc.php
+        // first loads (in start_task.php's onWorkerStart). It binds the same
+        // service instances $tf holds, so per-task re-init would just rebuild
+        // a DI container around identical references.
+        App::db()->haltOnError = 'report';
         $GLOBALS['default_dbh']->haltOnError = 'report';
         $GLOBALS['helpdesk_dbh']->haltOnError = 'report';
         $GLOBALS['pdns_dbh']->haltOnError = 'report';
-        //Worker::safeEcho('Processing Queue Task Started'.PHP_EOL);
-        $GLOBALS['tf']->session->sessionid = 'datacentered';
-        $GLOBALS['tf']->session->account_id = $args['history_owner'];
-        $GLOBALS['tf']->accounts->data = $GLOBALS['tf']->accounts->read($args['history_owner']);
-        $db = clone $GLOBALS['tf']->db;
+        App::session()->sessionid = 'datacentered';
+        App::session()->account_id = $args['history_owner'];
+        App::accounts()->data = App::accounts()->read($args['history_owner']);
+        $db = clone App::db();
         $db->query("update queue_log set history_new_value='processing' where history_id='{$args['history_id']}'", __LINE__, __FILE__);
-        //Worker::safeEcho('Processing Queue Task got here after setting to processing, starting processing'.PHP_EOL);
         function_requirements('process_payment');
         $return = process_payment($args['history_type']);
         $db->query("update queue_log set history_new_value='completed' where history_id='{$args['history_id']}'", __LINE__, __FILE__);
-        $GLOBALS['tf']->session->account_id = 160307;
-        $GLOBALS['tf']->accounts->data = [];
-        //Worker::safeEcho('Processing Queue Task Finished for Invoice '.$args['history_type'].PHP_EOL);
+        App::session()->account_id = 160307;
+        App::accounts()->data = [];
     } catch (\Exception $e) {
         error_log("processing_queue_task Got Exception ".$e->getCode().': '.$e->getMessage());
         Worker::safeEcho("processing_queue_task Got Exception ".$e->getCode().': '.$e->getMessage()."\n");
