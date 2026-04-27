@@ -67,7 +67,7 @@ if ($global->cas($var, 0, time())) {
 ```
 
 ### Task Function Signature (`Tasks/*.php`)
-Each file exports one `function filename($args)`. Auto-loaded from `Tasks/` on `onWorkerStart`. Available globals: `$worker_db` (Workerman MySQL), `$global` (GlobalData client), `$influx_v2_database`, `$memcache`, `$redis`.
+Each file exports one `function filename($args)`. Auto-loaded from `Tasks/` on `onWorkerStart`. Available globals: `$worker_db` (Workerman MySQL), `$global` (GlobalData client), `$influx_v2_database`, `$memcache`, `$redis`. Use `App::db()` for MyAdmin database/session access; `$GLOBALS['tf']` has been removed.
 
 ## Task Functions (`Tasks/`)
 - `bandwidth` — writes InfluxDB v2 bandwidth per VPS (in/out bytes)
