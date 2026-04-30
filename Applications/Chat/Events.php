@@ -998,10 +998,16 @@ class Events
     }
 
     /**
-     * timer function to check for queued boardctl jobs (recover-bmc-creds runs).
-     * Mirrors processing_queue_timer but for history_section='boardctl'. Each job
-     * is short-lived (proc_open ssh boardctl.sh) and streams its output back into
-     * queue_log.history_old_value as it runs so the polling UI sees progress.
+     * timer function to check for queued boardctl jobs (run-all / recover-bmc-creds).
+     *
+     * Concurrency model: one job in-flight per asset at a time, but multiple assets
+     * may run concurrently (capped only by TaskWorker process count, currently 20).
+     * Per-asset locking uses GlobalData CAS on a key derived from the asset id; the
+     * mystage queue helper already prevents duplicate pending/processing rows per
+     * asset so the lock is mostly belt-and-braces against rare race windows.
+     *
+     * history_type is encoded as "<action>:<assetId>" — we parse the asset id out
+     * for the lock key so different actions on the same asset still serialize.
      */
     public static function boardctl_queue_timer()
     {
@@ -1010,64 +1016,57 @@ class Events
             if (is_null(self::$db)) return;
         }
         global $global;
-        $var = 'boardctl_queue';
-        if (!isset($global->$var)) {
-            $global->$var = 0;
-        }
-        $lockValue = $global->$var;
-        if ($lockValue !== 0 && (time() - (int)$lockValue) > 900) {
-            Worker::safeEcho("boardctl_queue_timer: stale lock, force-resetting\n");
-            $global->$var = 0;
-        }
-        if ($global->cas($var, 0, time())) {
-            try {
-                $results = self::$db->select('*')->from('queue_log')->where('history_section="boardctl" and history_new_value="pending"')->query();
-            } catch (\Exception $e) {
-                Worker::safeEcho("boardctl_queue_timer DB error: {$e->getMessage()}\n");
-                self::$db = self::createDbConnection();
-                $global->$var = 0;
-                return;
-            }
-            if (!is_array($results) || sizeof($results) == 0) {
-                $global->$var = 0;
-                return;
-            }
-            self::process_boardctl_results($results);
-        }
-    }
-
-    /**
-     * Pop one boardctl job off the queue, dispatch it as a task, then recurse for the next.
-     */
-    public static function process_boardctl_results($results)
-    {
-        global $global;
-        $var = 'boardctl_queue';
-        $row = array_shift($results);
         try {
-            self::$db->update('queue_log')->cols(['history_new_value' => 'processing'])->where('history_id='.intval($row['history_id']))->query();
-        } catch (\Throwable $e) {
-            Worker::safeEcho("boardctl: failed to mark history_id={$row['history_id']} processing: {$e->getMessage()}\n");
-            $global->$var = 0;
+            $results = self::$db->select('*')->from('queue_log')->where('history_section="boardctl" and history_new_value="pending"')->query();
+        } catch (\Exception $e) {
+            Worker::safeEcho("boardctl_queue_timer DB error: {$e->getMessage()}\n");
+            self::$db = self::createDbConnection();
             return;
         }
-        Worker::safeEcho("boardctl spawning task for history_id={$row['history_id']} asset={$row['history_type']}\n");
-        self::dispatchTask('boardctl_task', $row, function ($task_result) use ($results) {
-            global $global;
-            if (count($results) > 0) {
-                self::process_boardctl_results($results);
-            } else {
-                $global->boardctl_queue = 0;
+        if (!is_array($results) || sizeof($results) == 0) {
+            return;
+        }
+        foreach ($results as $row) {
+            $parts = explode(':', (string)$row['history_type'], 2);
+            $assetId = isset($parts[1]) ? intval($parts[1]) : intval($row['history_type']);
+            if ($assetId <= 0) {
+                Worker::safeEcho("boardctl: skipping history_id={$row['history_id']} with unparseable type '{$row['history_type']}'\n");
+                continue;
             }
-        }, function () use ($row) {
-            global $global;
+            $lockVar = 'boardctl_asset_'.$assetId;
+            if (!isset($global->$lockVar)) {
+                $global->$lockVar = 0;
+            }
+            $lockValue = $global->$lockVar;
+            if ($lockValue !== 0 && (time() - (int)$lockValue) > 900) {
+                Worker::safeEcho("boardctl: stale lock for asset {$assetId}, force-resetting\n");
+                $global->$lockVar = 0;
+            }
+            if (!$global->cas($lockVar, 0, time())) {
+                // another job for this asset is already in flight
+                continue;
+            }
             try {
-                self::$db->update('queue_log')->cols(['history_new_value' => 'failed'])->where('history_id='.intval($row['history_id']))->query();
+                self::$db->update('queue_log')->cols(['history_new_value' => 'processing'])->where('history_id='.intval($row['history_id']))->query();
             } catch (\Throwable $e) {
-                Worker::safeEcho("boardctl: failed to mark history_id={$row['history_id']} failed: {$e->getMessage()}\n");
+                Worker::safeEcho("boardctl: failed to mark history_id={$row['history_id']} processing: {$e->getMessage()}\n");
+                $global->$lockVar = 0;
+                continue;
             }
-            $global->boardctl_queue = 0;
-        });
+            Worker::safeEcho("boardctl spawning task for history_id={$row['history_id']} asset={$assetId} type={$row['history_type']}\n");
+            self::dispatchTask('boardctl_task', $row, function ($task_result) use ($lockVar) {
+                global $global;
+                $global->$lockVar = 0;
+            }, function () use ($row, $lockVar) {
+                global $global;
+                try {
+                    self::$db->update('queue_log')->cols(['history_new_value' => 'failed'])->where('history_id='.intval($row['history_id']))->query();
+                } catch (\Throwable $e) {
+                    Worker::safeEcho("boardctl: failed to mark history_id={$row['history_id']} failed: {$e->getMessage()}\n");
+                }
+                $global->$lockVar = 0;
+            });
+        }
     }
 
     /**

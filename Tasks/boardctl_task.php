@@ -32,7 +32,7 @@ function boardctl_task($args)
             App::session()->account_id = $ownerId;
             App::accounts()->data = App::accounts()->read($ownerId);
         }
-        function_requirements('boardctl');
+        function_requirements('boardctl_run_job');
         $ok = boardctl_run_job($historyId);
         // restore session
         App::session()->account_id = 160307;
@@ -41,7 +41,7 @@ function boardctl_task($args)
     } catch (\Throwable $e) {
         Worker::safeEcho('boardctl_task exception '.$e->getCode().': '.$e->getMessage()."\n");
         try {
-            function_requirements('boardctl');
+            function_requirements('boardctl_run_job');
             boardctl_append_output($historyId, PHP_EOL.'ERROR: task threw '.$e->getMessage().PHP_EOL);
             boardctl_set_status($historyId, 'failed');
         } catch (\Throwable $inner) {
