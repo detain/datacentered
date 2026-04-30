@@ -18,12 +18,11 @@ function memcached_queue_task($args)
     */
     global $influx_v2_client;
     global $influx_v2_database;
-    if (USE_REDIS === true) {
-        /**
-        * @var \Redis
-        */
-        global $redis;
-    } else {
+    /**
+    * @var \Redis
+    */
+    global $redis;
+    if (USE_REDIS !== true) {
         /**
         * @var \Memcached
         */
@@ -309,13 +308,6 @@ function memcached_queue_task($args)
                             }
                         }
                     }
-                    try {
-                        if (INFLUX_V2 === true) {
-                            $influx_v2_database->close();
-                        }
-                    } catch (\Exception $e) {
-                        Worker::safeEcho('InfluxDB got Exception '.$e->getMessage(). ' while writing bandwidth points to DB'.PHP_EOL);
-                    }
                 }
                 break;
             case 'bandwidth':
@@ -384,13 +376,6 @@ function memcached_queue_task($args)
                     if (count($errors) > 0) {
                         Worker::safeEcho('Bandwidth Data with no matching IP: '.implode(', ', $errors).PHP_EOL);
                     }
-                    try {
-                        if (INFLUX_V2 === true) {
-                            $influx_v2_database->close();
-                        }
-                    } catch (\Exception $e) {
-                        Worker::safeEcho('InfluxDB got Exception '.$e->getMessage(). ' while writing bandwidth points to DB'.PHP_EOL);
-                    }
                 }
                 break;
             case 'server_info':
@@ -452,6 +437,14 @@ function memcached_queue_task($args)
             default:
                 Worker::safeEcho('Dont know how to handel this Queued Entry: '.json_encode($queue, true).PHP_EOL);
                 break;
+        }
+    }
+    // Flush all buffered InfluxDB writes once after all queues have been processed.
+    if (INFLUX_V2 === true) {
+        try {
+            $influx_v2_database->close();
+        } catch (\Exception $e) {
+            Worker::safeEcho('InfluxDB got Exception '.$e->getMessage().' while flushing writes'.PHP_EOL);
         }
     }
     $global->queuein = 0;

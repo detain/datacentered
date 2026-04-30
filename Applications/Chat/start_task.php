@@ -15,17 +15,22 @@ $task_worker->count = 20; 								// number of task processes can be opened more
 $task_worker->name = 'TaskWorker';
 $task_worker->onWorkerStart = function ($worker) {
     global $global, $functions, $worker_db, $influx_v2_client, $influx_v2_database, $memcache, $redis;
+    $redis = null;
     require_once '/home/my/include/functions.inc.php';
     include_once '/home/my/include/config/config.settings.php';
     $db_config = include '/home/my/include/config/config.db.php';
     \MyAdmin\App::db()->haltOnError = 'report';
     global $useMysqlRouter;
+    $dbHost = null;
+    if ($useMysqlRouter === true) {
+        $dbHost = $db_config['db_host'];
+    } elseif (!empty($db_config['db_hosts'])) {
+        $dbHost = $db_config['db_hosts'][array_rand($db_config['db_hosts'])];
+    } else {
+        $dbHost = $db_config['db_host'];
+    }
     try {
-        if ($useMysqlRouter === true) {
-            $worker_db = new \Workerman\MySQL\Connection($db_config['db_host'], $db_config['db_port'], $db_config['db_user'], $db_config['db_pass'], $db_config['db_name'], 'utf8mb4');
-        } else {
-            $worker_db = new \Workerman\MySQL\Connection(isset($db_config['db_hosts']) ? $db_config['db_hosts'][count($db_config['db_hosts']) - 1] : $db_config['db_host'], $db_config['db_port'], $db_config['db_user'], $db_config['db_pass'], $db_config['db_name'], 'utf8mb4');
-        }
+        $worker_db = new \Workerman\MySQL\Connection($dbHost, $db_config['db_port'], $db_config['db_user'], $db_config['db_pass'], $db_config['db_name'], 'utf8mb4');
     } catch (\Exception $e) {
         Worker::safeEcho("TaskWorker DB connection failed: {$e->getMessage()}\n");
         $worker_db = null;
@@ -54,10 +59,11 @@ $task_worker->onWorkerStart = function ($worker) {
         try {
             $redis = new \Redis();
             if ($redis->connect(REDIS_HOST, REDIS_PORT, 2)) {
-                //$redis->auth(REDIS_PASS);
+                // $redis->auth(REDIS_PASS);
             }
         } catch (\Exception $e) {
             Worker::safeEcho('Caught Exception #'.$e->getCode().':'.$e->getMessage().' on '.__LINE__.'@'.__FILE__);
+            $redis = null;
         }
     }
     $memcache = new \Memcached();
@@ -100,7 +106,8 @@ $task_worker->onMessage = function ($connection, $task_data) {
                 if ($useMysqlRouter === true) {
                     $worker_db = new \Workerman\MySQL\Connection($db_config['db_host'], $db_config['db_port'], $db_config['db_user'], $db_config['db_pass'], $db_config['db_name'], 'utf8mb4');
                 } else {
-                    $worker_db = new \Workerman\MySQL\Connection(isset($db_config['db_hosts']) ? $db_config['db_hosts'][count($db_config['db_hosts']) - 1] : $db_config['db_host'], $db_config['db_port'], $db_config['db_user'], $db_config['db_pass'], $db_config['db_name'], 'utf8mb4');
+                    $dbHost = !empty($db_config['db_hosts']) ? $db_config['db_hosts'][array_rand($db_config['db_hosts'])] : $db_config['db_host'];
+                    $worker_db = new \Workerman\MySQL\Connection($dbHost, $db_config['db_port'], $db_config['db_user'], $db_config['db_pass'], $db_config['db_name'], 'utf8mb4');
                 }
             } catch (\Exception $re) {
                 Worker::safeEcho("TaskWorker DB reconnect failed: {$re->getMessage()}\n");
