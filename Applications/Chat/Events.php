@@ -139,6 +139,7 @@ class Events
             if (gethostname() == 'my.interserver.net') {
             } elseif (gethostname() == 'myadmin1.interserver.net') {
                 $timers['processing_queue_timer'] = GlobalTimer::add(30, ['Events', 'processing_queue_timer'], $args);
+                $timers['boardctl_queue_timer'] = GlobalTimer::add(15, ['Events', 'boardctl_queue_timer'], $args);
                 $timers['vps_queue_queue_timer'] = GlobalTimer::add(30, ['Events', 'vps_queue_timer'], $args);
                 $timers['memcache_queue_timer'] = GlobalTimer::add(30, ['Events', 'memcache_queue_timer'], $args);
                 $timers['map_queue_timer'] = GlobalTimer::add(60, ['Events', 'map_queue_timer'], $args);
@@ -993,6 +994,80 @@ class Events
         //Gateway::sendToClient($client_id, json_encode('ok'));
         Gateway::closeClient($client_id, json_encode('ok'));
         self::processing_queue_timer();
+        self::boardctl_queue_timer();
+    }
+
+    /**
+     * timer function to check for queued boardctl jobs (recover-bmc-creds runs).
+     * Mirrors processing_queue_timer but for history_section='boardctl'. Each job
+     * is short-lived (proc_open ssh boardctl.sh) and streams its output back into
+     * queue_log.history_old_value as it runs so the polling UI sees progress.
+     */
+    public static function boardctl_queue_timer()
+    {
+        if (is_null(self::$db)) {
+            self::$db = self::createDbConnection();
+            if (is_null(self::$db)) return;
+        }
+        global $global;
+        $var = 'boardctl_queue';
+        if (!isset($global->$var)) {
+            $global->$var = 0;
+        }
+        $lockValue = $global->$var;
+        if ($lockValue !== 0 && (time() - (int)$lockValue) > 900) {
+            Worker::safeEcho("boardctl_queue_timer: stale lock, force-resetting\n");
+            $global->$var = 0;
+        }
+        if ($global->cas($var, 0, time())) {
+            try {
+                $results = self::$db->select('*')->from('queue_log')->where('history_section="boardctl" and history_new_value="pending"')->query();
+            } catch (\Exception $e) {
+                Worker::safeEcho("boardctl_queue_timer DB error: {$e->getMessage()}\n");
+                self::$db = self::createDbConnection();
+                $global->$var = 0;
+                return;
+            }
+            if (!is_array($results) || sizeof($results) == 0) {
+                $global->$var = 0;
+                return;
+            }
+            self::process_boardctl_results($results);
+        }
+    }
+
+    /**
+     * Pop one boardctl job off the queue, dispatch it as a task, then recurse for the next.
+     */
+    public static function process_boardctl_results($results)
+    {
+        global $global;
+        $var = 'boardctl_queue';
+        $row = array_shift($results);
+        try {
+            self::$db->update('queue_log')->cols(['history_new_value' => 'processing'])->where('history_id='.intval($row['history_id']))->query();
+        } catch (\Throwable $e) {
+            Worker::safeEcho("boardctl: failed to mark history_id={$row['history_id']} processing: {$e->getMessage()}\n");
+            $global->$var = 0;
+            return;
+        }
+        Worker::safeEcho("boardctl spawning task for history_id={$row['history_id']} asset={$row['history_type']}\n");
+        self::dispatchTask('boardctl_task', $row, function ($task_result) use ($results) {
+            global $global;
+            if (count($results) > 0) {
+                self::process_boardctl_results($results);
+            } else {
+                $global->boardctl_queue = 0;
+            }
+        }, function () use ($row) {
+            global $global;
+            try {
+                self::$db->update('queue_log')->cols(['history_new_value' => 'failed'])->where('history_id='.intval($row['history_id']))->query();
+            } catch (\Throwable $e) {
+                Worker::safeEcho("boardctl: failed to mark history_id={$row['history_id']} failed: {$e->getMessage()}\n");
+            }
+            $global->boardctl_queue = 0;
+        });
     }
 
     /**
