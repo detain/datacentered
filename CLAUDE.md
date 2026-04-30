@@ -82,7 +82,7 @@ Each file exports one `function filename($args)`. Auto-loaded from `Tasks/` on `
 - `hyperv_cleanupresources` — SOAP `CleanUpResources` call via `SoapClient`
 - `get_map` — returns VPS IP/VNC/slice map for a host
 - `memcached_queue_task` — processes `cpu_usage`/`bandwidth`/`server_info` queue entries from Memcached/Redis for `vps` and `quickservers`; InnoDB cluster retry with exponential backoff; writes CPU + bandwidth metrics to InfluxDB v2
-- `boardctl_task` — runs queued boardctl jobs (`run-all` / `recover-bmc-creds`) via `boardctl_run_job()`; per-asset CAS lock (`boardctl_asset_<id>`); `history_type` encodes `"<action>:<assetId>"`; uses `App::db()` + `App::session()` for queue_log context
+- `boardctl_task` — runs a single queued boardctl job via `boardctl_run_job($historyId)`; receives full `queue_log` row; sets `App::session()->account_id` from `history_owner`; 2hr timeout (`set_time_limit(7500)`); on error calls `boardctl_append_output`/`boardctl_set_status`; dispatched by `boardctl_queue_timer` (15s) which parses `history_type` as `"<action>:<assetId>"`, holds per-asset CAS lock (`boardctl_asset_<id>`, stale after 7800s), and allows concurrent multi-asset execution
 
 ## Web Endpoints (`Web/`)
 - `queue.php` — VPS/QS queue dispatch; actions: `map`, `get_queue`, `get_new_vps`, `queue`

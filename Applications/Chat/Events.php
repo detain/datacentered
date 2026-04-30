@@ -1038,7 +1038,8 @@ class Events
                 $global->$lockVar = 0;
             }
             $lockValue = $global->$lockVar;
-            if ($lockValue !== 0 && (time() - (int)$lockValue) > 900) {
+            // 7800s = 2hr task cap (boardctl_run_job) + 10min buffer
+            if ($lockValue !== 0 && (time() - (int)$lockValue) > 7800) {
                 Worker::safeEcho("boardctl: stale lock for asset {$assetId}, force-resetting\n");
                 $global->$lockVar = 0;
             }
