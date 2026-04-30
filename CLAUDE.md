@@ -82,7 +82,7 @@ Each file exports one `function filename($args)`. Auto-loaded from `Tasks/` on `
 - `hyperv_cleanupresources` — SOAP `CleanUpResources` call via `SoapClient`
 - `get_map` — returns VPS IP/VNC/slice map for a host
 - `memcached_queue_task` — processes `cpu_usage`/`bandwidth`/`server_info` queue entries from Memcached/Redis for `vps` and `quickservers`; InnoDB cluster retry with exponential backoff; writes CPU + bandwidth metrics to InfluxDB v2
-- `boardctl_task` — runs queued `/opt/boardctl.sh recover-bmc-creds` jobs via `boardctl_run_job()`; uses `App::db()` + `App::session()` for queue_log context
+- `boardctl_task` — runs queued boardctl jobs (`run-all` / `recover-bmc-creds`) via `boardctl_run_job()`; per-asset CAS lock (`boardctl_asset_<id>`); `history_type` encodes `"<action>:<assetId>"`; uses `App::db()` + `App::session()` for queue_log context
 
 ## Web Endpoints (`Web/`)
 - `queue.php` — VPS/QS queue dispatch; actions: `map`, `get_queue`, `get_new_vps`, `queue`

@@ -20,6 +20,10 @@ function boardctl_task($args)
         Worker::safeEcho("boardctl_task: missing history_id\n");
         return json_encode(['ok' => false, 'error' => 'missing history_id']);
     }
+    // 2hr ceiling — boardctl run-all on a stuck BMC can take a long time. Bump
+    // both PHP execution and socket timeouts so the worker doesn't bail mid-run.
+    @set_time_limit(7500);
+    @ini_set('default_socket_timeout', '7200');
     try {
         require_once '/home/my/include/functions.inc.php';
         App::db()->haltOnError = 'report';
