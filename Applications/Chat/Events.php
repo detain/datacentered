@@ -412,13 +412,16 @@ class Events
         self::dbUpdateWithRetry('processing', $result['history_id'], function () use ($result, $results) {
             Worker::safeEcho("payment processing about to spawn task for ".json_encode($result, true)."\n");
             self::dispatchTask('processing_queue_task', $result, function ($task_result) use ($result, $results) {
-                self::dbUpdateWithRetry('completed', $result['history_id'], function () use ($results) {
+                $decoded = json_decode($task_result, true);
+                $success = is_array($decoded) && !empty($decoded['return']);
+                $status = $success ? 'completed' : 'failed';
+                self::dbUpdateWithRetry($status, $result['history_id'], function () use ($result, $results, $status) {
+                    Worker::safeEcho("finished queued payment processing task (history_id={$result['history_id']}, status={$status})\n");
                     if (count($results) > 0) {
                         self::process_results($results);
                     } else {
                         self::releaseProcessingLock();
                     }
-                    Worker::safeEcho("finished queued payment processing task\n");
                 });
             }, function () {
                 self::releaseProcessingLock();

@@ -5,7 +5,12 @@ use Workerman\Worker;
 
 function processing_queue_task($args)
 {
-    $return = false;
+    $success = false;
+    $historyId = $args['history_id'] ?? null;
+    $historyOwner = $args['history_owner'] ?? null;
+    $invoiceId = $args['history_type'] ?? null;
+    $accountLid = null;
+    $errorMessage = null;
     try {
         require_once '/home/my/include/functions.inc.php';
         // Container is initialized once per worker process when functions.inc.php
@@ -17,18 +22,35 @@ function processing_queue_task($args)
         $GLOBALS['helpdesk_dbh']->haltOnError = 'report';
         $GLOBALS['pdns_dbh']->haltOnError = 'report';
         App::session()->sessionid = 'datacentered';
-        App::session()->account_id = $args['history_owner'];
-        App::accounts()->data = App::accounts()->read($args['history_owner']);
-        $db = clone App::db();
-        $db->query("update queue_log set history_new_value='processing' where history_id='{$args['history_id']}'", __LINE__, __FILE__);
+        App::session()->account_id = $historyOwner;
+        App::accounts()->data = App::accounts()->read($historyOwner);
+        $accountLid = App::accounts()->data['account_lid'] ?? null;
         function_requirements('process_payment');
-        $return = process_payment($args['history_type']);
-        $db->query("update queue_log set history_new_value='completed' where history_id='{$args['history_id']}'", __LINE__, __FILE__);
+        $success = (bool) process_payment($invoiceId);
+    } catch (\Throwable $e) {
+        $success = false;
+        $errorMessage = $e->getMessage();
+        error_log('processing_queue_task Got Exception '.$e->getCode().': '.$e->getMessage());
+        Worker::safeEcho('processing_queue_task Got Exception '.$e->getCode().': '.$e->getMessage()."\n");
+    } finally {
         App::session()->account_id = 160307;
         App::accounts()->data = [];
-    } catch (\Exception $e) {
-        error_log("processing_queue_task Got Exception ".$e->getCode().': '.$e->getMessage());
-        Worker::safeEcho("processing_queue_task Got Exception ".$e->getCode().': '.$e->getMessage()."\n");
     }
-    return $return;
+    if (!$success && function_exists('chatNotify')) {
+        try {
+            $customerLabel = $historyOwner !== null
+                ? '['.($accountLid !== null && $accountLid !== '' ? $accountLid : 'customer').' ('.$historyOwner.')](https://my.interserver.net/admin/edit_customer?customer='.$historyOwner.')'
+                : 'unknown customer';
+            $msg = '⚠️ FAILED activation/payment for '.$customerLabel
+                .' — invoice '.($invoiceId ?? 'unknown')
+                .', queue history_id '.($historyId ?? 'unknown');
+            if ($errorMessage !== null) {
+                $msg .= ' — exception: '.$errorMessage;
+            }
+            chatNotify($msg);
+        } catch (\Throwable $e) {
+            Worker::safeEcho('processing_queue_task chatNotify failed: '.$e->getMessage()."\n");
+        }
+    }
+    return $success;
 }
