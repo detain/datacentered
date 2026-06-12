@@ -122,6 +122,20 @@ $task_worker->onMessage = function ($connection, $task_data) {
     $connection->send(json_encode(['return' => $return]));
 };
 
+// Dedicated payment-processing pool on 2209, isolated from the shared 2208 pool
+// so a flood of slow VPS/HyperV tasks cannot starve customer activations. It
+// reuses the exact same bootstrap, dispatch and error handlers as the main
+// TaskWorker; Events::dispatchTask() routes processing_queue_task here.
+$payment_task_worker = new Worker('Text://127.0.0.1:2209');
+$payment_task_worker->count = 5;
+$payment_task_worker->name = 'PaymentTaskWorker';
+$payment_task_worker->onWorkerStart = $task_worker->onWorkerStart;
+$payment_task_worker->onConnect = $task_worker->onConnect;
+$payment_task_worker->onBufferFull = $task_worker->onBufferFull;
+$payment_task_worker->onBufferDrain = $task_worker->onBufferDrain;
+$payment_task_worker->onError = $task_worker->onError;
+$payment_task_worker->onMessage = $task_worker->onMessage;
+
 if (!defined('GLOBAL_START')) { // If it is not started in the root directory, run the runAll method
     Worker::runAll();
 }

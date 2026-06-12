@@ -24,6 +24,10 @@ require_once __DIR__.'/stdObject.php';
 
 class Events
 {
+    /** Dedicated task-worker pool for payment processing, isolated from the
+     *  shared 2208 pool so slow VPS/HyperV tasks cannot starve activations. */
+    const PAYMENT_TASK_ADDRESS = 'Text://127.0.0.1:2209';
+
     public static $process_handle = null;
     public static $process_pipes = null;
     public static $db = null;
@@ -67,10 +71,14 @@ class Events
      * @param string $type task function name
      * @param array $args task arguments
      * @param callable|null $onResult optional callback receiving (string $task_result)
+     * @param callable|null $onError optional callback when the task connection fails
+     * @param string $address task worker address to dispatch to (defaults to the
+     *        shared pool on 2208; payment processing uses a dedicated pool on 2209
+     *        so a flood of slow VPS/HyperV tasks cannot starve activations)
      */
-    public static function dispatchTask($type, $args = [], $onResult = null, $onError = null)
+    public static function dispatchTask($type, $args = [], $onResult = null, $onError = null, $address = 'Text://127.0.0.1:2208')
     {
-        $task_connection = new AsyncTcpConnection('Text://127.0.0.1:2208');
+        $task_connection = new AsyncTcpConnection($address);
         $task_connection->send(json_encode(['type' => $type, 'args' => $args]));
         $responded = false;
         $task_connection->onMessage = function ($connection, $task_result) use ($task_connection, $onResult, &$responded) {
@@ -139,6 +147,7 @@ class Events
             if (gethostname() == 'my.interserver.net') {
             } elseif (gethostname() == 'myadmin1.interserver.net') {
                 $timers['processing_queue_timer'] = GlobalTimer::add(30, ['Events', 'processing_queue_timer'], $args);
+                $timers['processing_queue_reaper'] = GlobalTimer::add(120, ['Events', 'processing_queue_reaper'], $args);
                 $timers['boardctl_queue_timer'] = GlobalTimer::add(15, ['Events', 'boardctl_queue_timer'], $args);
                 $timers['vps_queue_queue_timer'] = GlobalTimer::add(30, ['Events', 'vps_queue_timer'], $args);
                 $timers['memcache_queue_timer'] = GlobalTimer::add(30, ['Events', 'memcache_queue_timer'], $args);
@@ -378,6 +387,31 @@ class Events
     }
 
     /**
+     * Recover payment-processing rows stuck in 'processing'. These happen when a
+     * task connection closes without a response or a stale-lock force-reset
+     * abandons an in-flight dispatch, leaving the row mid-flight forever. Reset
+     * them to 'pending' so the timer retries them (process_payment is idempotent
+     * — it skips already-active services). Scoped to recent rows so the historical
+     * backlog of long-orphaned 'processing' rows is not mass-reprocessed.
+     */
+    public static function processing_queue_reaper()
+    {
+        if (is_null(self::$db)) {
+            self::$db = self::createDbConnection();
+            if (is_null(self::$db)) return;
+        }
+        try {
+            self::$db->query("UPDATE queue_log SET history_new_value='pending'"
+                ." WHERE history_section='process_payment' AND history_new_value='processing'"
+                ." AND history_timestamp >= (NOW() - INTERVAL 6 HOUR)"
+                ." AND history_timestamp < (NOW() - INTERVAL 15 MINUTE)");
+        } catch (\Exception $e) {
+            Worker::safeEcho("processing_queue_reaper DB error: {$e->getMessage()}\n");
+            self::$db = self::createDbConnection();
+        }
+    }
+
+    /**
      * Attempt a DB update with async timer-based retry (non-blocking).
      *
      * @param string $status the history_new_value to set
@@ -425,7 +459,7 @@ class Events
                 });
             }, function () {
                 self::releaseProcessingLock();
-            });
+            }, self::PAYMENT_TASK_ADDRESS);
         });
     }
 
