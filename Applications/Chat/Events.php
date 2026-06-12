@@ -130,6 +130,9 @@ class Events
         GlobalTimer::init(GLOBALDATA_IP,'3333');
         self::$db = self::createDbConnection();
         if ($global->add('running', [])) {
+            // Fresh GlobalData == a full (cold) restart, not a graceful reload.
+            // Clear boardctl jobs orphaned by the restart so reruns aren't blocked.
+            self::boardctl_startup_reap();
             $global->hosts = [];
             $global->rooms = [
                 [
@@ -384,6 +387,35 @@ class Events
         $lastVar = $var.'_last';
         $global->$lastVar = time();
         $global->$var = 0;
+    }
+
+    /**
+     * Recover boardctl jobs orphaned by a datacentered restart. A boardctl run is
+     * a proc_open ssh child of the TaskWorker process, so a full restart kills it
+     * while its queue_log row is still 'processing' — and boardctl_queue_job then
+     * refuses to queue a rerun for that asset (duplicate guard). This resets such
+     * rows to 'failed' so an operator can re-queue.
+     *
+     * Called ONLY from the GlobalData cold-start block in onWorkerStart (guarded by
+     * $global->add('running')), which fires when the GlobalData server is freshly
+     * created — i.e. a full restart, never a graceful reload. A long-running job
+     * (up to the 6h cap) that survives a reload is therefore never touched. NOT a
+     * periodic timer on purpose: a time-based sweep cannot tell a 6h job that is
+     * still running apart from one that died, and would kill live jobs.
+     */
+    public static function boardctl_startup_reap()
+    {
+        if (is_null(self::$db)) {
+            self::$db = self::createDbConnection();
+            if (is_null(self::$db)) return;
+        }
+        try {
+            self::$db->query("UPDATE queue_log SET history_new_value='failed',"
+                ." history_old_value=CONCAT(COALESCE(history_old_value,''), '\n[datacentered restarted — job did not survive; marked failed, re-queue to run again]\n')"
+                ." WHERE history_section='boardctl' AND history_new_value='processing'");
+        } catch (\Exception $e) {
+            Worker::safeEcho("boardctl_startup_reap DB error: {$e->getMessage()}\n");
+        }
     }
 
     /**
@@ -1075,8 +1107,10 @@ class Events
                 $global->$lockVar = 0;
             }
             $lockValue = $global->$lockVar;
-            // 7800s = 2hr task cap (boardctl_run_job) + 10min buffer
-            if ($lockValue !== 0 && (time() - (int)$lockValue) > 7800) {
+            // 22200s = 6hr task cap (boardctl_run_job BOARDCTL_MAX_RUNTIME_SECONDS) + 10min buffer.
+            // Must stay >= the runner cap so a legitimately long-running job's lock
+            // is never reset mid-run (which would let a duplicate job start).
+            if ($lockValue !== 0 && (time() - (int)$lockValue) > 22200) {
                 Worker::safeEcho("boardctl: stale lock for asset {$assetId}, force-resetting\n");
                 $global->$lockVar = 0;
             }
