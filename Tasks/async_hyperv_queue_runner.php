@@ -12,6 +12,15 @@ function async_hyperv_queue_runner($args)
     global $global;
     App::session()->sessionid = 'datacentered';
     App::session()->account_id = 160307;
+    // Default to the 'services' ima for the 160307 service account. With a blank
+    // ima the session is treated as 'client', which makes get_service() enforce
+    // that the service owner matches account_id; that check fails for real
+    // customers' services during activation (e.g. the welcome email) since we sit
+    // on 160307 here. 'services' bypasses the ownership check (matches the baseline
+    // in /home/sites/mystage/public_html/vps_queue.php). Set both the session
+    // appnocache copy and tf->ima so every consumer sees it.
+    App::session()->appnocache('ima', 'services');
+    App::tf()->ima = 'services';
     $service_id = $args['id'];
     $service_master = $args['data'];
     $var = 'vps_host_'.$service_id;
