@@ -419,6 +419,49 @@ function memcached_queue_task($args)
                         $server[$prefix.'_'.$field] = $servers[$field];
                     }
                 }
+                // Host saturation / capacity metrics reported by `provirted cron
+                // host-info` (App\Os\Saturation). Mirrors mystage's queue handler
+                // include/vps/queue/ResponseHandlers/ServerInfo.php so the columns
+                // added by mystage scripts/mysql/hostinfo.sql (present on both
+                // vps_masters and qs_masters) actually get persisted here too.
+                // Each <prefix>_<column> maps to the payload key(s) that supply it;
+                // ram_free accepts the new 'mem_free' key or the legacy 'ramfree'.
+                // NOTE: $server is loaded above with an explicit column list that
+                // does NOT include these columns, so we write whenever the column
+                // is absent/NULL/changed (cannot gate on its presence the way the
+                // mystage handler does, or live metrics would never persist).
+                $metricFields = [
+                    'ram_free'         => ['mem_free', 'ramfree'],
+                    'cpu_usage'        => ['cpu_usage'],
+                    'cpu_iowait'       => ['cpu_iowait'],
+                    'cpu_steal'        => ['cpu_steal'],
+                    'cpu_steal_norm'   => ['cpu_steal_norm'],
+                    'run_queue_norm'   => ['run_queue_norm'],
+                    'cpu_capacity'     => ['cpu_capacity'],
+                    'cpu_capacity_max' => ['cpu_capacity_max'],
+                    'io_pressure'      => ['io_pressure'],
+                    'cpu_pressure'     => ['cpu_pressure'],
+                    'mem_pressure'     => ['mem_pressure'],
+                    'total_pressure'   => ['total_pressure'],
+                ];
+                foreach ($metricFields as $column => $sourceKeys) {
+                    $value = null;
+                    foreach ($sourceKeys as $key) {
+                        if (isset($servers[$key])) {
+                            $value = $servers[$key];
+                            break;
+                        }
+                    }
+                    if ($value === null) {
+                        continue;
+                    }
+                    $col = $prefix.'_'.$column;
+                    if (!array_key_exists($col, $server) || $server[$col] === null || $server[$col] != $value) {
+                        $cols[] = $col;
+                        $values[$col] = $value;
+                        $server[$col] = $value;
+                    }
+                }
                 if (count($cols) > 0) {
                     $dbRetry(function () use (&$worker_db, $prefix, $server, $cols, $values) {
                         $worker_db->update($prefix.'_masters')
