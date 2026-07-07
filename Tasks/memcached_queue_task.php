@@ -67,14 +67,6 @@ function memcached_queue_task($args)
         return false;
     };
 
-    // - Get Lock to ensure its not ran a 2nd time in parallel - queuein
-    if (!isset($global->queuein)) {
-        $global->queuein = 0;
-    }
-    if (!$global->cas('queuein', 0, 1)) {
-        Worker::safeEcho('Cannot Get global queuein Lock for memcached_queue_task, Returning after '.(time() - $start).' seconds'.PHP_EOL);
-        return;
-    }
     // - Loop through vps, quickservers - $module
     $queuehosts = [];
     foreach (['vps', 'quickservers'] as $module) {
@@ -96,42 +88,104 @@ function memcached_queue_task($args)
         });
         if (!$ok) {
             Worker::safeEcho('['.$maxTries.'/'.$maxTries.'] Bailing after failed query'."\n");
-            $global->queuein = 0;
             return;
         }
         $queuehosts = array_merge($queuehosts, $ips);
     }
     if (!is_array($queuehosts)) {
         echo 'Queue Hosts is not array:'.var_export($queuehosts,true);
-    }
-    //
-    $processQueue = [];
-    foreach ($queuehosts as $hostIp) {
-        if (USE_REDIS === true) {
-            while (false !== $queue = $redis->lPop('queuein:'.$hostIp)) {
-                $queue = json_decode($queue, true);
-                $processQueue[] = $queue;
-            }
-        } else {
-            $queue = $memcache->get('queuein'.$hostIp);
-            if (is_array($queue)) {
-                $processQueue = array_merge($processQueue, $queue);
-                $queue = [];
-                $memcache->set('queuein'.$hostIp, $queue);
-            }
-        }
-    }
-    if (count($processQueue) == 0) {
-        $global->queuein = 0;
-        //Worker::safeEcho('Empty Queue, Returning after '.(time() - $start).' seconds'.PHP_EOL);
         return;
     }
-    /**
-    * @var $processQueue an array of queued data sets to process
-    */
-    //Worker::safeEcho('Processing '.count($processQueue).' Queues from Memcached after '.(time() - $start).' seconds'.PHP_EOL);
 
-    foreach ($processQueue as $idx => $queue) {
+    // Per-host locking: process one host at a time per worker
+    // Use LMPOP with COUNT for atomic batch retrieval (Redis 7.0+)
+    // Limit items per host per run to reduce lock contention
+    $maxItemsPerHost = 50;  // Batch size per host per invocation
+    $lockTimeout = 30;      // Max seconds to hold lock before releasing
+    $processedAny = false;
+
+    foreach ($queuehosts as $hostIp) {
+        $lockKey = 'queuein:'.$hostIp;
+
+        // Initialize lock variable if not set
+        if (!isset($global->$lockKey)) {
+            $global->$lockKey = 0;
+        }
+
+        // Try to acquire per-host lock with retries and random backoff
+        $lockAcquired = false;
+        $lockAttempts = 0;
+        while ($lockAttempts < 3) {
+            if ($global->cas($lockKey, 0, 1)) {
+                $lockAcquired = true;
+                break;
+            }
+            $lockAttempts++;
+            // Random backoff: 10-50ms on first retry, 20-100ms on second
+            usleep(rand(10000, 50000) * $lockAttempts);
+        }
+
+        if (!$lockAcquired) {
+            // Another worker is processing this host, skip
+            continue;
+        }
+
+        // Set lock expiration to prevent stale locks
+        $lockAcquireTime = time();
+
+        try {
+            // Use LMPOP to atomically get multiple items from this host's queue
+            // LMPOP returns [key => [item1, item2, ...]] or false if empty
+            $batchItems = [];
+            if (USE_REDIS === true) {
+                try {
+                    // LMPOP key [key] COUNT n LEFT - pop n items from left of list
+                    $result = $redis->lmpop(['queuein:'.$hostIp], 'LEFT', $maxItemsPerHost);
+                    if ($result !== false && isset($result['queuein:'.$hostIp])) {
+                        foreach ($result['queuein:'.$hostIp] as $queueJson) {
+                            $decoded = json_decode($queueJson, true);
+                            if ($decoded !== null) {
+                                $batchItems[] = $decoded;
+                            }
+                        }
+                    }
+                } catch (\Exception $e) {
+                    // Fallback to individual lPop if LMPOP fails (e.g., older Redis)
+                    Worker::safeEcho('LMPOP failed for '.$hostIp.', falling back to lPop: '.$e->getMessage().PHP_EOL);
+                    for ($i = 0; $i < $maxItemsPerHost; $i++) {
+                        $queue = $redis->lPop('queuein:'.$hostIp);
+                        if ($queue === false) {
+                            break;
+                        }
+                        $decoded = json_decode($queue, true);
+                        if ($decoded !== null) {
+                            $batchItems[] = $decoded;
+                        }
+                    }
+                }
+            } else {
+                // Memcached fallback: use getAndFlush pattern
+                $queue = $memcache->get('queuein'.$hostIp);
+                if (is_array($queue)) {
+                    $batchItems = array_slice($queue, 0, $maxItemsPerHost);
+                    $remaining = array_slice($queue, $maxItemsPerHost);
+                    if (count($remaining) > 0) {
+                        $memcache->set('queuein'.$hostIp, $remaining);
+                    } else {
+                        $memcache->set('queuein'.$hostIp, []);
+                    }
+                }
+            }
+
+            if (count($batchItems) == 0) {
+                $global->$lockKey = 0;  // Release lock
+                continue;
+            }
+
+            $processedAny = true;
+            Worker::safeEcho('Processing '.count($batchItems).' items from host '.$hostIp.PHP_EOL);
+
+            foreach ($batchItems as $queue) {
         $module = $queue['post']['module'] ?? 'vps';
         if ($module == 'vps') {
             $tblname ='VPS';
@@ -481,7 +535,15 @@ function memcached_queue_task($args)
                 Worker::safeEcho('Dont know how to handel this Queued Entry: '.json_encode($queue, true).PHP_EOL);
                 break;
         }
-    }
+        } // end foreach ($batchItems as $queue)
+        } catch (\Exception $e) {
+            Worker::safeEcho('Exception processing host '.$hostIp.': '.$e->getMessage().PHP_EOL);
+        } finally {
+            // Always release the per-host lock
+            $global->$lockKey = 0;
+        }
+    } // end foreach ($queuehosts as $hostIp)
+
     // Flush all buffered InfluxDB writes once after all queues have been processed.
     if (INFLUX_V2 === true) {
         try {
@@ -490,7 +552,6 @@ function memcached_queue_task($args)
             Worker::safeEcho('InfluxDB got Exception '.$e->getMessage().' while flushing writes'.PHP_EOL);
         }
     }
-    $global->queuein = 0;
     //Worker::safeEcho('memcached_queue_task finished processing '.count($processQueue).' queues after '.(time() - $start).' seconds'.PHP_EOL);
     return;
 }
