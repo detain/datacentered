@@ -100,7 +100,7 @@ function memcached_queue_task($args)
     // Per-host locking: process one host at a time per worker
     // Use LMPOP with COUNT for atomic batch retrieval (Redis 7.0+)
     // Limit items per host per run to reduce lock contention
-    $maxItemsPerHost = 50;  // Batch size per host per invocation
+    $maxItemsPerHost = 300;  // Batch size per host per invocation
     $lockTimeout = 30;      // Max seconds to hold lock before releasing
     $processedAny = false;
 
@@ -131,8 +131,6 @@ function memcached_queue_task($args)
         }
 
         // Set lock expiration to prevent stale locks
-        $lockAcquireTime = time();
-
         try {
             // Use atomic batch retrieval from this host's queue
             // Since PHP Redis doesn't have lmpop, we use individual lPop calls with a limit
@@ -451,11 +449,30 @@ function memcached_queue_task($args)
                 }
                 $cols = [];
                 $values = [];
+                // Minimum change threshold to avoid InnoDB Cluster certification
+                // conflicts from trivial updates (e.g., load changing by 0.01)
+                $minChangeThreshold = [
+                    'load' => 0.5,
+                    'cpu_usage' => 0.5,
+                    'ram_free' => 1048576,  // 1MB minimum change
+                    'cpu_iowait' => 0.1,
+                    'cpu_steal' => 0.1,
+                ];
                 foreach ($fields as $field) {
-                    if (isset($servers[$field]) && isset($server[$prefix.'_'.$field]) && $server[$prefix.'_'.$field] != $servers[$field]) {
+                    if (isset($servers[$field]) && isset($server[$prefix.'_'.$field])) {
+                        $oldVal = $server[$prefix.'_'.$field];
+                        $newVal = $servers[$field];
+                        // Skip if value hasn't changed significantly
+                        if ($oldVal == $newVal) {
+                            continue;
+                        }
+                        // Apply threshold check if defined
+                        if (isset($minChangeThreshold[$field]) && abs($newVal - $oldVal) < $minChangeThreshold[$field]) {
+                            continue;
+                        }
                         $cols[] = $prefix.'_'.$field;
-                        $values[$prefix.'_'.$field] = $servers[$field];
-                        $server[$prefix.'_'.$field] = $servers[$field];
+                        $values[$prefix.'_'.$field] = $newVal;
+                        $server[$prefix.'_'.$field] = $newVal;
                     }
                 }
                 // Host saturation / capacity metrics reported by `provirted cron
@@ -495,13 +512,22 @@ function memcached_queue_task($args)
                         continue;
                     }
                     $col = $prefix.'_'.$column;
-                    if (!array_key_exists($col, $server) || $server[$col] === null || $server[$col] != $value) {
-                        $cols[] = $col;
-                        $values[$col] = $value;
-                        $server[$col] = $value;
+                    // Only update if value actually changed and meets threshold
+                    $oldVal = array_key_exists($col, $server) ? $server[$col] : null;
+                    if ($oldVal !== null && $oldVal == $value) {
+                        continue;  // No change
                     }
+                    if ($oldVal !== null && isset($minChangeThreshold[$column]) && abs($value - $oldVal) < $minChangeThreshold[$column]) {
+                        continue;  // Below threshold
+                    }
+                    $cols[] = $col;
+                    $values[$col] = $value;
+                    $server[$col] = $value;
                 }
                 if (count($cols) > 0) {
+                    // Add small random delay before DB update to reduce InnoDB Cluster
+                    // certification contention when multiple workers hit same row
+                    usleep(rand(5000, 20000));  // 5-20ms random delay
                     $dbRetry(function () use (&$worker_db, $prefix, $server, $cols, $values) {
                         $worker_db->update($prefix.'_masters')
                             ->cols($cols)
