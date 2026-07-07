@@ -134,33 +134,18 @@ function memcached_queue_task($args)
         $lockAcquireTime = time();
 
         try {
-            // Use LMPOP to atomically get multiple items from this host's queue
-            // LMPOP returns [key => [item1, item2, ...]] or false if empty
+            // Use atomic batch retrieval from this host's queue
+            // Since PHP Redis doesn't have lmpop, we use individual lPop calls with a limit
             $batchItems = [];
             if (USE_REDIS === true) {
-                try {
-                    // LMPOP key [key] COUNT n LEFT - pop n items from left of list
-                    $result = $redis->lmpop(['queuein:'.$hostIp], 'LEFT', $maxItemsPerHost);
-                    if ($result !== false && isset($result['queuein:'.$hostIp])) {
-                        foreach ($result['queuein:'.$hostIp] as $queueJson) {
-                            $decoded = json_decode($queueJson, true);
-                            if ($decoded !== null) {
-                                $batchItems[] = $decoded;
-                            }
-                        }
+                for ($i = 0; $i < $maxItemsPerHost; $i++) {
+                    $queue = $redis->lPop('queuein:'.$hostIp);
+                    if ($queue === false) {
+                        break;
                     }
-                } catch (\Exception $e) {
-                    // Fallback to individual lPop if LMPOP fails (e.g., older Redis)
-                    Worker::safeEcho('LMPOP failed for '.$hostIp.', falling back to lPop: '.$e->getMessage().PHP_EOL);
-                    for ($i = 0; $i < $maxItemsPerHost; $i++) {
-                        $queue = $redis->lPop('queuein:'.$hostIp);
-                        if ($queue === false) {
-                            break;
-                        }
-                        $decoded = json_decode($queue, true);
-                        if ($decoded !== null) {
-                            $batchItems[] = $decoded;
-                        }
+                    $decoded = json_decode($queue, true);
+                    if ($decoded !== null) {
+                        $batchItems[] = $decoded;
                     }
                 }
             } else {
