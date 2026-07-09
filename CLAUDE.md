@@ -77,7 +77,7 @@ Each file exports one `function filename($args)`. Auto-loaded from `Tasks/` on `
 - `queue_queue_task` — pulls `queue_log` table entries → Memcached queues per host
 - `processing_queue_task` — runs `process_payment` for billing queue entries
 - `vps_queue_task` / `vps_get_list` / `vps_update_info` — VPS lifecycle ops via `vps_queue_handler`
-- `async_hyperv_get_list` — async SOAP `GetVMList` via `clue/soap-react` + `React\Http\Browser`
+- `async_hyperv_get_list` — SOAP `GetVMList` via native ext-soap `\SoapClient` (WSDL mode, `SOAP_1_2`); call outcomes (duration/success/code/msg) are recorded to InfluxDB v2 via the `$influx_v2_database` global (same client used by `bandwidth.php`) through the local `async_hyperv_report_metric()` helper — this replaced the removed `workerman/statistics`/`StatisticClient::report()` mechanism
 - `sync_hyperv_queue` / `async_hyperv_queue_runner` — HyperV queue sync with CAS
 - `hyperv_cleanupresources` — SOAP `CleanUpResources` call via `SoapClient`
 - `get_map` — returns VPS IP/VNC/slice map for a host
@@ -99,12 +99,16 @@ Each file exports one `function filename($args)`. Auto-loaded from `Tasks/` on `
 - `Events.php` — GatewayWorker business logic (onConnect, onMessage, onClose); `dispatchTask($type, $args, $onResult, $onError)` wraps async dispatch with `onClose`/`onError` handling; `createDbConnection()` builds a retrying Workerman MySQL connection
 
 ## Dependencies (`composer.json`)
-- `workerman/workerman ^4.1`, `gateway-worker`, `globaldata`, `channel`, `global-timer`, `mysql`, `statistics`, `gatewayclient`
-- `react/child-process`, `react/http 1.9.0`, `react/mysql`, `react/event-loop`
-- `clue/soap-react` — async HyperV SOAP (`Tasks/async_hyperv_get_list.php`)
-- `influxdata/influxdb-client-php` — InfluxDB v2 metrics (`Tasks/bandwidth.php`)
-- `cache/memcached-adapter` — Memcached queue/map storage
-- `corneltek/cliframework`, `guzzlehttp/guzzle >=6.0`
+- Version constraints are now caret-/branch-pinned to what `composer.lock` resolved (was mostly floating `*`); pure pins, no version drift
+- `workerman/workerman v5.2.2`, `gateway-worker` (dev-master), `globaldata` (dev-master), `channel` (dev-master), `mysql` (dev-master), `gatewayclient` (dev-master)
+- `workerman/coroutine ^1.1.5` — now an explicitly-declared direct dependency (was previously an undeclared transitive dep of `workerman/workerman`); still functionally dormant/unused at runtime
+- `react/child-process v0.6.7`, `react/http v1.11.0`, `react/event-loop v1.6.0`
+- `react/mysql v0.6.0` — dead/unused dependency; runtime MySQL uses `workerman/mysql`'s `\Workerman\MySQL\Connection` (auto-reconnects on 2006/2013, persists `utf8mb4` charset)
+- `react/promise` (require-dev) — constrained to `^3.0` (resolves cleanly at 3.x-dev; the interim `^3.0 || ^2.11` range was only needed while `clue/soap-react` forced v2.x, which has since been removed)
+- HyperV SOAP uses PHP's native ext-soap `\SoapClient` (`Tasks/async_hyperv_get_list.php`, `Tasks/hyperv_cleanupresources.php`); the `clue/soap-react` dependency was dead/unused and has been removed
+- `influxdata/influxdb-client-php` (dev-master) — InfluxDB v2 metrics (`Tasks/bandwidth.php`, and HyperV SOAP call metrics in `Tasks/async_hyperv_get_list.php`)
+- `cache/memcached-adapter 1.2.0` — Memcached queue/map storage
+- `corneltek/cliframework 3.0.x-dev`, `guzzlehttp/guzzle 7.13.1`
 
 ## Code Style
 - PSR-2 + PHP 7.4 migrations (`@PSR2`, `@PHP74Migration`) — see `.php-cs-fixer.dist.php`

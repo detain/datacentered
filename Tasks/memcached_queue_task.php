@@ -487,18 +487,22 @@ function memcached_queue_task($args)
                 // is absent/NULL/changed (cannot gate on its presence the way the
                 // mystage handler does, or live metrics would never persist).
                 $metricFields = [
-                    'ram_free'         => ['mem_free', 'ramfree'],
-                    'cpu_usage'        => ['cpu_usage'],
-                    'cpu_iowait'       => ['cpu_iowait'],
-                    'cpu_steal'        => ['cpu_steal'],
-                    'cpu_steal_norm'   => ['cpu_steal_norm'],
-                    'run_queue_norm'   => ['run_queue_norm'],
-                    'cpu_capacity'     => ['cpu_capacity'],
-                    'cpu_capacity_max' => ['cpu_capacity_max'],
-                    'io_pressure'      => ['io_pressure'],
-                    'cpu_pressure'     => ['cpu_pressure'],
-                    'mem_pressure'     => ['mem_pressure'],
-                    'total_pressure'   => ['total_pressure'],
+                    'ram_free'            => ['mem_free', 'ramfree'],
+                    'cpu_usage'           => ['cpu_usage'],
+                    'cpu_iowait'          => ['cpu_iowait'],
+                    'cpu_steal'           => ['cpu_steal'],
+                    'cpu_steal_norm'      => ['cpu_steal_norm'],
+                    'run_queue_norm'      => ['run_queue_norm'],
+                    'cpu_capacity'        => ['cpu_capacity'],
+                    'cpu_capacity_max'    => ['cpu_capacity_max'],
+                    'io_pressure'         => ['io_pressure'],
+                    'cpu_pressure'        => ['cpu_pressure'],
+                    'mem_pressure'        => ['mem_pressure'],
+                    'total_pressure'      => ['total_pressure'],
+                    'zfs_arc_size'        => ['zfs_arc_size'],
+                    'zfs_arc_min'         => ['zfs_arc_min'],
+                    'zfs_arc_mac'         => ['zfs_arc_mac'],
+                    'zfs_arc_reclaimable' => ['zfs_arc_reclaimable'],
                 ];
                 foreach ($metricFields as $column => $sourceKeys) {
                     $value = null;

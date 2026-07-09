@@ -45,7 +45,6 @@ Lots more just didnt feel like typing more right now
 * [Workerman Wiki Documentation](http://wiki.workerman.net/Workerman_documentation)
 * [Workerman Manual](http://doc.workerman.net/) [Alternate Workerman Manual](http://doc3.workerman.net/)
 * [react / child-process](http://doc3.workerman.net/component/reactchild-process.html)
-* [GitHub clue/php-soap-react: Simple, async SOAP webservice client, built on top of ReactPHP](https://github.com/clue/php-soap-react)
 * [GitHub clue/php-buzz-react: Simple, async PSR-7 HTTP client for concurrently processing any number of HTTP requests, built on top of ReactPHP](https://github.com/clue/php-buzz-react)
 
 

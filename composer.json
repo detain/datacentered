@@ -18,31 +18,29 @@
 	"require": {
 		"php": ">=8.2",
 		"ext-curl": "*",
-		"corneltek/cliframework": "*",
-		"clue/soap-react": "*",
-		"roave/security-advisories": "*",
-		"react/child-process": "*@stable",
-		"react/event-loop": "*@stable",
-		"react/http": "*@stable",
-		"react/mysql": "*@stable",
-		"guzzlehttp/guzzle": ">=6.0@stable",
-		"danielstjules/php-pretty-datetime": "*",
-		"influxdata/influxdb-client-php": "*",
-		"cache/memcached-adapter": "*",
-		"workerman/channel": "*",
-		"workerman/gatewayclient": "*",
-		"workerman/gateway-worker" : "*",
-		"workerman/globaldata": "*",
-		"workerman/global-timer": "*",
-		"workerman/mysql": "*",
-		"workerman/workerman": "*@stable",
-		"workerman/statistics": "*"
+		"corneltek/cliframework": "^3.0",
+		"roave/security-advisories": "dev-latest",
+		"react/child-process": "^0.6.7@stable",
+		"react/event-loop": "^1.6.0@stable",
+		"react/http": "^1.11.0@stable",
+		"react/mysql": "^0.6.0@stable",
+		"guzzlehttp/guzzle": "^7.13.1@stable",
+		"danielstjules/php-pretty-datetime": "dev-master",
+		"influxdata/influxdb-client-php": "dev-master",
+		"cache/memcached-adapter": "^1.2.0",
+		"workerman/channel": "dev-master",
+		"workerman/coroutine": "^1.1.5",
+		"workerman/gatewayclient": "dev-master",
+		"workerman/gateway-worker" : "dev-master",
+		"workerman/globaldata": "dev-master",
+		"workerman/mysql": "dev-master",
+		"workerman/workerman": "^5.2.2@stable"
 	},
 	"require-dev": {
-		"react/promise": "*",
-		"phpunit/phpunit": "*",
-		"vlucas/phpdotenv": "*",
-		"satooshi/php-coveralls": "*",
+		"react/promise": "^3.0",
+		"phpunit/phpunit": "^12.5",
+		"vlucas/phpdotenv": "dev-master",
+		"satooshi/php-coveralls": "^0.6.1",
 		"codacy/coverage": "dev-master"
 	},
 	"suggest": {
@@ -58,32 +56,6 @@
 			"php-http/discovery": true
 		}
 	},
-	"repositories": [
-		{
-			"type": "package",
-			"package": {
-				"name": "workerman/global-timer",
-				"version": "master",
-				"source": {
-					"url": "https://github.com/walkor/global-timer.git",
-					"type": "git",
-					"reference": "master"
-				}
-			}
-		},
-		{
-			"type": "package",
-			"package": {
-				"name": "workerman/statistics",
-				"version": "master",
-				"source": {
-					"url": "https://github.com/detain/workerman-statistics.git",
-					"type": "git",
-					"reference": "master"
-				}
-			}
-		}
-	],
 	"autoload": {
 		"psr-4": {
 			"MyAdmin\\VpsHost\\": "src/"

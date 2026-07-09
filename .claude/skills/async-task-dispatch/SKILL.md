@@ -1,6 +1,6 @@
 ---
 name: async-task-dispatch
-description: Dispatches work to the TaskWorker at `Text://127.0.0.1:2208` using `AsyncTcpConnection`, sending JSON `{type: 'function_name', args: {}}`. Also covers periodic task scheduling via `GlobalTimer::add()` in `onWorkerStart`. Use when user says 'dispatch task', 'run async', 'call task worker', 'schedule periodic', 'async dispatch', or needs to call a `Tasks/*.php` function from a Worker context. Do NOT use for direct synchronous function calls within the same process.
+description: Dispatches work to the TaskWorker at `Text://127.0.0.1:2208` using `AsyncTcpConnection`, sending JSON `{type: 'function_name', args: {}}`. Also covers periodic task scheduling via core `Timer::add()` (from `Workerman\Timer`) in `onWorkerStart`. Use when user says 'dispatch task', 'run async', 'call task worker', 'schedule periodic', 'async dispatch', or needs to call a `Tasks/*.php` function from a Worker context. Do NOT use for direct synchronous function calls within the same process.
 ---
 # async-task-dispatch
 
@@ -79,17 +79,18 @@ Verify: The Task file releases the lock (`$global->$var = 0;`) in all code paths
 
 ### Step 4 — Register a periodic timer (if scheduling recurring work)
 
-In `Applications/Chat/Events.php::onWorkerStart` (or equivalent), inside the `$worker->id == 0` block:
+In `Applications/Chat/Events.php::onWorkerStart` (or equivalent), inside the `$worker->id == 0` block. Use core Workerman `Timer::add()` — the `$worker->id == 0` guard is the real mechanism that makes each timer fire exactly once across the 5 BusinessWorker processes (the removed `workerman/global-timer` was a thin wrapper around `Timer::add()` and provided no cross-process semantics of its own):
 
 ```php
-use \GatewayWorker\Lib\GlobalTimer;
+use Workerman\Timer;
 
 public static function onWorkerStart($worker)
 {
     if ($worker->id == 0) {
         $args = [];
+        // Optional hostname gate: only schedule on the host that owns this work
         if (gethostname() == 'myadmin1.interserver.net') {
-            GlobalTimer::add(30, ['Events', 'my_queue_timer'], $args);
+            Timer::add(30, ['Events', 'my_queue_timer'], $args);
             // First invocation on startup (optional):
             Events::my_queue_timer();
         }
@@ -125,9 +126,9 @@ Verify: No parse errors in the task file; function appears in loaded `$functions
 
 **Actions taken:**
 1. Create `Tasks/dns_queue_task.php` with `function dns_queue_task($args) { ... return $output; }`
-2. Add timer in `Applications/Chat/Events.php::onWorkerStart` under `$worker->id == 0`:
+2. Add timer in `Applications/Chat/Events.php::onWorkerStart` under `$worker->id == 0` (with `use Workerman\Timer;`):
    ```php
-   GlobalTimer::add(60, ['Events', 'dns_queue_timer'], []);
+   Timer::add(60, ['Events', 'dns_queue_timer'], []);
    ```
 3. Add `Events::dns_queue_timer()` static method that dispatches via `AsyncTcpConnection`
 4. Restart: `php start.php restart`
