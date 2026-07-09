@@ -166,7 +166,7 @@ function memcached_queue_task($args)
             }
 
             $processedAny = true;
-            Worker::safeEcho('Processing '.count($batchItems).' items from host '.$hostIp.PHP_EOL);
+//            Worker::safeEcho('Processing '.count($batchItems).' items from host '.$hostIp.PHP_EOL);
 
             foreach ($batchItems as $queue) {
         $module = $queue['post']['module'] ?? 'vps';
