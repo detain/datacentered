@@ -3566,6 +3566,23 @@ class Events
     }
 
     /**
+     * Mark the processing queue lock as still alive.
+     *
+     * The lock holds the acquisition time and processing_queue_timer() treats a
+     * lock older than 900s as abandoned. Long-but-healthy chains call this to
+     * push that deadline forward so their lock is not force-reset mid-run.
+     */
+    private static function refreshProcessingLock()
+    {
+        global $global;
+        $var = 'processing_queue';
+        // Only refresh a lock we actually hold; never resurrect a released one.
+        if ((int)$global->$var !== 0) {
+            $global->$var = time();
+        }
+    }
+
+    /**
      * Release the processing queue lock and record last-run time.
      */
     private static function releaseProcessingLock()
@@ -3643,8 +3660,34 @@ class Events
     private static function dbUpdateWithRetry($status, $historyId, $onSuccess, $try = 0, $maxTries = 30)
     {
         $try++;
+        /*
+         * queue_log.history_timestamp is `DEFAULT CURRENT_TIMESTAMP` with no
+         * ON UPDATE clause, so it records when the row was enqueued and is never
+         * touched again. processing_queue_reaper() measures "stuck in
+         * processing" from that column -- so without stamping it here, any row
+         * that waited in pending longer than the reaper's 15 minute threshold
+         * (a backlog, a restart, lock contention) is eligible for reaping the
+         * instant it enters processing. The reaper flips it back to pending
+         * while the task is still in flight and the timer dispatches a second
+         * concurrent process_payment() for the same invoice.
+         *
+         * Stamping on every transition makes the column mean "time of the last
+         * state change", which is what the reaper needs and what the column's
+         * own comment already claims it holds.
+         *
+         * Written as raw SQL rather than through the query builder so NOW() is
+         * evaluated server-side, matching the reaper's own NOW() comparisons --
+         * a PHP-side timestamp would silently drift if PHP and MySQL disagree
+         * on timezone. $status is interpolated, so it is whitelisted first.
+         */
+        if (!in_array($status, ['pending', 'processing', 'completed', 'failed'], true)) {
+            Worker::safeEcho("dbUpdateWithRetry: refusing unknown status '{$status}' for history_id={$historyId}, releasing lock\n");
+            self::releaseProcessingLock();
+            return;
+        }
         try {
-            self::$db->update('queue_log')->cols(['history_new_value' => $status])->where('history_id='.$historyId)->query();
+            self::$db->query("UPDATE queue_log SET history_new_value='".$status."', history_timestamp=NOW()"
+                ." WHERE history_id=".intval($historyId));
             $onSuccess();
         } catch (\PDOException $e) {
             Worker::safeEcho('['.$try.'/'.$maxTries.'] Got PDO Exception #'.$e->getCode().': "'.$e->getMessage()."\"\n");
@@ -3662,6 +3705,21 @@ class Events
 
     public static function process_results($results)
     {
+        /*
+         * Refresh the lock before each result. The 900s stale-lock reset in
+         * processing_queue_timer() is not tied to any bound on how long this
+         * chain can run -- dispatchTask() has no timeout, and each result costs
+         * a task round trip plus up to 30 seconds of dbUpdateWithRetry backoff,
+         * so a large batch legitimately exceeds 900s. Without this heartbeat the
+         * timer steals the lock from a chain that is still working and starts a
+         * second one alongside it.
+         *
+         * Heartbeating keeps the stale reset meaningful: it now only fires for a
+         * chain that has genuinely stopped making progress, rather than for one
+         * that is merely slow. (boardctl solves the same problem by pinning its
+         * timeout above a known runner cap; there is no equivalent cap here.)
+         */
+        self::refreshProcessingLock();
         $result = array_shift($results);
         self::dbUpdateWithRetry('processing', $result['history_id'], function () use ($result, $results) {
             Worker::safeEcho("payment processing about to spawn task for ".json_encode($result, true)."\n");

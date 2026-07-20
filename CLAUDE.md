@@ -21,6 +21,9 @@ php vendor/bin/php-cs-fixer fix
 
 # Install dependencies
 composer install
+
+# Run unit tests (phpunit.xml.dist)
+php vendor/bin/phpunit
 ```
 
 ## Architecture
@@ -81,11 +84,14 @@ Each file exports one `function filename($args)`. Auto-loaded from `Tasks/` on `
 - `sync_hyperv_queue` / `async_hyperv_queue_runner` — HyperV queue sync with CAS
 - `hyperv_cleanupresources` — SOAP `CleanUpResources` call via `SoapClient`
 - `get_map` — returns VPS IP/VNC/slice map for a host
+- `queue_action` — executes a queued `queue.php` action inside the TaskWorker via a superglobal (`$_POST`/`$_REQUEST`) shim so legacy action handlers run unchanged
+- `chat_message` — persists V1 chat messages (`migrations/2026_07_phase2_chat_messages.sql`)
 - `memcached_queue_task` — processes `cpu_usage`/`bandwidth`/`server_info` queue entries from Memcached/Redis for `vps` and `quickservers`; InnoDB cluster retry with exponential backoff; writes CPU + bandwidth metrics to InfluxDB v2
 - `boardctl_task` — runs a single queued boardctl job via `boardctl_run_job($historyId)`; receives full `queue_log` row; sets `App::session()->account_id` from `history_owner`; 2hr timeout (`set_time_limit(7500)`); on error calls `boardctl_append_output`/`boardctl_set_status`; dispatched by `boardctl_queue_timer` (15s) which parses `history_type` as `"<action>:<assetId>"`, holds per-asset CAS lock (`boardctl_asset_<id>`, stale after 7800s), and allows concurrent multi-asset execution
 
 ## Web Endpoints (`Web/`)
 - `queue.php` — VPS/QS queue dispatch; actions: `map`, `get_queue`, `get_new_vps`, `queue`
+- `trigger_payment.php` — token-authenticated endpoint that triggers `process_payment` for a billing queue entry (token auth: `migrations/2026_07_phase2_token_auth.sql`, `docs/AUTH_DESIGN.md`)
 - `logger.php` — ZoneMTA log ingestion → `mail_logentry` / `mail_messagestore` / `mail_senderdelivered`
 - `prober.php` — JSON system stats (CPU, RAM, network, disk) via `SystemStats`/`NetworkStats`/`StorageStats`
 - `systemstats_data.php` — live metrics for `Web/systemstats.html` dashboard (jQuery jqplot graphs)
@@ -96,7 +102,8 @@ Each file exports one `function filename($args)`. Auto-loaded from `Tasks/` on `
 ## Process & Utility Classes (`Applications/Chat/`)
 - `Process.php` — PTY child process wrapper (`proc_open` + `TcpConnection` streams → `Gateway::sendToClient`)
 - `stdObject.php` — callable-property bag (magic `__call` dispatch)
-- `Events.php` — GatewayWorker business logic (onConnect, onMessage, onClose); `dispatchTask($type, $args, $onResult, $onError)` wraps async dispatch with `onClose`/`onError` handling; `createDbConnection()` builds a retrying Workerman MySQL connection
+- `FeatureFlags.php` — feature-flag gating for V1 protocol rollout (see `docs/FEATURE_FLAGS.md`)
+- `Events.php` — GatewayWorker business logic (onConnect, onMessage, onClose); `dispatchTask($type, $args, $onResult, $onError)` wraps async dispatch with `onClose`/`onError` handling; `createDbConnection()` builds a retrying Workerman MySQL connection; V1 client protocol handlers (auth/hello, chat, cmd, pty, queue, config_vps, admin, telemetry) are documented in `docs/PROTOCOL_V1.md`
 
 ## Dependencies (`composer.json`)
 - Version constraints are now caret-/branch-pinned to what `composer.lock` resolved (was mostly floating `*`); pure pins, no version drift
@@ -122,7 +129,6 @@ Each file exports one `function filename($args)`. Auto-loaded from `Tasks/` on `
 - `experiments/swoole/install.sh` / `install_swoole.sh` — Swoole build scripts
 - `experiments/swoole/chat/demo2/` — full Swoole WebSocket chat (CMD dispatch, Service locator, DB layer)
 
-<!-- caliber:managed:pre-commit -->
 ## Before Committing
 
 Run `caliber refresh` before creating git commits to keep docs in sync with code changes.
@@ -131,28 +137,18 @@ After it completes, stage any modified doc files before committing:
 ```bash
 caliber refresh && git add CLAUDE.md .claude/ .cursor/ .github/copilot-instructions.md AGENTS.md CALIBER_LEARNINGS.md 2>/dev/null
 ```
-<!-- /caliber:managed:pre-commit -->
-
-<!-- caliber:managed:learnings -->
 ## Session Learnings
 
 Read `CALIBER_LEARNINGS.md` for patterns and anti-patterns learned from previous sessions.
 These are auto-extracted from real tool usage — treat them as project-specific rules.
-<!-- /caliber:managed:learnings -->
-
-<!-- caliber:managed:model-config -->
 ## Model Configuration
 
 Recommended default: `claude-sonnet-4-6` with high effort (stronger reasoning; higher cost and latency than smaller models).
 Smaller/faster models trade quality for speed and cost — pick what fits the task.
 Pin your choice (`/model` in Claude Code, or `CALIBER_MODEL` when using Caliber with an API provider) so upstream default changes do not silently change behavior.
 
-<!-- /caliber:managed:model-config -->
-
-<!-- caliber:managed:sync -->
 ## Context Sync
 
 This project uses [Caliber](https://github.com/caliber-ai-org/ai-setup) to keep AI agent configs in sync across Claude Code, Cursor, Copilot, and Codex.
 Configs update automatically before each commit via `/home/my/.nvm/versions/node/v24.15.0/bin/caliber refresh`.
 If the pre-commit hook is not set up, run `/setup-caliber` to configure everything automatically.
-<!-- /caliber:managed:sync -->

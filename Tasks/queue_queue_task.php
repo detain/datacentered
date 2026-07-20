@@ -21,8 +21,15 @@ function queue_queue_task($args)
     $hosts = 0;
     $memcached_start = time();
     //Worker::safeEcho('Task handler Started queue_queue_task'.PHP_EOL);
+    /*
+     * Deliberately NOT `$db2 = clone $db`. MyDb\Generic defines no __clone(), so
+     * a clone is a shallow copy that shares the original's mysqli handle while
+     * keeping its own cursor state. Worse, when the clone hits the reconnect
+     * path in query() it closes that shared handle -- leaving the original
+     * pointing at a closed connection it will never reopen. The rows are
+     * buffered below instead, so one handle is enough.
+     */
     $db = App::db();
-    $db2 = clone $db;
     $masters = [];
     $output = $memcache->get('queue');
     if (!is_array($output) || !array_key_exists('queue', $output)) {
@@ -65,14 +72,20 @@ function queue_queue_task($args)
         */
         $db->query("select {$table}.*, hl1.* from {$table}, queue_log as hl1 left join queue_log as hl2 on hl2.history_type=hl1.history_id and hl2.history_section='{$table}queuedone' where hl1.history_section='{$table}queue' and hl1.history_type={$prefix}_id and hl2.history_id is null and {$prefix}_type != 54 and {$prefix}_id=484", __LINE__, __FILE__);
         if ($db->num_rows() > 0) {
+            // Buffer before the loop: the master lookup below reuses $db and
+            // would otherwise reset the cursor this loop is walking.
+            $queueRows = [];
             while ($db->next_record(MYSQL_ASSOC)) {
-                if (!array_key_exists($db->Record[$prefix.'_server'], $masters[$module])) {
-                    $db2->query("select * from {$prefix}_masters left join {$prefix}_master_details using ({$prefix}_id) where {$prefix}_id={$db->Record[$prefix.'_server']}");
-                    $db2->next_record(MYSQL_ASSOC);
-                    $masters[$module][$db->Record[$prefix.'_server']] = $db2->Record;
+                $queueRows[] = $db->Record;
+            }
+            foreach ($queueRows as $queueRow) {
+                if (!array_key_exists($queueRow[$prefix.'_server'], $masters[$module])) {
+                    $db->query("select * from {$prefix}_masters left join {$prefix}_master_details using ({$prefix}_id) where {$prefix}_id=".intval($queueRow[$prefix.'_server']), __LINE__, __FILE__);
+                    $db->next_record(MYSQL_ASSOC);
+                    $masters[$module][$queueRow[$prefix.'_server']] = $db->Record;
                 }
-                $hostIp = $masters[$module][$db->Record[$prefix.'_server']][$prefix.'_ip'];
-                $queueCommand = vps_queue_handler($masters[$module][$db->Record[$prefix.'_server']], 'get_queue', $db->Record);
+                $hostIp = $masters[$module][$queueRow[$prefix.'_server']][$prefix.'_ip'];
+                $queueCommand = vps_queue_handler($masters[$module][$queueRow[$prefix.'_server']], 'get_queue', $queueRow);
                 $loopCount = 0;
                 do {
                     $response = $memcache->get('queue', function ($memcache, $key, &$value) {
@@ -96,7 +109,10 @@ function queue_queue_task($args)
                         Worker::safeEcho('Max Loops Reached Trying to Get queue CAS set '.PHP_EOL);
                         break;
                     }
-                } while (!$memcache->cas($response['cas'], 'queue', $queue));
+                    // $cas is re-read at the top of each attempt; use that rather
+                    // than $response['cas'] so a retry compares against the value
+                    // it actually just read.
+                } while (!$memcache->cas($cas, 'queue', $output));
                 $queued++;
             }
         }
