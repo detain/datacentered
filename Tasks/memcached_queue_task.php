@@ -459,7 +459,7 @@ function memcached_queue_task($args)
                     'cpu_steal' => 0.1,
                 ];
                 foreach ($fields as $field) {
-                    if (isset($servers[$field]) && isset($server[$prefix.'_'.$field])) {
+                    if (isset($servers[$field]) && array_key_exists($prefix.'_'.$field, $server)) {
                         $oldVal = $server[$prefix.'_'.$field];
                         $newVal = $servers[$field];
                         // Skip if value hasn't changed significantly
@@ -532,13 +532,50 @@ function memcached_queue_task($args)
                     // Add small random delay before DB update to reduce InnoDB Cluster
                     // certification contention when multiple workers hit same row
                     usleep(rand(5000, 20000));  // 5-20ms random delay
-                    $dbRetry(function () use (&$worker_db, $prefix, $server, $cols, $values) {
-                        $worker_db->update($prefix.'_masters')
+                    $affected = 0;
+                    $dbRetry(function () use (&$worker_db, &$affected, $prefix, $server, $cols, $values) {
+                        $affected = $worker_db->update($prefix.'_masters')
                             ->cols($cols)
                             ->where($prefix.'_id='.$server[$prefix.'_id'])
                             ->bindValues($values)
                             ->query();
                     });
+                    // Self-heal a stale IP->row mapping. The <module>_masters:<ip>
+                    // cache below is re-set from memory with a fresh 3600s TTL on
+                    // every server_info, so it never actually expires while metrics
+                    // keep flowing. If a host is deleted and recreated for the same
+                    // IP it gets a new <prefix>_id, but the cache keeps the dead id
+                    // forever and every UPDATE ... WHERE <prefix>_id=<dead id>
+                    // silently matches 0 rows -- so the live row never receives
+                    // hdfree/hdsize/etc. We only reach this block with real field
+                    // changes to apply, so 0 affected rows means the cached id is
+                    // stale: drop it, reload the current row by IP and re-apply the
+                    // same changes to the correct id.
+                    if ((int)$affected === 0) {
+                        Worker::safeEcho('server_info: cached '.$module.' row for ip '.$queue['ip'].' (id '.$server[$prefix.'_id'].') matched 0 rows; reloading by IP'.PHP_EOL);
+                        $fresh = false;
+                        $dbRetry(function () use (&$fresh, &$worker_db, $prefix, $queue) {
+                            $fresh = $worker_db->select($prefix.'_id,'.$prefix.'_name,'.$prefix.'_hdsize,'.$prefix.'_iowait,'.$prefix.'_cpu_mhz,'.$prefix.'_hdfree,'.$prefix.'_load,'.$prefix.'_bits,'.$prefix.'_ram,'.$prefix.'_cpu_model,'.$prefix.'_kernel,'.$prefix.'_cores,'.$prefix.'_raid_status,'.$prefix.'_raid_building,'.$prefix.'_mounts,'.$prefix.'_drive_type')
+                                ->from($prefix.'_masters')
+                                ->where($prefix.'_ip = :ip')
+                                ->bindValues(['ip' => $queue['ip']])
+                                ->row();
+                        });
+                        if (is_array($fresh) && (int)$fresh[$prefix.'_id'] !== (int)$server[$prefix.'_id']) {
+                            $freshId = (int)$fresh[$prefix.'_id'];
+                            $dbRetry(function () use (&$worker_db, $prefix, $freshId, $cols, $values) {
+                                $worker_db->update($prefix.'_masters')
+                                    ->cols($cols)
+                                    ->where($prefix.'_id='.$freshId)
+                                    ->bindValues($values)
+                                    ->query();
+                            });
+                            foreach ($values as $col => $val) {
+                                $fresh[$col] = $val;
+                            }
+                            $server = $fresh;
+                        }
+                    }
                 }
                 if (USE_REDIS === true) {
                     $redis->setEx($module.'_masters:'.$queue['ip'], 3600, json_encode($server));

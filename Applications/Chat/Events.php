@@ -3614,12 +3614,50 @@ class Events
             self::$db = self::createDbConnection();
             if (is_null(self::$db)) return;
         }
+        // boardctl jobs now run as detached processes (scripts/boardctl_runner.php)
+        // that survive a datacentered restart, so we must NOT blindly fail every
+        // 'processing' row -- only those whose runner is genuinely gone. Each live
+        // runner writes /home/my/logs/boardctl/<historyId>.pid; if that pid is
+        // still alive the job is still going, so leave it. Rows with no pidfile or
+        // a dead pid are orphans (pre-detach in-worker jobs, or a runner that died
+        // hard) and get marked failed so they can be re-queued.
+        $logDir = '/home/my/logs/boardctl';
         try {
-            self::$db->query("UPDATE queue_log SET history_new_value='failed',"
-                ." history_old_value=CONCAT(COALESCE(history_old_value,''), '\n[datacentered restarted — job did not survive; marked failed, re-queue to run again]\n')"
-                ." WHERE history_section='boardctl' AND history_new_value='processing'");
+            $rows = self::$db->select('history_id')->from('queue_log')
+                ->where("history_section='boardctl' AND history_new_value='processing'")
+                ->query();
         } catch (\Exception $e) {
             Worker::safeEcho("boardctl_startup_reap DB error: {$e->getMessage()}\n");
+            return;
+        }
+        if (!is_array($rows) || count($rows) === 0) {
+            return;
+        }
+        foreach ($rows as $row) {
+            $historyId = intval($row['history_id']);
+            if ($historyId <= 0) {
+                continue;
+            }
+            $pidFile = $logDir.'/'.$historyId.'.pid';
+            $alive = false;
+            if (is_file($pidFile)) {
+                $pid = intval(trim((string)@file_get_contents($pidFile)));
+                // posix_kill($pid, 0) => true if the process exists and we may signal it.
+                if ($pid > 0 && function_exists('posix_kill') && @posix_kill($pid, 0)) {
+                    $alive = true;
+                }
+            }
+            if ($alive) {
+                Worker::safeEcho("boardctl_startup_reap: history_id={$historyId} runner still alive, leaving it\n");
+                continue;
+            }
+            try {
+                self::$db->query("UPDATE queue_log SET history_new_value='failed',"
+                    ." history_old_value=CONCAT(COALESCE(history_old_value,''), '\n[datacentered restarted — job did not survive; marked failed, re-queue to run again]\n')"
+                    ." WHERE history_id=".$historyId);
+            } catch (\Exception $e) {
+                Worker::safeEcho("boardctl_startup_reap DB error for history_id={$historyId}: {$e->getMessage()}\n");
+            }
         }
     }
 
@@ -4371,8 +4409,26 @@ class Events
                 continue;
             }
             Worker::safeEcho("boardctl spawning task for history_id={$row['history_id']} asset={$assetId} type={$row['history_type']}\n");
-            self::dispatchTask('boardctl_task', $row, function ($task_result) use ($lockVar) {
+            // boardctl_task now only *spawns* a detached runner and returns at
+            // once (the runner owns the CAS lock for the job's lifetime and
+            // releases it on completion). So on a successful spawn we must NOT
+            // release the lock here -- doing so would let a duplicate start. We
+            // only release + mark failed when the spawn itself did not happen.
+            self::dispatchTask('boardctl_task', $row, function ($task_result) use ($row, $lockVar) {
                 global $global;
+                $outer = json_decode((string)$task_result, true);
+                $return = is_array($outer) && array_key_exists('return', $outer) ? $outer['return'] : $task_result;
+                $decoded = is_string($return) ? json_decode($return, true) : $return;
+                if (is_array($decoded) && !empty($decoded['spawned'])) {
+                    // Runner launched; it will release $lockVar when the job ends.
+                    return;
+                }
+                Worker::safeEcho("boardctl: runner did not spawn for history_id={$row['history_id']}, releasing lock\n");
+                try {
+                    self::$db->update('queue_log')->cols(['history_new_value' => 'failed'])->where('history_id='.intval($row['history_id']))->query();
+                } catch (\Throwable $e) {
+                    Worker::safeEcho("boardctl: failed to mark history_id={$row['history_id']} failed: {$e->getMessage()}\n");
+                }
                 $global->$lockVar = 0;
             }, function () use ($row, $lockVar) {
                 global $global;
