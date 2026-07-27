@@ -70,7 +70,7 @@ function queue_queue_task($args)
             }
         }
         */
-        $db->query("select {$table}.*, hl1.* from {$table}, queue_log as hl1 left join queue_log as hl2 on hl2.history_type=hl1.history_id and hl2.history_section='{$table}queuedone' where hl1.history_section='{$table}queue' and hl1.history_type={$prefix}_id and hl2.history_id is null and {$prefix}_type != 54 and {$prefix}_id=484", __LINE__, __FILE__);
+        $db->query("select {$table}.*, hl1.* from {$table}, queue_log as hl1 left join queue_log as hl2 on hl2.history_type=hl1.history_id and hl2.history_section='{$table}queuedone' where hl1.history_section='{$table}queue' and hl1.history_type={$prefix}_id and hl2.history_id is null and {$prefix}_type != 54", __LINE__, __FILE__);
         if ($db->num_rows() > 0) {
             // Buffer before the loop: the master lookup below reuses $db and
             // would otherwise reset the cursor this loop is walking.

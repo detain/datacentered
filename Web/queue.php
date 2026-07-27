@@ -45,7 +45,7 @@ if (isset($_POST['action']) && $_POST['action'] == 'map') {
 } elseif (isset($_POST['action']) && $_POST['action'] == 'get_queue') {
     global $mysql_db;
     $ip = $_SERVER['REMOTE_ADDR'];
-    if (validIp($ip)) {
+    if (filter_var($ip, FILTER_VALIDATE_IP)) {
         if (false !== $vpsMaster = $mysql_db->select('*')->from('vps_masters')->leftJoin('vps_master_details', 'vps_masters.vps_id=vps_master_details.vps_id')->where('vps_ip = :ip')->bindValues(['ip' => $_SERVER['REMOTE_ADDR']])->row()) {
             if (false !== $results = $mysql_db->select('*')->from('queue_log')->leftJoin('vps', 'vps_id=history_type')->where('history_section="vpsqueue" and vps_server=:id')->bindValues(['id' => $vpsMaster['vps_id']])->query()) {
                 function_requirements('vps_queue_handler');
@@ -62,7 +62,7 @@ if (isset($_POST['action']) && $_POST['action'] == 'map') {
 } elseif (isset($_POST['action']) && $_POST['action'] == 'get_new_vps') {
     global $mysql_db;
     $ip = $_SERVER['REMOTE_ADDR'];
-    if (validIp($ip)) {
+    if (filter_var($ip, FILTER_VALIDATE_IP)) {
         if (false !== $vpsMaster = $mysql_db->select('*')->from('vps_masters')->leftJoin('vps_master_details', 'vps_masters.vps_id=vps_master_details.vps_id')->where('vps_ip = :ip')->bindValues(['ip' => $_SERVER['REMOTE_ADDR']])->row()) {
             function_requirements('vps_queue_handler');
             echo vps_queue_handler($vpsMaster, 'get_new_vps');
@@ -75,7 +75,7 @@ if (isset($_POST['action']) && $_POST['action'] == 'map') {
 } elseif (isset($_POST['action']) && $_POST['action'] == 'get_qs_queue') {
     global $mysql_db;
     $ip = $_SERVER['REMOTE_ADDR'];
-    if (validIp($ip)) {
+    if (filter_var($ip, FILTER_VALIDATE_IP)) {
         if (false !== $qsMaster = $mysql_db->select('*')->from('qs_masters')->leftJoin('qs_master_details', 'qs_masters.qs_id=qs_master_details.qs_id')->where('qs_ip = :ip')->bindValues(['ip' => $_SERVER['REMOTE_ADDR']])->row()) {
             if (false !== $results = $mysql_db->select('*')->from('queue_log')->leftJoin('quickservers', 'qs_id=history_type')->where('history_section="quickserversqueue" and qs_server=:id')->bindValues(['id' => $qsMaster['qs_id']])->query()) {
                 function_requirements('qs_queue_handler');
@@ -92,7 +92,7 @@ if (isset($_POST['action']) && $_POST['action'] == 'map') {
 } elseif (isset($_POST['action']) && $_POST['action'] == 'get_new_qs') {
     global $mysql_db;
     $ip = $_SERVER['REMOTE_ADDR'];
-    if (validIp($ip)) {
+    if (filter_var($ip, FILTER_VALIDATE_IP)) {
         if (false !== $qsMaster = $mysql_db->select('*')->from('qs_masters')->leftJoin('qs_master_details', 'qs_masters.qs_id=qs_master_details.qs_id')->where('qs_ip = :ip')->bindValues(['ip' => $_SERVER['REMOTE_ADDR']])->row()) {
             function_requirements('qs_queue_handler');
             echo qs_queue_handler($qsMaster, 'get_new_qs');

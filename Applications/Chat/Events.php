@@ -2876,6 +2876,19 @@ class Events
         // each channel's message list independently.
         $channelKey = 'channel_msgs:' . $channel;
         $global->add($channelKey, []);
+
+        // Track channels that have data for cleanup/enumeration
+        $channelsKey = 'channel_msgs_channels';
+        $global->add($channelsKey, []);
+        $channels = $global->$channelsKey;
+        if (!is_array($channels)) {
+            $channels = [];
+        }
+        if (!in_array($channel, $channels, true)) {
+            $channels[] = $channel;
+            $global->$channelsKey = $channels;
+        }
+
         do {
             $old_value = $new_value = $global->$channelKey;
             if (!is_array($new_value)) {

@@ -148,14 +148,14 @@ function memcached_queue_task($args)
                 }
             } else {
                 // Memcached fallback: use getAndFlush pattern
-                $queue = $memcache->get('queuein'.$hostIp);
+                $queue = $memcache->get('queuein:'.$hostIp);
                 if (is_array($queue)) {
                     $batchItems = array_slice($queue, 0, $maxItemsPerHost);
                     $remaining = array_slice($queue, $maxItemsPerHost);
                     if (count($remaining) > 0) {
-                        $memcache->set('queuein'.$hostIp, $remaining);
+                        $memcache->set('queuein:'.$hostIp, $remaining);
                     } else {
-                        $memcache->set('queuein'.$hostIp, []);
+                        $memcache->set('queuein:'.$hostIp, []);
                     }
                 }
             }

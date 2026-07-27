@@ -47,29 +47,34 @@ function boardctl_task($args)
     }
     $logFile = $logDir.'/'.$historyId.'.log';
 
-    // Spawn the runner fully detached:
+    // Spawn the runner fully detached using proc_open:
     //  - setsid => new session, so a datacentered stop/restart (SIGHUP/SIGTERM to
     //    the process group) does not kill the in-flight job.
-    //  - The `for fd ... exec $n>&-` loop closes every inherited file descriptor
-    //    >= 3 BEFORE exec'ing php. This is essential: PHP's listen sockets are not
-    //    O_CLOEXEC, so without this the runner would inherit the TaskWorker's
-    //    port-2208 socket and keep the port bound for the life of the job --
-    //    exactly the bug we are fixing. stdio is redirected to the log / /dev/null.
-    //  - trailing `&` backgrounds it so exec() returns immediately.
-    $inner = 'for fd in /proc/self/fd/*; do n=${fd##*/}; [ "$n" -ge 3 ] && eval "exec $n>&-" 2>/dev/null; done; '
-        .'exec '.escapeshellarg(PHP_BINARY).' '.escapeshellarg($runner)
-        .' --history-id='.$historyId
-        .' --owner='.$ownerId
-        .' --lock='.escapeshellarg($lockVar);
-    $cmd = 'setsid bash -c '.escapeshellarg($inner)
-        .' >> '.escapeshellarg($logFile).' 2>&1 < /dev/null &';
-    $out = [];
-    $rc = 0;
-    @exec($cmd, $out, $rc);
-    if ($rc !== 0) {
-        Worker::safeEcho("boardctl_task: failed to spawn runner (rc={$rc}) for history_id={$historyId}\n");
+    //  - File descriptors 0/1/2 are explicitly redirected; the child should
+    //    close any inherited descriptors >= 3 before exec (PHP listen sockets
+    //    are not O_CLOEXEC, so without cleanup the runner would inherit the
+    //    TaskWorker's port-2208 socket).
+    //  - proc_close() returns immediately while the detached child continues.
+    $descriptorspec = [
+        0 => ['file', '/dev/null', 'r'],  // stdin from /dev/null
+        1 => ['file', $logFile, 'a'],     // stdout append to log
+        2 => ['file', $logFile, 'a'],     // stderr append to log
+    ];
+
+    // Build command as a single string for setsid; each arg is individually
+    // escaped to avoid shell injection while keeping the command readable.
+    $cmd = 'setsid '
+        . PHP_BINARY . ' ' . escapeshellarg($runner)
+        . ' --history-id=' . $historyId
+        . ' --owner=' . $ownerId
+        . ' --lock=' . escapeshellarg($lockVar);
+
+    $proc = proc_open($cmd, $descriptorspec, $pipes);
+    if ($proc === false || $proc === 0) {
+        Worker::safeEcho("boardctl_task: failed to spawn runner for history_id={$historyId}\n");
         return json_encode(['ok' => false, 'error' => 'spawn failed', 'history_id' => $historyId]);
     }
+    $rc = proc_close($proc);
     Worker::safeEcho("boardctl_task: spawned detached runner for history_id={$historyId} asset={$assetId}\n");
     return json_encode(['ok' => true, 'spawned' => true, 'history_id' => $historyId]);
 }

@@ -25,9 +25,17 @@ $tableFields = [
     'senderdelivered' => ['_id','id','seq','domain','sendingZone','recipient','locked','lockTime','assigned','queued','created','_lock','interface','from','to','origin','originhost','transhost','transtype','user','time','messageId','date','bodySize','sourceMd5','logger','mxPort','connectionKey','localAddress','localHostname','localPort','mxHostname','sentBodyHash','sentBodySize','md5Match','poolDisabled','fbl','doc'],
 ];
 $table = $_GET['table'];
+if (!in_array($table, ['logentry', 'messagestore', 'senderdelivered'], true)) {
+    Worker::safeEcho("logger: unknown table $table\n");
+    return;
+}
 $unsetFields = ['tls', 'parsedEnvelope', 'disabledAddresses', 'envelope', 'dnsOptions', 'dkim'];
 $foldFields = ['from', 'to'];
 $post = json_decode($_POST['data'], true);
+if (json_last_error() !== JSON_ERROR_NONE) {
+    Worker::safeEcho("logger: bad JSON: ".json_last_error_msg()."\n");
+    return;
+}
 $out = [];
 $doc = [];
 $fieldCharLimits = ['to' => 300, 'from' => 300];

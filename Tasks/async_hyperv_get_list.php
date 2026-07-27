@@ -131,7 +131,7 @@ function async_hyperv_get_list($args)
             $global->$var = 0;
         }
         if ($global->cas($var, 0, time())) {
-            $global->requestVar = 'none';
+            $global->$requestVar = 'none';
             async_hyperv_get_list_server($service_master);
         }
     }

@@ -278,23 +278,27 @@ var ChOpper = (function ChOpperView(app) { //view
 		printMessage : function (gc) {
 			if (gc.room) {
 				if (gc.type) {
-					$(".chat").append('<div class="me rightchat clearfix"><span class="chat-img pull-right"><img src="'+gc.img+'" alt="User Avatar"></span><div class="chat-body clearfix"><div class="header"><strong class="primary-font">'+gc.name+'</strong><small class="pull-right text-muted"><i class="fa fa-clock-o"></i> '+gc.time+'</small></div><p>'+gc.text+'</p></div></div>');
-					//$(".chat").append('<div class="chat-bubble me"><div class="rightchat clearfix"><span class="chat-img pull-left"><img src="'+gc.img+'" alt="User Avatar"></span><div class="chat-body clearfix"><div class="header"><strong class="primary-font">'+gc.name+'</strong><small class="pull-right text-muted"><i class="fa fa-clock-o"></i> '+gc.time+'</small></div><p>'+gc.text+'</p></div></div>');
-					//$(".chat").append("<div class='chat-bubble me'><div class='my-mouth'></div><div class='content'>" + gc.text + "</div><div class='time'>" + gc.time + "</div></div>");
+					var msgHtml = $('<div class="me rightchat clearfix"><span class="chat-img pull-right"><img src="'+gc.img+'" alt="User Avatar"></span><div class="chat-body clearfix"><div class="header"><strong class="primary-font"></strong><small class="pull-right text-muted"><i class="fa fa-clock-o"></i> '+gc.time+'</small></div><p></p></div></div>');
+					msgHtml.find('strong.primary-font').text(gc.name);
+					msgHtml.find('p').text(gc.text);
+					$(".chat").append(msgHtml);
 				}else {
-					$(".chat").append('<div class="you leftchat clearfix"><span class="chat-img pull-left"><img src="'+gc.img+'" alt="User Avatar"></span><div class="chat-body clearfix"><div class="header"><strong class="primary-font">'+gc.name+'</strong><small class="pull-right text-muted"><i class="fa fa-clock-o"></i> '+gc.time+'</small></div><p>'+gc.text+'</p></div></div>');
-					//$(".chat").append('<div class="chat-bubble you"><div class="leftchat clearfix"><span class="chat-img pull-left"><img src="'+gc.img+'" alt="User Avatar"></span><div class="chat-body clearfix"><div class="header"><strong class="primary-font">'+gc.name+'</strong><small class="pull-right text-muted"><i class="fa fa-clock-o"></i> '+gc.time+'</small></div><p>'+gc.text+'</p></div></div>');
-					//$(".chat").append("<div class='chat-bubble you'><div class='your-mouth'></div><h4>" + gc.name + "</h4><div class='content'>" + gc.text + "</div><div class='time'>" + gc.time + "</div></div>");
+					var msgHtml = $('<div class="you leftchat clearfix"><span class="chat-img pull-left"><img src="'+gc.img+'" alt="User Avatar"></span><div class="chat-body clearfix"><div class="header"><strong class="primary-font"></strong><small class="pull-right text-muted"><i class="fa fa-clock-o"></i> '+gc.time+'</small></div><p></p></div></div>');
+					msgHtml.find('strong.primary-font').text(gc.name);
+					msgHtml.find('p').text(gc.text);
+					$(".chat").append(msgHtml);
 				}
 			} else {
 				if (gc.type) {
-					$(".chat").append('<div class="me rightchat clearfix"><span class="chat-img pull-right"><img src="'+gc.img+'" alt="User Avatar"></span><div class="chat-body clearfix"><div class="header"><strong class="primary-font">'+gc.name+'</strong><small class="pull-right text-muted"><i class="fa fa-clock-o"></i> '+gc.time+'</small></div><p>'+gc.text+'</p></div></div>');
-					//$(".chat").append('<div class="chat-bubble me"><div class="rightchat clearfix"><span class="chat-img pull-left"><img src="'+gc.img+'" alt="User Avatar"></span><div class="chat-body clearfix"><div class="header"><strong class="primary-font">'+gc.name+'</strong><small class="pull-right text-muted"><i class="fa fa-clock-o"></i> '+gc.time+'</small></div><p>'+gc.text+'</p></div></div>');
-					//$(".chat").append("<div class='chat-bubble me'><div class='my-mouth'></div><div class='content'>" + gc.text + "</div><div class='time'>" + gc.time + "</div></div>");
+					var msgHtml = $('<div class="me rightchat clearfix"><span class="chat-img pull-right"><img src="'+gc.img+'" alt="User Avatar"></span><div class="chat-body clearfix"><div class="header"><strong class="primary-font"></strong><small class="pull-right text-muted"><i class="fa fa-clock-o"></i> '+gc.time+'</small></div><p></p></div></div>');
+					msgHtml.find('strong.primary-font').text(gc.name);
+					msgHtml.find('p').text(gc.text);
+					$(".chat").append(msgHtml);
 				} else {
-					$(".chat").append('<div class="you leftchat clearfix"><span class="chat-img pull-left"><img src="'+gc.img+'" alt="User Avatar"></span><div class="chat-body clearfix"><div class="header"><strong class="primary-font">'+gc.name+'</strong><small class="pull-right text-muted"><i class="fa fa-clock-o"></i> '+gc.time+'</small></div><p>'+gc.text+'</p></div></div>');
-					//$(".chat").append('<div class="chat-bubble you"><div class="leftchat clearfix"><span class="chat-img pull-left"><img src="'+gc.img+'" alt="User Avatar"></span><div class="chat-body clearfix"><div class="header"><strong class="primary-font">'+gc.name+'</strong><small class="pull-right text-muted"><i class="fa fa-clock-o"></i> '+gc.time+'</small></div><p>'+gc.text+'</p></div></div>');
-					//$(".chat").append("<div class='chat-bubble you'><div class='your-mouth'></div><div class='content'>" + gc.text + "</div><div class='time'>" + gc.time + "</div></div>");
+					var msgHtml = $('<div class="you leftchat clearfix"><span class="chat-img pull-left"><img src="'+gc.img+'" alt="User Avatar"></span><div class="chat-body clearfix"><div class="header"><strong class="primary-font"></strong><small class="pull-right text-muted"><i class="fa fa-clock-o"></i> '+gc.time+'</small></div><p></p></div></div>');
+					msgHtml.find('strong.primary-font').text(gc.name);
+					msgHtml.find('p').text(gc.text);
+					$(".chat").append(msgHtml);
 				}
 			}
 		},
@@ -518,10 +522,6 @@ var ChOpper = (function ChOpperCtrl(app) { //controller
 				start = false;
 			}
 		},
-		onClose : function() {
-			console.log("Connection is closed, timing reconnection");
-			//connect();
-		},
 		onError : function() {
 			console.log("An error occurred");
 		},
@@ -655,7 +655,8 @@ Hub,Host,running
 					break;
 				case 'say': // speaking
 					//{"type":"say","from":xxx,"to":"xxx","is":"client","content":"xxx","time":"xxx"}
-					var contact = contactList[data.from]
+					var contact = contactList[data.from];
+					if (!contact) { console.warn('say from unknown contact', data.from); return; }
 					var msg = new appMessages(data.content, contact.name, data.time, true, false, contact.img);
 					ChOpper.View.printMessage(msg);
 					if(contactList[data.from] == currentChat) {
@@ -682,8 +683,7 @@ Hub,Host,running
 			}
 		},
 		connect : function() { // Connect to the server
-			//ws = new ReconnectingWebSocket("wss://"+document.domain+":7272"); // create websocket
-			ws = new WebSocket("wss://"+document.domain+":7272");
+			ws = new ReconnectingWebSocket("wss://"+document.domain+":7272");
 			ws.onopen = app.Ctrl.onOpen;
 			ws.onmessage = app.Ctrl.onMessage;
 			ws.onclose = app.Ctrl.onClose;
