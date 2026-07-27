@@ -34,6 +34,9 @@ $worker->onBufferDrain = function ($connection) {
 $worker->onError = function ($connection, $code, $msg) {
     Worker::safeEcho("BusinessWorker error {$code} {$msg}\n");
 };
+$worker->onWorkerStart = function ($worker) {
+    \Events::setupSessionHealthTimer();
+};
 
 /*
 $worker->onWorkerStart = function($worker) { Events::setup_timers($worker); }; // start the process, open a vmstat process, and broadcast vmstat process output to all browser clients

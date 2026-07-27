@@ -37,6 +37,18 @@ class Events
     public static $running = [];
 
     /**
+     * Optional test seam for Channel\Client::publish(). Null in production
+     * (real Channel\Client::publish() runs unchanged). When set to a callable
+     * by a test, it is invoked as ($channel, $message) INSTEAD of the real
+     * Channel publish, enabling unit tests to capture broadcast calls without
+     * a running Channel server/event-loop. Guarded by a strict null check so
+     * it never affects the deployed runtime.
+     *
+     * @var callable|null
+     */
+    public static $channelClient = null;
+
+    /**
      * Optional test seam for dispatchTask(). Null in production (the real
      * AsyncTcpConnection path runs unchanged). When set to a callable by a
      * test, dispatchTask() invokes it as
@@ -416,16 +428,6 @@ class Events
             self::sendV1Error($client_id, $envelope['id'], 'bad_request', 'invalid envelope encoding: enc:"gzip" requires data to be base64(gzcompress(json)) (PROTOCOL_V1 §1)');
             return;
         }
-        if ($op === 'ping') {
-            $reply = [
-                'v' => 1,
-                're' => $envelope['id'],
-                'ok' => true,
-                'data' => new \stdClass()
-            ];
-            Gateway::sendToClient($client_id, json_encode($reply));
-            return;
-        }
         switch ($op) {
             // cmd.* streamed command execution (PROTOCOL_V1.md §2.2; plan step 2.3).
             case 'cmd.exec':
@@ -533,6 +535,30 @@ class Events
                 return;
             case 'admin.running':
                 self::handleAdminRunning($client_id, $envelope);
+                return;
+            // dc.presence.* datacenter 3D scene presence (dc.md step 7).
+            case 'dc.presence.join':
+                self::handleDcPresenceJoin($client_id, $envelope);
+                return;
+            case 'dc.presence.move':
+                self::handleDcPresenceMove($client_id, $envelope);
+                return;
+            case 'dc.presence.leave':
+                self::handleDcPresenceLeave($client_id, $envelope);
+                return;
+            // pong: client responded to a server-initiated health ping
+            case 'pong':
+                $global->{'dc_ping:' . $client_id} = 0;
+                return;
+            // ping: server responding to a client-initiated ping
+            case 'ping':
+                Gateway::sendToClient($client_id, json_encode([
+                    'v' => 1,
+                    'op' => 'pong',
+                    'id' => $envelope['id'] ?? null,
+                    'ts' => time(),
+                    'data' => $envelope['data'] ?? new \stdClass()
+                ]));
                 return;
         }
         $reply = [
@@ -690,8 +716,72 @@ class Events
             $_SESSION['v1_authed'] = true;
             $_SESSION['v1_session'] = $hub_session;
             Gateway::setSession($client_id, $_SESSION);
+            // Track client_id → session_id for dc-ws session health & deduplication
+            $sessionId = isset($data['session']) && is_string($data['session']) ? $data['session'] : '';
+            if ($sessionId) {
+                $global->{'dc_client_session:' . $client_id} = $sessionId;
+                $listKey = 'dc_session_clients:' . $sessionId;
+                $clients = $global->$listKey ?? [];
+                if (!is_array($clients)) $clients = [];
+                // Filter out any stale (already-closed) client_ids
+                $activeClients = [];
+                foreach ($clients as $cid) {
+                    $ck = 'dc_client_session:' . $cid;
+                    if (($global->$ck ?? null) === $sessionId) {
+                        $activeClients[] = $cid;
+                    }
+                }
+                if (count($activeClients) >= 1) {
+                    // New connection for an existing session — ping all existing clients.
+                    // Non-responders (no pong within 15s) will be dropped, keeping only responsive clients.
+                    foreach ($activeClients as $cid) {
+                        Gateway::sendToClient($cid, json_encode([
+                            'v' => 1, 'op' => 'ping', 'id' => 'session_check', 'ts' => time(),
+                            'data' => ['reason' => 'session_duplicate', 'count' => count($activeClients) + 1]
+                        ]));
+                        $global->{'dc_ping:' . $cid} = time();
+                    }
+                    \Workerman\Timer::add(15, function () use ($sessionId, $global) {
+                        $listKey = 'dc_session_clients:' . $sessionId;
+                        $clients = $global->$listKey ?? [];
+                        $now = time();
+                        $cutoff = $now - 15;
+                        $stillActive = [];
+                        $toDrop = [];
+                        foreach ($clients as $cid) {
+                            $ck = 'dc_client_session:' . $cid;
+                            if (($global->$ck ?? null) !== $sessionId) continue;
+                            $pk = 'dc_ping:' . $cid;
+                            $lastPing = $global->$pk ?? 0;
+                            if ($lastPing >= $cutoff) {
+                                $stillActive[] = ['cid' => $cid, 'ping' => $lastPing];
+                            } else {
+                                $toDrop[] = $cid;
+                            }
+                        }
+                        usort($stillActive, fn($a, $b) => $b['ping'] <=> $a['ping']);
+                        foreach (array_slice($stillActive, 2) as $k) {
+                            $toDrop[] = $k['cid'];
+                        }
+                        foreach ($toDrop as $cid) {
+                            $ck = 'dc_client_session:' . $cid;
+                            unset($global->$ck);
+                            $pk = 'dc_ping:' . $cid;
+                            unset($global->$pk);
+                            $clients = $global->$listKey ?? [];
+                            $clients = array_values(array_filter($clients, fn($c) => $c !== $cid));
+                            $global->$listKey = $clients;
+                            Gateway::closeClient($cid, 'session_pruned');
+                            Worker::safeEcho("[dc_presence] pruned non-responsive client {$cid} from session {$sessionId}\n");
+                        }
+                    }, false);
+                }
+                $clients[] = $client_id;
+                $global->$listKey = $clients;
+            }
             Gateway::bindUid($client_id, $uid);
             Gateway::joinGroup($client_id, 'admins');
+            Gateway::joinGroup($client_id, 'dc_presence');
             Worker::safeEcho("[{$client_id}] v1 auth.hello: admin {$results[0]['account_lid']} authenticated from {$_SERVER['REMOTE_ADDR']}".PHP_EOL);
             Gateway::sendToClient($client_id, json_encode([
                 'v' => 1,
@@ -821,6 +911,69 @@ class Events
             } while (!$global->cas('hosts', $old_value, $new_value));
         }
         Gateway::setSession($client_id, $_SESSION);
+        // Track client_id → session_id for dc-ws session health & deduplication
+        $sessionId = isset($data['session']) && is_string($data['session']) ? $data['session'] : '';
+        if ($sessionId) {
+            $global->{'dc_client_session:' . $client_id} = $sessionId;
+            $listKey = 'dc_session_clients:' . $sessionId;
+            $clients = $global->$listKey ?? [];
+            if (!is_array($clients)) $clients = [];
+            // Filter out any stale (already-closed) client_ids
+            $activeClients = [];
+            foreach ($clients as $cid) {
+                $ck = 'dc_client_session:' . $cid;
+                if (($global->$ck ?? null) === $sessionId) {
+                    $activeClients[] = $cid;
+                }
+            }
+            if (count($activeClients) >= 1) {
+                // New connection for an existing session — ping all existing clients.
+                // Non-responders (no pong within 15s) will be dropped, keeping only responsive clients.
+                foreach ($activeClients as $cid) {
+                    Gateway::sendToClient($cid, json_encode([
+                        'v' => 1, 'op' => 'ping', 'id' => 'session_check', 'ts' => time(),
+                        'data' => ['reason' => 'session_duplicate', 'count' => count($activeClients) + 1]
+                    ]));
+                    $global->{'dc_ping:' . $cid} = time();
+                }
+                \Workerman\Timer::add(15, function () use ($sessionId, $global) {
+                    $listKey = 'dc_session_clients:' . $sessionId;
+                    $clients = $global->$listKey ?? [];
+                    $now = time();
+                    $cutoff = $now - 15;
+                    $stillActive = [];
+                    $toDrop = [];
+                    foreach ($clients as $cid) {
+                        $ck = 'dc_client_session:' . $cid;
+                        if (($global->$ck ?? null) !== $sessionId) continue;
+                        $pk = 'dc_ping:' . $cid;
+                        $lastPing = $global->$pk ?? 0;
+                        if ($lastPing >= $cutoff) {
+                            $stillActive[] = ['cid' => $cid, 'ping' => $lastPing];
+                        } else {
+                            $toDrop[] = $cid;
+                        }
+                    }
+                    usort($stillActive, fn($a, $b) => $b['ping'] <=> $a['ping']);
+                    foreach (array_slice($stillActive, 2) as $k) {
+                        $toDrop[] = $k['cid'];
+                    }
+                    foreach ($toDrop as $cid) {
+                        $ck = 'dc_client_session:' . $cid;
+                        unset($global->$ck);
+                        $pk = 'dc_ping:' . $cid;
+                        unset($global->$pk);
+                        $clients = $global->$listKey ?? [];
+                        $clients = array_values(array_filter($clients, fn($c) => $c !== $cid));
+                        $global->$listKey = $clients;
+                        Gateway::closeClient($cid, 'session_pruned');
+                        Worker::safeEcho("[dc_presence] pruned non-responsive client {$cid} from session {$sessionId}\n");
+                    }
+                }, false);
+            }
+            $clients[] = $client_id;
+            $global->$listKey = $clients;
+        }
         Gateway::bindUid($client_id, $uid);
         Gateway::joinGroup($client_id, $role.'s');
         Worker::safeEcho("[{$client_id}] v1 auth.hello: {$role} {$_SESSION['name']} ({$uid}) authenticated from {$_SERVER['REMOTE_ADDR']}".PHP_EOL);
@@ -3421,6 +3574,234 @@ class Events
     }
 
     /**
+     * Handle dc.presence.join — client entering the datacenter 3D scene.
+     *
+     * Stores the member's position + metadata in $global->dc_presence[$uid]
+     * and broadcasts dc.presence.joined to the dc_presence channel so other
+     * clients in the scene can render the new avatar.
+     *
+     * @param int   $client_id
+     * @param array $envelope v1 envelope with data{x,z,yaw}
+     */
+    public static function handleDcPresenceJoin($client_id, $envelope)
+    {
+        /**
+         * @var \GlobalData\Client
+         */
+        global $global;
+        $re = $envelope['id'];
+        $uid = $_SESSION['uid'] ?? null;
+        if (empty($uid)) {
+            self::sendV1Error($client_id, $re, 'forbidden', 'dc.presence.join requires authentication');
+            return;
+        }
+        $data = is_array($envelope['data']) ? $envelope['data'] : [];
+        $x   = isset($data['x']) && is_numeric($data['x']) ? (float) $data['x'] : 0.0;
+        $z   = isset($data['z']) && is_numeric($data['z']) ? (float) $data['z'] : 0.0;
+        $yaw = isset($data['yaw']) && is_numeric($data['yaw']) ? (float) $data['yaw'] : 0.0;
+        $name = $_SESSION['name'] ?? '';
+        if (!isset($global->dc_presence) || !is_array($global->dc_presence)) {
+            $global->dc_presence = [];
+        }
+        $global->dc_presence[$uid] = [
+            'uid' => $uid,
+            'name' => $name,
+            'x' => $x,
+            'z' => $z,
+            'yaw' => $yaw,
+            'ts' => time(),
+            'client_id' => $client_id,
+        ];
+        Worker::safeEcho("[{$client_id}] dc.presence.join: {$uid} joined at ({$x}, {$z}, {$yaw})\n");
+        Gateway::sendToClient($client_id, json_encode([
+            'v' => 1,
+            're' => $re,
+            'ok' => true,
+            'data' => new \stdClass()
+        ]));
+        $channel = 'dc_presence';
+        $payload = json_encode([
+            'op' => 'dc.presence.joined',
+            'data' => $global->dc_presence[$uid]
+        ]);
+        if (self::$channelClient !== null) {
+            (self::$channelClient)($channel, $payload);
+        } else {
+            try {
+                \Channel\Client::publish($channel, $payload);
+            } catch (\Throwable $e) {
+                Worker::safeEcho("[{$client_id}] dc.presence.join: Channel publish failed: {$e->getMessage()}\n");
+            }
+        }
+    }
+
+    /**
+     * Handle dc.presence.move — client position/rotation update in the 3D scene.
+     *
+     * Fire-and-forget: NO reply is sent to the sender (reduces server→client
+     * traffic). If the member has not yet called dc.presence.join (i.e. they
+     * have no entry in $global->dc_presence), the update is silently ignored.
+     *
+     * @param int   $client_id
+     * @param array $envelope v1 envelope with data{x,z,yaw} (all optional)
+     */
+    public static function handleDcPresenceMove($client_id, $envelope)
+    {
+        /**
+         * @var \GlobalData\Client
+         */
+        global $global;
+        $uid = $_SESSION['uid'] ?? null;
+        if (empty($uid)) {
+            return;
+        }
+        if (!isset($global->dc_presence) || !is_array($global->dc_presence)) {
+            return;
+        }
+        if (!isset($global->dc_presence[$uid])) {
+            return;
+        }
+        $data = is_array($envelope['data']) ? $envelope['data'] : [];
+        $x   = isset($data['x']) && is_numeric($data['x']) ? (float) $data['x'] : null;
+        $z   = isset($data['z']) && is_numeric($data['z']) ? (float) $data['z'] : null;
+        $yaw = isset($data['yaw']) && is_numeric($data['yaw']) ? (float) $data['yaw'] : null;
+        do {
+            $all = $global->dc_presence;
+            if (!is_array($all) || !isset($all[$uid]) || !is_array($all[$uid])) {
+                return;
+            }
+            $old = $all;
+            $all[$uid]['x'] = $x ?? $all[$uid]['x'];
+            $all[$uid]['z'] = $z ?? $all[$uid]['z'];
+            $all[$uid]['yaw'] = $yaw ?? $all[$uid]['yaw'];
+            $all[$uid]['ts'] = time();
+            $all[$uid]['client_id'] = $client_id;
+        } while (!$global->cas('dc_presence', $old, $all));
+        $channel = 'dc_presence';
+        $payload = json_encode([
+            'op' => 'dc.presence.updated',
+            'data' => $global->dc_presence[$uid]
+        ]);
+        if (self::$channelClient !== null) {
+            (self::$channelClient)($channel, $payload);
+        } else {
+            try {
+                \Channel\Client::publish($channel, $payload);
+            } catch (\Throwable $e) {
+                Worker::safeEcho("[{$client_id}] dc.presence.move: Channel publish failed: {$e->getMessage()}\n");
+            }
+        }
+    }
+
+    /**
+     * Handle dc.presence.leave — client exiting the datacenter 3D scene.
+     *
+     * Removes the member's entry from $global->dc_presence[$uid], broadcasts
+     * dc.presence.left to the dc_presence channel, and replies with
+     * {ok: true} to the sender.
+     *
+     * @param int   $client_id
+     * @param array $envelope v1 envelope
+     */
+    public static function handleDcPresenceLeave($client_id, $envelope)
+    {
+        /**
+         * @var \GlobalData\Client
+         */
+        global $global;
+        $re = $envelope['id'];
+        $uid = $_SESSION['uid'] ?? null;
+        if (empty($uid)) {
+            self::sendV1Error($client_id, $re, 'forbidden', 'dc.presence.leave requires authentication');
+            return;
+        }
+        if (!isset($global->dc_presence) || !is_array($global->dc_presence)) {
+            self::sendV1Error($client_id, $re, 'forbidden', 'dc.presence.leave: member not found');
+            return;
+        }
+        do {
+            $old = $global->dc_presence ?? [];
+            if (!isset($old[$uid]) || !is_array($old[$uid])) {
+                self::sendV1Error($client_id, $re, 'forbidden', 'dc.presence.leave: member not found');
+                return;
+            }
+            $new = $old;
+            unset($new[$uid]);
+        } while (!$global->cas('dc_presence', $old, $new));
+        Worker::safeEcho("[{$client_id}] dc.presence.leave: {$uid} left the scene\n");
+        Gateway::sendToClient($client_id, json_encode([
+            'v' => 1,
+            're' => $re,
+            'ok' => true,
+            'data' => new \stdClass()
+        ]));
+        $channel = 'dc_presence';
+        $payload = json_encode([
+            'op' => 'dc.presence.left',
+            'data' => ['uid' => $uid]
+        ]);
+        if (self::$channelClient !== null) {
+            (self::$channelClient)($channel, $payload);
+        } else {
+            try {
+                \Channel\Client::publish($channel, $payload);
+            } catch (\Throwable $e) {
+                Worker::safeEcho("[{$client_id}] dc.presence.leave: Channel publish failed: {$e->getMessage()}\n");
+            }
+        }
+    }
+
+    /**
+     * Session health timer: sends a ping to every dc_presence client every 30s
+     * and drops any that have missed 3+ consecutive pings (>90s since last pong).
+     */
+    public static function setupSessionHealthTimer()
+    {
+        \Workerman\Timer::add(30, function () {
+            global $global;
+            $now = time();
+            $allPresence = $global->dc_presence ?? [];
+            foreach ($allPresence as $uid => $entry) {
+                if (empty($entry['client_id'])) {
+                    continue;
+                }
+                $clientId = $entry['client_id'];
+                Gateway::sendToClient($clientId, json_encode([
+                    'v' => 1, 'op' => 'ping', 'id' => 'keepalive', 'ts' => $now,
+                    'data' => new \stdClass()
+                ]));
+                $global->{'dc_ping:' . $clientId} = $now;
+            }
+            // Drop clients that missed 3+ keepalive pings (>90s since last pong)
+            foreach ($allPresence as $uid => $entry) {
+                if (empty($entry['client_id'])) {
+                    continue;
+                }
+                $clientId = $entry['client_id'];
+                $pk = 'dc_ping:' . $clientId;
+                $lastPing = $global->$pk ?? 0;
+                if ($lastPing > 0 && ($now - $lastPing) > 90) {
+                    Worker::safeEcho("[dc_presence] dropping {$clientId} ({$uid}) — missed 3+ keepalive pings\n");
+                    $all = $global->dc_presence ?? [];
+                    unset($all[$uid]);
+                    $global->dc_presence = $all;
+                    $ck = 'dc_client_session:' . $clientId;
+                    $sessionId = $global->$ck ?? null;
+                    if ($sessionId) {
+                        $listKey = 'dc_session_clients:' . $sessionId;
+                        $clients = $global->$listKey ?? [];
+                        $clients = array_values(array_filter($clients, fn($c) => $c !== $clientId));
+                        $global->$listKey = $clients;
+                        unset($global->$ck);
+                    }
+                    unset($global->$pk);
+                    Gateway::closeClient($clientId, 'missed_keepalive');
+                }
+            }
+        });
+    }
+
+    /**
      * When the client is disconnected
      *
      * @param integer $client_id client id
@@ -3432,6 +3813,19 @@ class Events
          */
         global $global;
         Worker::safeEcho("[{$client_id}] client:".($_SESSION['name'] ?? '')." {$_SERVER['REMOTE_ADDR']}:{$_SERVER['REMOTE_PORT']} gateway:{$_SERVER['GATEWAY_ADDR']}:{$_SERVER['GATEWAY_PORT']} onClose:''".PHP_EOL); // debug
+        // Clean up dc_client_session and dc_ping keys for this client
+        $sessionKey = 'dc_client_session:' . $client_id;
+        $sessionId = $global->$sessionKey ?? null;
+        if ($sessionId) {
+            $listKey = 'dc_session_clients:' . $sessionId;
+            $clients = $global->$listKey ?? [];
+            if (is_array($clients)) {
+                $clients = array_filter($clients, fn($c) => $c !== $client_id);
+                $global->$listKey = array_values($clients);
+            }
+            unset($global->$sessionKey);
+            unset($global->{'dc_ping:' . $client_id});
+        }
         if (isset($_SESSION['uid'])) {
             $clientIds = Gateway::getClientIdByUid($_SESSION['uid']);
             if (count($clientIds) == 1 && isset($global->rooms) && sizeof($global->rooms) > 0) {

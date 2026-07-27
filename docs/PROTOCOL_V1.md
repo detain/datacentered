@@ -568,12 +568,6 @@ update_after:bool, for:str\|null, rows:int, cols:int, started:ts}` (legacy
 
 ### 2.10 `channel.*` / `chat.*` — channels & messaging (rebuilt; plan B6)
 
-One channel abstraction `type:name` serves human chat and machine log
-streaming: `chat:noc`, `host:vps12`, `job:boardctl:4567`, `provision:vps1001`.
-Access is role-gated; hosts may only publish to their own `host:*`/`job:*`
-channels. Log channels mirror `cmd.output` fan-out (a running job's stdout is
-republished as `channel.message` with `level:"log"`).
-
 #### `channel.list` (C→H)
 Request `data:{}`. Reply: `{ channels: [{id:str, type:str, topic:str, members:int}] }`.
 
@@ -623,6 +617,111 @@ never persisted (see §4).
 *Diff note (legacy `say`):* `{type:"say", from, is:"room"|"client", to, content,
 time}` — `is`/`to` are replaced by the channel id or `to` uid; `content` →
 `body`; the hardcoded single `rooms[0]` becomes real channels.
+
+### 2.11 `dc.presence.*` — datacenter 3D scene presence
+
+Real-time position tracking for admins in the `dc.html` 3D datacenter scene.
+All three client→server ops require role **admin** and a successful prior
+`auth.hello`. Presence data is held in the `$global->dc_presence`
+GlobalData hash (`uid` → presence record). Group subscriptions live on the
+`Channel:dc_presence` group; clients are joined to it automatically on
+successful `auth.hello` (`Channel::joinGroup($client_id, 'dc_presence')`).
+
+Broadcasts are sent via `Channel::publish('dc_presence', ...)` — every
+client subscribed to that group receives the fan-out event, including the
+originating client (which may de-duplicate against its own uid).
+
+#### `dc.presence.join` (C→H)
+
+Client enters the datacenter 3D scene at the specified position.
+
+**Envelope `data`:**
+
+| Field | Type | Req | Notes |
+|---|---|---|---|
+| `x` | num | yes (default `0`) | X coordinate in scene units. |
+| `z` | num | yes (default `0`) | Z coordinate in scene units. |
+| `yaw` | num | yes (default `0`) | Horizontal rotation in degrees. |
+
+**Reply:** `{ok: true, re: "<id>", data: {}}` on success;
+`{ok: false, re: "<id>", error: {code: "forbidden"}}` if not authed.
+
+On success the server also broadcasts `dc.presence.joined` to all subscribers
+of `Channel:dc_presence` (including the joiner — client should ignore its
+own uid in the broadcast).
+
+#### `dc.presence.move` (C→H; fire-and-forget — no reply)
+
+Client updates its position/rotation in the scene. This is
+fire-and-forget: the hub sends **no reply** on success and no reply on
+silent-ignore (unknown uid). If the sender has not previously sent a
+matching `dc.presence.join`, the update is silently discarded — no error
+is emitted to the sender.
+
+**Envelope `data`:**
+
+| Field | Type | Req | Notes |
+|---|---|---|---|
+| `x` | num | yes (default `0`) | X coordinate. |
+| `z` | num | yes (default `0`) | Z coordinate. |
+| `yaw` | num | yes (default `0`) | Horizontal rotation in degrees. |
+
+On success the server broadcasts `dc.presence.updated` to all subscribers
+of `Channel:dc_presence` (including the mover — client may de-duplicate).
+
+#### `dc.presence.leave` (C→H)
+
+Client exits the datacenter 3D scene.
+
+**Envelope `data`:** `{}` (empty; uid is derived from the authed session).
+
+**Reply:** `{ok: true, re: "<id>", data: {}}` on success;
+`{ok: false, re: "<id>", error: {code: "forbidden"}}` if not authed.
+
+On success the server also broadcasts `dc.presence.left` to all remaining
+subscribers of `Channel:dc_presence`.
+
+#### `dc.presence.joined` (H→C; broadcast, no reply)
+
+Fan-out event published to `Channel:dc_presence` when a member enters the
+scene.
+
+**Envelope fields (v1 envelope with `op: "dc.presence.joined"`):**
+
+| Field | Type | Req | Notes |
+|---|---|---|---|
+| `uid` | str | yes | Account id of the member who joined. |
+| `name` | str | yes | Display name (`account_lid`). |
+| `x` | num | yes | X coordinate at join time. |
+| `z` | num | yes | Z coordinate at join time. |
+| `yaw` | num | yes | Rotation at join time. |
+
+#### `dc.presence.updated` (H→C; broadcast, no reply)
+
+Fan-out event published to `Channel:dc_presence` when a member moves.
+
+| Field | Type | Req | Notes |
+|---|---|---|---|
+| `uid` | str | yes | Account id of the member who moved. |
+| `x` | num | yes | Current X coordinate. |
+| `z` | num | yes | Current Z coordinate. |
+| `yaw` | num | yes | Current rotation. |
+
+#### `dc.presence.left` (H→C; broadcast, no reply)
+
+Fan-out event published to `Channel:dc_presence` when a member leaves the
+scene.
+
+| Field | Type | Req | Notes |
+|---|---|---|---|
+| `uid` | str | yes | Account id of the member who left. |
+
+**Known limitation — stale presence on unexpected disconnect.** `onClose`
+is a legacy handler that must remain byte-unchanged (⛔ invariant). It does
+not emit `dc.presence.left`, so a client that loses its connection without
+sending `dc.presence.leave` remains in `$global->dc_presence` until the next
+explicit leave or a future presence-reaper step. Consumers must treat this
+as a documented scope boundary.
 
 ---
 
@@ -1488,5 +1587,7 @@ plus sign-off per the plan's review gates.
 | `say` (is:room) | `channel.publish` / `chat.send` |
 | `say` (is:client) | `chat.send` (`to` form) |
 | `login`/`logout` broadcasts | `channel.presence` / `chat.presence` |
+| *(none — new)* | `dc.presence.join` / `dc.presence.move` / `dc.presence.leave` |
+| *(none — new)* | `dc.presence.joined` / `dc.presence.updated` / `dc.presence.left` |
 | `paymentprocess` | *(not carried — becomes HTTP `POST /trigger/payment`, plan P2.9)* |
 | `self_update` broadcast relay, `run_local`, rooms UI messages | *(dropped — dead chat layer, P7.1)* |
