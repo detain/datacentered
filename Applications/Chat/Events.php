@@ -18,6 +18,7 @@ use Workerman\Timer;
 
 require_once __DIR__.'/Process.php';
 require_once __DIR__.'/stdObject.php';
+require_once '/home/sites/mystage/include/Session.php';
 require_once __DIR__.'/FeatureFlags.php';
 
 class Events
@@ -195,7 +196,13 @@ class Events
          */
         global $global;
         $global = new \GlobalData\Client(GLOBALDATA_IP.':2207');     // initialize the GlobalData client
-        $global->queuein = 0;
+        if (!($global instanceof \GlobalData\Client)) {
+            Worker::safeEcho("GlobalData client initialization failed\n");
+            $global = null;
+        }
+        if ($global !== null) {
+            $global->queuein = 0;
+        }
         /**
         * @var \Memcached
         */
@@ -203,7 +210,7 @@ class Events
         $memcache = new \Memcached();
         $memcache->addServer('localhost', 11211);
         self::$db = self::createDbConnection();
-        if ($global->add('running', [])) {
+        if ($global !== null && $global->add('running', [])) {
             // Fresh GlobalData == a full (cold) restart, not a graceful reload.
             // Clear boardctl jobs orphaned by the restart so reruns aren't blocked.
             self::boardctl_startup_reap();
@@ -217,6 +224,7 @@ class Events
                     'messages' => [],
                 ]
             ];
+            $global->dc_active_clients = [];
         }
         if ($worker->id == 0) {
             $args = [];
@@ -233,7 +241,13 @@ class Events
                 // the only reader is v1 handleAdminTimers (legacy msgTimers ignores it).
                 $timers['processing_queue_timer'] = ['interval' => 30, 'timer_id' => Timer::add(30, ['Events', 'processing_queue_timer'], $args)];
                 $timers['processing_queue_reaper'] = ['interval' => 120, 'timer_id' => Timer::add(120, ['Events', 'processing_queue_reaper'], $args)];
-                $timers['boardctl_queue_timer'] = ['interval' => 15, 'timer_id' => Timer::add(15, ['Events', 'boardctl_queue_timer'], $args)];
+                $timers['boardctl_queue_timer'] = ['interval' => 15, 'timer_id' => Timer::add(15, function() {
+                    try {
+                        Events::boardctl_queue_timer();
+                    } catch (\Throwable $e) {
+                        Worker::safeEcho("boardctl_queue_timer error: {$e->getMessage()}\n");
+                    }
+                }, $args)];
                 $timers['vps_queue_queue_timer'] = ['interval' => 30, 'timer_id' => Timer::add(30, ['Events', 'vps_queue_timer'], $args)];
                 $timers['memcache_queue_timer'] = ['interval' => 30, 'timer_id' => Timer::add(30, ['Events', 'memcache_queue_timer'], $args)];
                 $timers['map_queue_timer'] = ['interval' => 60, 'timer_id' => Timer::add(60, ['Events', 'map_queue_timer'], $args)];
@@ -603,6 +617,10 @@ class Events
             case 'dc.presence.leave':
                 self::handleDcPresenceLeave($client_id, $envelope);
                 return;
+            // IDEA-3: dc.viewport.update — client reports its camera position + direction
+            case 'dc.viewport.update':
+                self::handleDcViewportUpdate($client_id, $envelope);
+                return;
             // pong: client responded to a server-initiated health ping
             case 'pong':
                 $global->{'dc_ping:' . $client_id} = 0;
@@ -763,6 +781,34 @@ class Events
                 return;
             }
             $uid = $results[0]['account_id'];
+            // BUG-5: If account has IP-based session limits, validate connecting IP
+            if (!empty($results[0]['session_limit'])) {
+                $myip = \MyAdmin\Session::get_client_ip();
+                $ipAddress = \IPLib\Factory::addressFromString($myip);
+                $limits = myadmin_unstringify($results[0]['session_limit']);
+                $found = false;
+                foreach ($limits as $limit) {
+                    if (empty($limit['restrict']) || htmlspecialchars_decode($limit['restrict']) == 'Web & API') {
+                        try {
+                            $range = strpos($limit['start'], '/') !== false && $limit['start'] == $limit['end']
+                                ? \IPLib\Factory::rangeFromString($limit['start'])
+                                : \IPLib\Factory::rangeFromBoundaries($limit['start'], $limit['end']);
+                            if (!is_null($range) && $range->contains($ipAddress)) {
+                                $found = true;
+                                break;
+                            }
+                        } catch (\Exception $e) {
+                            Worker::safeEcho("[{$client_id}] BUG-5 IP range check exception: {$e->getMessage()}\n");
+                        }
+                    }
+                }
+                if (!$found) {
+                    Worker::safeEcho("[{$client_id}] BUG-5 auth.hello admin IP {$myip} not in session_limit ranges\n");
+                    self::sendV1Error($client_id, $re, 'ip_not_allowed', 'Your IP is not within the allowed session limits for this account');
+                    Gateway::closeClient($client_id);
+                    return;
+                }
+            }
             $hub_session = bin2hex(random_bytes(16));
             $_SESSION['uid'] = $uid;
             $_SESSION['name'] = $results[0]['account_lid'];
@@ -775,67 +821,7 @@ class Events
             Gateway::setSession($client_id, $_SESSION);
             // Track client_id → session_id for dc-ws session health & deduplication
             $sessionId = isset($data['session']) && is_string($data['session']) ? $data['session'] : '';
-            if ($sessionId) {
-                $global->{'dc_client_session:' . $client_id} = $sessionId;
-                $listKey = 'dc_session_clients:' . $sessionId;
-                $clients = $global->$listKey ?? [];
-                if (!is_array($clients)) $clients = [];
-                // Filter out any stale (already-closed) client_ids
-                $activeClients = [];
-                foreach ($clients as $cid) {
-                    $ck = 'dc_client_session:' . $cid;
-                    if (($global->$ck ?? null) === $sessionId) {
-                        $activeClients[] = $cid;
-                    }
-                }
-                if (count($activeClients) >= 1) {
-                    // New connection for an existing session — ping all existing clients.
-                    // Non-responders (no pong within 15s) will be dropped, keeping only responsive clients.
-                    foreach ($activeClients as $cid) {
-                        Gateway::sendToClient($cid, json_encode([
-                            'v' => 1, 'op' => 'ping', 'id' => 'session_check', 'ts' => time(),
-                            'data' => ['reason' => 'session_duplicate', 'count' => count($activeClients) + 1]
-                        ]));
-                        $global->{'dc_ping:' . $cid} = time();
-                    }
-                    \Workerman\Timer::add(15, function () use ($sessionId, $global) {
-                        $listKey = 'dc_session_clients:' . $sessionId;
-                        $clients = $global->$listKey ?? [];
-                        $now = time();
-                        $cutoff = $now - 15;
-                        $stillActive = [];
-                        $toDrop = [];
-                        foreach ($clients as $cid) {
-                            $ck = 'dc_client_session:' . $cid;
-                            if (($global->$ck ?? null) !== $sessionId) continue;
-                            $pk = 'dc_ping:' . $cid;
-                            $lastPing = $global->$pk ?? 0;
-                            if ($lastPing >= $cutoff) {
-                                $stillActive[] = ['cid' => $cid, 'ping' => $lastPing];
-                            } else {
-                                $toDrop[] = $cid;
-                            }
-                        }
-                        usort($stillActive, fn($a, $b) => $b['ping'] <=> $a['ping']);
-                        foreach (array_slice($stillActive, 2) as $k) {
-                            $toDrop[] = $k['cid'];
-                        }
-                        foreach ($toDrop as $cid) {
-                            $ck = 'dc_client_session:' . $cid;
-                            unset($global->$ck);
-                            $pk = 'dc_ping:' . $cid;
-                            unset($global->$pk);
-                            $clients = $global->$listKey ?? [];
-                            $clients = array_values(array_filter($clients, fn($c) => $c !== $cid));
-                            $global->$listKey = $clients;
-                            Gateway::closeClient($cid, 'session_pruned');
-                            Worker::safeEcho("[dc_presence] pruned non-responsive client {$cid} from session {$sessionId}\n");
-                        }
-                    }, false);
-                }
-                $clients[] = $client_id;
-                $global->$listKey = $clients;
-            }
+            self::trackSessionClient($client_id, $sessionId);
             Gateway::bindUid($client_id, $uid);
             Gateway::joinGroup($client_id, 'admins');
             Gateway::joinGroup($client_id, 'dc_presence');
@@ -972,67 +958,7 @@ class Events
         Gateway::setSession($client_id, $_SESSION);
         // Track client_id → session_id for dc-ws session health & deduplication
         $sessionId = isset($data['session']) && is_string($data['session']) ? $data['session'] : '';
-        if ($sessionId) {
-            $global->{'dc_client_session:' . $client_id} = $sessionId;
-            $listKey = 'dc_session_clients:' . $sessionId;
-            $clients = $global->$listKey ?? [];
-            if (!is_array($clients)) $clients = [];
-            // Filter out any stale (already-closed) client_ids
-            $activeClients = [];
-            foreach ($clients as $cid) {
-                $ck = 'dc_client_session:' . $cid;
-                if (($global->$ck ?? null) === $sessionId) {
-                    $activeClients[] = $cid;
-                }
-            }
-            if (count($activeClients) >= 1) {
-                // New connection for an existing session — ping all existing clients.
-                // Non-responders (no pong within 15s) will be dropped, keeping only responsive clients.
-                foreach ($activeClients as $cid) {
-                    Gateway::sendToClient($cid, json_encode([
-                        'v' => 1, 'op' => 'ping', 'id' => 'session_check', 'ts' => time(),
-                        'data' => ['reason' => 'session_duplicate', 'count' => count($activeClients) + 1]
-                    ]));
-                    $global->{'dc_ping:' . $cid} = time();
-                }
-                \Workerman\Timer::add(15, function () use ($sessionId, $global) {
-                    $listKey = 'dc_session_clients:' . $sessionId;
-                    $clients = $global->$listKey ?? [];
-                    $now = time();
-                    $cutoff = $now - 15;
-                    $stillActive = [];
-                    $toDrop = [];
-                    foreach ($clients as $cid) {
-                        $ck = 'dc_client_session:' . $cid;
-                        if (($global->$ck ?? null) !== $sessionId) continue;
-                        $pk = 'dc_ping:' . $cid;
-                        $lastPing = $global->$pk ?? 0;
-                        if ($lastPing >= $cutoff) {
-                            $stillActive[] = ['cid' => $cid, 'ping' => $lastPing];
-                        } else {
-                            $toDrop[] = $cid;
-                        }
-                    }
-                    usort($stillActive, fn($a, $b) => $b['ping'] <=> $a['ping']);
-                    foreach (array_slice($stillActive, 2) as $k) {
-                        $toDrop[] = $k['cid'];
-                    }
-                    foreach ($toDrop as $cid) {
-                        $ck = 'dc_client_session:' . $cid;
-                        unset($global->$ck);
-                        $pk = 'dc_ping:' . $cid;
-                        unset($global->$pk);
-                        $clients = $global->$listKey ?? [];
-                        $clients = array_values(array_filter($clients, fn($c) => $c !== $cid));
-                        $global->$listKey = $clients;
-                        Gateway::closeClient($cid, 'session_pruned');
-                        Worker::safeEcho("[dc_presence] pruned non-responsive client {$cid} from session {$sessionId}\n");
-                    }
-                }, false);
-            }
-            $clients[] = $client_id;
-            $global->$listKey = $clients;
-        }
+        self::trackSessionClient($client_id, $sessionId);
         Gateway::bindUid($client_id, $uid);
         Gateway::joinGroup($client_id, $role.'s');
         Worker::safeEcho("[{$client_id}] v1 auth.hello: {$role} {$_SESSION['name']} ({$uid}) authenticated from {$_SERVER['REMOTE_ADDR']}".PHP_EOL);
@@ -1473,6 +1399,91 @@ class Events
     private static function ptyAudit($event, $fields)
     {
         Worker::safeEcho('pty_audit '.json_encode(array_merge(['event' => $event, 'ts' => time()], $fields)).PHP_EOL);
+    }
+
+    /**
+     * Track a client_id → session_id mapping for dc-ws session health and
+     * deduplication. Sends pings to existing clients when a duplicate session
+     * connection is detected and schedules a timer to prune non-responsive clients.
+     * Used by both admin and host/bot auth paths (MINOR-6 code deduplication).
+     *
+     * @param int    $client_id  gateway client id
+     * @param string $sessionId  the session identifier
+     */
+    private static function trackSessionClient(int $client_id, string $sessionId): void
+    {
+        global $global;
+        if ($sessionId === '') {
+            return;
+        }
+        $global->{'dc_client_session:' . $client_id} = $sessionId;
+        $listKey = 'dc_session_clients:' . $sessionId;
+        $clients = $global->$listKey ?? [];
+        if (!is_array($clients)) {
+            $clients = [];
+        }
+        // Filter out any stale (already-closed) client_ids
+        $activeClients = [];
+        foreach ($clients as $cid) {
+            $ck = 'dc_client_session:' . $cid;
+            if (($global->$ck ?? null) === $sessionId) {
+                $activeClients[] = $cid;
+            }
+        }
+        if (count($activeClients) >= 1) {
+            // New connection for an existing session — ping all existing clients.
+            // Non-responders (no pong within 15s) will be dropped, keeping only responsive clients.
+            foreach ($activeClients as $cid) {
+                Gateway::sendToClient($cid, json_encode([
+                    'v' => 1, 'op' => 'ping', 'id' => 'session_check', 'ts' => time(),
+                    'data' => ['reason' => 'session_duplicate', 'count' => count($activeClients) + 1]
+                ]));
+                $global->{'dc_ping:' . $cid} = time();
+            }
+            // Cancel any existing timer for this session to prevent duplicates (MAJOR-5)
+            $existingTimer = $global->{"dc_timer:".$sessionId} ?? null;
+            if ($existingTimer !== null) {
+                \Workerman\Timer::del($existingTimer);
+            }
+            $global->{"dc_timer:".$sessionId} = \Workerman\Timer::add(15, function () use ($sessionId, $global) {
+                $listKey = 'dc_session_clients:' . $sessionId;
+                $clients = $global->$listKey ?? [];
+                $now = time();
+                $cutoff = $now - 15;
+                $stillActive = [];
+                $toDrop = [];
+                foreach ($clients as $cid) {
+                    $ck = 'dc_client_session:' . $cid;
+                    if (($global->$ck ?? null) !== $sessionId) {
+                        continue;
+                    }
+                    $pk = 'dc_ping:' . $cid;
+                    $lastPing = $global->$pk ?? 0;
+                    if ($lastPing >= $cutoff) {
+                        $stillActive[] = ['cid' => $cid, 'ping' => $lastPing];
+                    } else {
+                        $toDrop[] = $cid;
+                    }
+                }
+                usort($stillActive, fn($a, $b) => $b['ping'] <=> $a['ping']);
+                foreach (array_slice($stillActive, 2) as $k) {
+                    $toDrop[] = $k['cid'];
+                }
+                foreach ($toDrop as $cid) {
+                    $ck = 'dc_client_session:' . $cid;
+                    unset($global->$ck);
+                    $pk = 'dc_ping:' . $cid;
+                    unset($global->$pk);
+                    $clients = $global->$listKey ?? [];
+                    $clients = array_values(array_filter($clients, fn($c) => $c !== $cid));
+                    $global->$listKey = $clients;
+                    Gateway::closeClient($cid, 'session_pruned');
+                    Worker::safeEcho("[dc_presence] pruned non-responsive client {$cid} from session {$sessionId}\n");
+                }
+            }, false);
+        }
+        $clients[] = $client_id;
+        $global->$listKey = $clients;
     }
 
     /**
@@ -3641,6 +3652,67 @@ class Events
     }
 
     /**
+     * IDEA-3: Check if a world position (x, z) falls within a peer's viewport AABB.
+     * Uses axis-aligned bounding box: peer position ± viewDist * 2 on each axis.
+     * Fails open (returns true) when viewport data is unavailable.
+     *
+     * @param float $moverX  world X of the moving client
+     * @param float $moverZ  world Z of the moving client
+     * @param array $peerViewport peer viewport data from $global (x, z, viewDist)
+     * @return bool true if in viewport or viewport unknown (broadcast), false if out of range
+     */
+    /**
+     * Check if a world position falls within a peer's view frustum (simplified pyramid).
+     * Uses the peer's position, look direction, and viewDist/FOV to build a view cone.
+     * Only broadcasts if mover is in front of peer AND within viewDist AND within horizontal FOV cone.
+     * Falls back to true (broadcast) if any data is missing.
+     */
+    private static function isInPeerViewport(float $moverX, float $moverZ, array $peerViewport): bool
+    {
+        if (!isset($peerViewport['x'], $peerViewport['z'], $peerViewport['viewDist'],
+                  $peerViewport['dirX'], $peerViewport['dirZ'])) {
+            return true; // fail-open: no viewport data = broadcast
+        }
+
+        $peerX = $peerViewport['x'];
+        $peerZ = $peerViewport['z'];
+        $viewDist = (float)($peerViewport['viewDist'] ?? 50);
+        $halfFov = deg2rad(60 / 2); // 60-degree horizontal FOV (configurable)
+
+        // Vector from peer to mover
+        $toMoverX = $moverX - $peerX;
+        $toMoverZ = $moverZ - $peerZ;
+        $distSq = $toMoverX * $toMoverX + $toMoverZ * $toMoverZ;
+        $dist = sqrt($distSq);
+
+        // Check 1: within max view distance
+        if ($dist > $viewDist * 2) {
+            return false;
+        }
+
+        // Check 2: in front of peer (positive dot product of forward vector and peer→mover vector)
+        $dirX = (float)$peerViewport['dirX'];
+        $dirZ = (float)$peerViewport['dirZ'];
+        if ($dist > 0) {
+            $dot = ($toMoverX * $dirX + $toMoverZ * $dirZ) / $dist;
+            if ($dot <= 0) {
+                return false; // behind peer
+            }
+        }
+
+        // Check 3: within horizontal FOV cone
+        if ($dist > 0) {
+            $cosAngle = ($toMoverX * $dirX + $toMoverZ * $dirZ) / $dist;
+            $cosFov = cos($halfFov);
+            if ($cosAngle < $cosFov) {
+                return false; // outside FOV cone
+            }
+        }
+
+        return true;
+    }
+
+    /**
      * Handle dc.presence.join — client entering the datacenter 3D scene.
      *
      * Stores the member's position + metadata in $global->dc_presence[$uid]
@@ -3738,6 +3810,15 @@ class Events
          * @var \GlobalData\Client
          */
         global $global;
+        // Per-client move rate limit: 150ms minimum between moves (matching client THROTTLE_MS)
+        if ($global !== null) {
+            $throttleKey = 'dc_move_throttle:'.$client_id;
+            $lastMove = $global->{$throttleKey} ?? 0;
+            if ($lastMove > 0 && (microtime(true) - $lastMove) < 0.15) {
+                return; // Throttled - less than 150ms since last move
+            }
+            $global->{$throttleKey} = microtime(true);
+        }
         $uid = $_SESSION['uid'] ?? null;
         if (empty($uid)) {
             return;
@@ -3788,6 +3869,7 @@ class Events
         // Schedule flush if not already scheduled (one-shot timer, re-armed on next move)
         if (self::$moveBatchTimer === null) {
             self::$moveBatchTimer = \Workerman\Timer::add(0.05, function () {
+                global $global;
                 if (empty(self::$moveBatch)) {
                     self::$moveBatchTimer = null;
                     return;
@@ -3796,19 +3878,61 @@ class Events
                 self::$moveBatch = [];
                 self::$moveBatchTimer = null;
 
-                $payload = json_encode([
-                    'op' => 'dc.presence.batch_updated',
-                    'data' => $batch
-                ]);
-                if (self::$channelClient !== null) {
-                    (self::$channelClient)('dc_presence', $payload);
-                } else {
-                    try {
-                        \Channel\Client::publish('dc_presence', $payload);
-                    } catch (\Throwable $e) {
-                        Worker::safeEcho("dc.presence batch publish failed: {$e->getMessage()}\n");
+                // IDEA-3: viewport filtering — send only to clients that have at least one
+                // moved peer in their viewport AABB. Fall back to channel publish if
+                // viewport data is unavailable for all recipients (back-compat).
+                $activeClients = $global->dc_active_clients ?? [];
+                $uidIndexKey = 'dc_presence_uids';
+                $uidList = $global->$uidIndexKey ?? [];
+                $hasAnyViewport = false;
+                $clientPayloads = [];
+
+                foreach ($activeClients as $cid) {
+                    $ck = 'dc_client_session:' . $cid;
+                    $sessionId = $global->$ck ?? null;
+                    if (!$sessionId) continue;
+                    $vpKey = 'dc_viewport:' . $cid;
+                    $peerVp = $global->$vpKey ?? null;
+                    if ($peerVp !== null) {
+                        $hasAnyViewport = true;
+                        $visibleEntries = [];
+                        foreach ($batch as $moverUid => $moverEntry) {
+                            if (self::isInPeerViewport($moverEntry['x'], $moverEntry['z'], $peerVp)) {
+                                $visibleEntries[$moverUid] = $moverEntry;
+                            }
+                        }
+                        if (!empty($visibleEntries)) {
+                            $clientPayloads[$cid] = json_encode([
+                                'op' => 'dc.presence.batch_updated',
+                                'data' => $visibleEntries
+                            ]);
+                        }
                     }
                 }
+
+                if ($hasAnyViewport && count($clientPayloads) > 0) {
+                    // Per-client sends with viewport filtering
+                    foreach ($clientPayloads as $cid => $payload) {
+                        Gateway::sendToClient($cid, $payload);
+                    }
+                } elseif (!$hasAnyViewport) {
+                    // No viewport data at all — fall back to channel publish (back-compat)
+                    $payload = json_encode([
+                        'op' => 'dc.presence.batch_updated',
+                        'data' => $batch
+                    ]);
+                    if (self::$channelClient !== null) {
+                        (self::$channelClient)('dc_presence', $payload);
+                    } else {
+                        try {
+                            \Channel\Client::publish('dc_presence', $payload);
+                        } catch (\Throwable $e) {
+                            Worker::safeEcho("dc.presence batch publish failed: {$e->getMessage()}\n");
+                        }
+                    }
+                }
+                // If $hasAnyViewport is true but $clientPayloads is empty, all moved peers
+                // are out of every client's viewport — drop the batch silently.
             }, [], false);
         }
     }
@@ -3876,6 +4000,33 @@ class Events
                 Worker::safeEcho("[{$client_id}] dc.presence.leave: Channel publish failed: {$e->getMessage()}\n");
             }
         }
+    }
+
+    /**
+     * IDEA-3: Handle dc.viewport.update — client reports its camera position + look direction.
+     * Stores viewport data in $global keyed by client_id for use in presence move filtering.
+     *
+     * @param int   $client_id
+     * @param array $envelope v1 envelope
+     */
+    public static function handleDcViewportUpdate($client_id, $envelope)
+    {
+        /**
+         * @var \GlobalData\Client
+         */
+        global $global;
+        $data = is_array($envelope['data']) ? $envelope['data'] : [];
+        $vp = $data;  // $data IS the viewport object, not $data['data']
+        $global->{'dc_viewport:' . $client_id} = [
+            'x' => (float)($vp['x'] ?? 0),
+            'y' => (float)($vp['y'] ?? 0),
+            'z' => (float)($vp['z'] ?? 0),
+            'dirX' => (float)($vp['dirX'] ?? 0),
+            'dirY' => (float)($vp['dirY'] ?? 0),
+            'dirZ' => (float)($vp['dirZ'] ?? 0),
+            'viewDist' => (float)($vp['viewDist'] ?? 50),
+            'ts' => time(),
+        ];
     }
 
     /**
@@ -4020,6 +4171,13 @@ class Events
             }
         }
 
+        // Remove from active clients list (CRIT-1 session health tracking)
+        $activeClients = $global->dc_active_clients ?? [];
+        if (is_array($activeClients)) {
+            $activeClients = array_values(array_filter($activeClients, fn($c) => $c !== $client_id));
+            $global->dc_active_clients = $activeClients;
+        }
+
         // Clean up dc_client_session and dc_ping keys for this client
         $sessionKey = 'dc_client_session:' . $client_id;
         $sessionId = $global->$sessionKey ?? null;
@@ -4033,6 +4191,9 @@ class Events
             unset($global->$sessionKey);
             unset($global->{'dc_ping:' . $client_id});
         }
+        // IDEA-3: clean up viewport data for this client
+        unset($global->{'dc_viewport:' . $client_id});
+
         if (isset($_SESSION['uid'])) {
             $clientIds = Gateway::getClientIdByUid($_SESSION['uid']);
             if (count($clientIds) == 1 && isset($global->rooms) && sizeof($global->rooms) > 0) {

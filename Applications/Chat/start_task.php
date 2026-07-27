@@ -85,6 +85,7 @@ $task_worker->onError = function ($connection, $code, $msg) {
 
 $task_worker->onMessage = function ($connection, $task_data) {
     global $functions, $worker_db;
+    $functions = $functions ?? [];
     $task_data = json_decode($task_data, true);
     $type = $task_data['type'] ?? 'unknown';
     $return = '';
