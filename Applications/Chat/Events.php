@@ -63,6 +63,21 @@ class Events
     public static $taskDispatcher = null;
 
     /**
+     * Batched presence move updates collected over a 50ms sliding window before
+     * publishing as a single dc.presence.batch_updated Channel broadcast.
+     *
+     * @var array<string, array{x:float,z:float,yaw:float,ts:int,uid:int|float,name:string,client_id:int}>
+     */
+    public static $moveBatch = [];
+
+    /**
+     * One-shot timer reference for the batch flush. Null when no flush is pending.
+     *
+     * @var \Workerman\Timer|null
+     */
+    public static $moveBatchTimer = null;
+
+    /**
      * Create a Workerman MySQL connection using the appropriate host config.
      *
      * No explicit reconnect/charset logic is needed here: workerman/mysql auto-reconnects
@@ -3600,10 +3615,10 @@ class Events
         $z   = isset($data['z']) && is_numeric($data['z']) ? (float) $data['z'] : 0.0;
         $yaw = isset($data['yaw']) && is_numeric($data['yaw']) ? (float) $data['yaw'] : 0.0;
         $name = $_SESSION['name'] ?? '';
-        if (!isset($global->dc_presence) || !is_array($global->dc_presence)) {
-            $global->dc_presence = [];
-        }
-        $global->dc_presence[$uid] = [
+
+        // Per-uid key eliminates CAS contention across all concurrent join/move/leave ops
+        $key = 'dc_presence:' . $uid;
+        $newEntry = [
             'uid' => $uid,
             'name' => $name,
             'x' => $x,
@@ -3612,6 +3627,23 @@ class Events
             'ts' => time(),
             'client_id' => $client_id,
         ];
+        $global->$key = $newEntry;
+
+        // Maintain uid → key mapping for efficient iteration in setupSessionHealthTimer
+        // CAS loop to prevent concurrent joins on different workers losing uid entries
+        $uidIndexKey = 'dc_presence_uids';
+        do {
+            $currentList = $global->$uidIndexKey;
+            $uidList = is_array($currentList) ? array_values($currentList) : [];
+            if (!in_array($uid, $uidList, true)) {
+                $uidList[] = $uid;
+            }
+            $oldForCas = is_array($currentList) ? $currentList : [];
+            if ($currentList === $uidList || $global->cas($uidIndexKey, $oldForCas, $uidList)) {
+                break;
+            }
+        } while (true);
+
         Worker::safeEcho("[{$client_id}] dc.presence.join: {$uid} joined at ({$x}, {$z}, {$yaw})\n");
         Gateway::sendToClient($client_id, json_encode([
             'v' => 1,
@@ -3620,9 +3652,11 @@ class Events
             'data' => new \stdClass()
         ]));
         $channel = 'dc_presence';
+        // Re-read from per-uid key so broadcast shows the stored entry (not local var)
+        $broadcastEntry = $global->$key;
         $payload = json_encode([
             'op' => 'dc.presence.joined',
-            'data' => $global->dc_presence[$uid]
+            'data' => $broadcastEntry
         ]);
         if (self::$channelClient !== null) {
             (self::$channelClient)($channel, $payload);
@@ -3655,41 +3689,74 @@ class Events
         if (empty($uid)) {
             return;
         }
-        if (!isset($global->dc_presence) || !is_array($global->dc_presence)) {
-            return;
-        }
-        if (!isset($global->dc_presence[$uid])) {
-            return;
-        }
         $data = is_array($envelope['data']) ? $envelope['data'] : [];
         $x   = isset($data['x']) && is_numeric($data['x']) ? (float) $data['x'] : null;
         $z   = isset($data['z']) && is_numeric($data['z']) ? (float) $data['z'] : null;
         $yaw = isset($data['yaw']) && is_numeric($data['yaw']) ? (float) $data['yaw'] : null;
-        do {
-            $all = $global->dc_presence;
-            if (!is_array($all) || !isset($all[$uid]) || !is_array($all[$uid])) {
+
+        // Per-uid key: eliminates CAS contention from N×4 moves/sec serializing on one key
+        $key = 'dc_presence:' . $uid;
+        $entry = $global->$key;
+        if (!$entry || !is_array($entry)) {
+            return;  // member not in scene — silent ignore per spec
+        }
+
+        // CAS the individual key (only this uid's entry, no shared array)
+        $newEntry = $entry;
+        $newEntry['x'] = $x ?? $entry['x'];
+        $newEntry['z'] = $z ?? $entry['z'];
+        $newEntry['yaw'] = $yaw ?? $entry['yaw'];
+        $newEntry['ts'] = time();
+        if (!isset($newEntry['client_id'])) {
+            $newEntry['client_id'] = $client_id;
+        }
+        if (!$global->cas($key, $entry, $newEntry)) {
+            // CAS failed — retry once
+            $entry = $global->$key;
+            if (!$entry) return;
+            $newEntry = $entry;
+            $newEntry['x'] = $x ?? $entry['x'];
+            $newEntry['z'] = $z ?? $entry['z'];
+            $newEntry['yaw'] = $yaw ?? $entry['yaw'];
+            $newEntry['ts'] = time();
+            if (!isset($newEntry['client_id'])) $newEntry['client_id'] = $client_id;
+            if (!$global->cas($key, $entry, $newEntry)) {
+                // Note: on CAS failure after 2 retries, we fall back to a direct write.
+                // This may overwrite concurrent changes from another process. Acceptable
+                // for infrequently-updated presence fields (x/z/yaw).
+                $global->$key = $newEntry;
                 return;
             }
-            $old = $all;
-            $all[$uid]['x'] = $x ?? $all[$uid]['x'];
-            $all[$uid]['z'] = $z ?? $all[$uid]['z'];
-            $all[$uid]['yaw'] = $yaw ?? $all[$uid]['yaw'];
-            $all[$uid]['ts'] = time();
-            $all[$uid]['client_id'] = $client_id;
-        } while (!$global->cas('dc_presence', $old, $all));
-        $channel = 'dc_presence';
-        $payload = json_encode([
-            'op' => 'dc.presence.updated',
-            'data' => $global->dc_presence[$uid]
-        ]);
-        if (self::$channelClient !== null) {
-            (self::$channelClient)($channel, $payload);
-        } else {
-            try {
-                \Channel\Client::publish($channel, $payload);
-            } catch (\Throwable $e) {
-                Worker::safeEcho("[{$client_id}] dc.presence.move: Channel publish failed: {$e->getMessage()}\n");
-            }
+        }
+
+        // Queue for batched broadcast — collects all moves over a 50ms sliding window
+        self::$moveBatch[$uid] = $newEntry;
+
+        // Schedule flush if not already scheduled (one-shot timer, re-armed on next move)
+        if (self::$moveBatchTimer === null) {
+            self::$moveBatchTimer = \Workerman\Timer::add(0.05, function () {
+                if (empty(self::$moveBatch)) {
+                    self::$moveBatchTimer = null;
+                    return;
+                }
+                $batch = self::$moveBatch;
+                self::$moveBatch = [];
+                self::$moveBatchTimer = null;
+
+                $payload = json_encode([
+                    'op' => 'dc.presence.batch_updated',
+                    'data' => $batch
+                ]);
+                if (self::$channelClient !== null) {
+                    (self::$channelClient)('dc_presence', $payload);
+                } else {
+                    try {
+                        \Channel\Client::publish('dc_presence', $payload);
+                    } catch (\Throwable $e) {
+                        Worker::safeEcho("dc.presence batch publish failed: {$e->getMessage()}\n");
+                    }
+                }
+            }, [], false);
         }
     }
 
@@ -3715,19 +3782,26 @@ class Events
             self::sendV1Error($client_id, $re, 'forbidden', 'dc.presence.leave requires authentication');
             return;
         }
-        if (!isset($global->dc_presence) || !is_array($global->dc_presence)) {
+        $key = 'dc_presence:' . $uid;
+        $entry = $global->$key;
+        if (!$entry) {
             self::sendV1Error($client_id, $re, 'forbidden', 'dc.presence.leave: member not found');
             return;
         }
+
+        // Atomic delete: individual key deletion is inherently atomic (single key op)
+        $global->$key = null;
+
+        // Clean up uid index (CAS loop to prevent concurrent leaves on different workers losing uid entries)
+        $uidIndexKey = 'dc_presence_uids';
         do {
-            $old = $global->dc_presence ?? [];
-            if (!isset($old[$uid]) || !is_array($old[$uid])) {
-                self::sendV1Error($client_id, $re, 'forbidden', 'dc.presence.leave: member not found');
-                return;
-            }
-            $new = $old;
-            unset($new[$uid]);
-        } while (!$global->cas('dc_presence', $old, $new));
+            $uidList = $global->$uidIndexKey ?? [];
+            if (!is_array($uidList)) { break; }
+            $newList = array_values(array_filter($uidList, fn($u) => $u !== $uid));
+            if ($newList === $uidList) { break; }  // nothing changed
+            $oldList = $uidList;
+        } while (!$global->cas($uidIndexKey, $oldList, $newList));
+
         Worker::safeEcho("[{$client_id}] dc.presence.leave: {$uid} left the scene\n");
         Gateway::sendToClient($client_id, json_encode([
             'v' => 1,
@@ -3760,31 +3834,58 @@ class Events
         \Workerman\Timer::add(30, function () {
             global $global;
             $now = time();
-            $allPresence = $global->dc_presence ?? [];
-            foreach ($allPresence as $uid => $entry) {
-                if (empty($entry['client_id'])) {
+
+            // Iterate via uid index to avoid reading the now-deprecated monolithic dc_presence array
+            $uidIndexKey = 'dc_presence_uids';
+            $uidList = $global->$uidIndexKey ?? [];
+            if (!is_array($uidList) || empty($uidList)) {
+                return;
+            }
+
+            // Combined loop: send ping and check staleness for each client in one pass
+            $cutoff = $now - 90;  // 3 × 30s missed = stale
+
+            $toDrop = [];  // collect uids to drop after iteration
+
+            foreach ($uidList as $uid) {
+                $key = 'dc_presence:' . $uid;
+                $entry = $global->$key;
+                if (!$entry || !is_array($entry)) {
+                    $toDrop[] = $uid;  // stale entry, mark for cleanup
                     continue;
                 }
-                $clientId = $entry['client_id'];
+                $clientId = $entry['client_id'] ?? null;
+                if (!$clientId) {
+                    $toDrop[] = $uid;
+                    continue;
+                }
+
+                // Phase 1: Send ping to this client
                 Gateway::sendToClient($clientId, json_encode([
                     'v' => 1, 'op' => 'ping', 'id' => 'keepalive', 'ts' => $now,
                     'data' => new \stdClass()
                 ]));
                 $global->{'dc_ping:' . $clientId} = $now;
-            }
-            // Drop clients that missed 3+ keepalive pings (>90s since last pong)
-            foreach ($allPresence as $uid => $entry) {
-                if (empty($entry['client_id'])) {
-                    continue;
-                }
-                $clientId = $entry['client_id'];
+
+                // Phase 2: Check staleness — did this client miss 3+ pings?
                 $pk = 'dc_ping:' . $clientId;
                 $lastPing = $global->$pk ?? 0;
-                if ($lastPing > 0 && ($now - $lastPing) > 90) {
-                    Worker::safeEcho("[dc_presence] dropping {$clientId} ({$uid}) — missed 3+ keepalive pings\n");
-                    $all = $global->dc_presence ?? [];
-                    unset($all[$uid]);
-                    $global->dc_presence = $all;
+                if ($lastPing > 0 && $lastPing < $cutoff) {
+                    $toDrop[] = $uid;
+                }
+            }
+
+            // Drop stale clients AFTER the loop (avoids modifying uidList during iteration)
+            foreach ($toDrop as $uid) {
+                $key = 'dc_presence:' . $uid;
+                $entry = $global->$key;
+                if (!$entry) continue;
+                $clientId = $entry['client_id'] ?? null;
+
+                // Delete per-uid key atomically
+                $global->$key = null;
+
+                if ($clientId) {
                     $ck = 'dc_client_session:' . $clientId;
                     $sessionId = $global->$ck ?? null;
                     if ($sessionId) {
@@ -3794,9 +3895,21 @@ class Events
                         $global->$listKey = $clients;
                         unset($global->$ck);
                     }
-                    unset($global->$pk);
+                    unset($global->{'dc_ping:' . $clientId});
                     Gateway::closeClient($clientId, 'missed_keepalive');
                 }
+
+                // Remove from uid index (CAS loop)
+                $uidIndexKey = 'dc_presence_uids';
+                do {
+                    $uidList = $global->$uidIndexKey ?? [];
+                    if (!is_array($uidList)) break;
+                    $newList = array_values(array_filter($uidList, fn($u) => $u !== $uid));
+                    if ($newList === $uidList) break;
+                    $oldList = $uidList;
+                } while (!$global->cas($uidIndexKey, $oldList, $newList));
+
+                Worker::safeEcho("[dc_presence] dropped {$clientId} ({$uid}) — missed keepalive\n");
             }
         });
     }

@@ -35,7 +35,9 @@ $worker->onError = function ($connection, $code, $msg) {
     Worker::safeEcho("BusinessWorker error {$code} {$msg}\n");
 };
 $worker->onWorkerStart = function ($worker) {
-    \Events::setupSessionHealthTimer();
+    if ($worker->id === 0) {
+        \Events::setupSessionHealthTimer();
+    }
 };
 
 /*

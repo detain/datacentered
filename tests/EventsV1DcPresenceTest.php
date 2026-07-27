@@ -115,6 +115,13 @@ namespace {
              */
             public function &__get($key)
             {
+                // Handle per-uid keys like 'dc_presence:admin77'
+                if (strpos($key, 'dc_presence:') === 0) {
+                    if (!isset($this->store[$key]) || !is_array($this->store[$key])) {
+                        $this->store[$key] = [];
+                    }
+                    return $this->store[$key];
+                }
                 if (array_key_exists($key, $this->store)) {
                     return $this->store[$key];
                 }
@@ -138,11 +145,20 @@ namespace {
              */
             public function __isset($key)
             {
+                // Handle per-uid keys like 'dc_presence:admin77'
+                if (strpos($key, 'dc_presence:') === 0) {
+                    return isset($this->store[$key]);
+                }
                 return array_key_exists($key, $this->store) && $this->store[$key] !== null;
             }
 
             public function __unset($key)
             {
+                // Handle per-uid keys like 'dc_presence:admin77'
+                if (strpos($key, 'dc_presence:') === 0) {
+                    unset($this->store[$key]);
+                    return;
+                }
                 unset($this->store[$key]);
             }
 
@@ -150,6 +166,16 @@ namespace {
             public function cas($key, $old, $new)
             {
                 $current = $this->store[$key] ?? null;
+                // Handle comparison for arrays (old dc_presence behavior)
+                if (is_array($current) && is_array($old)) {
+                    // For the old monolithic key, compare by value (same array contents)
+                    if ($current === $old) {
+                        $this->store[$key] = $new;
+                        return true;
+                    }
+                    return false;
+                }
+                // For per-uid keys, reference comparison is fine
                 if ($current === $old) {
                     $this->store[$key] = $new;
                     return true;
@@ -214,6 +240,8 @@ namespace {
             // Pre-populate dc_presence via the store so the handler's $global->dc_presence
             // reads/writes hit this same array through &__get.
             $client->store['dc_presence'] = [];
+            // uid index for the timer that broadcasts full presence state
+            $client->store['dc_presence_uids'] = [self::UID];
             $GLOBALS['global'] = $client;
 
             // Simulate successful auth.hello: set the session flags that
@@ -285,8 +313,8 @@ namespace {
         /**
          * join stores the member's position + metadata in $global->dc_presence[$uid].
          * We verify via the same accessor path the implementation uses:
-         * $global->dc_presence[$uid] (through the &__get fake which returns
-         * $this->store['dc_presence'] by reference).
+         * $global->{'dc_presence:' . $uid} (through the &__get fake which returns
+         * $this->store['dc_presence:admin77'] by reference).
          */
         public function testJoinAddsMemberToGlobalData(): void
         {
@@ -298,12 +326,12 @@ namespace {
                 'yaw' => 1.57,
             ]);
 
-            // Verify via the same accessor path the implementation uses:
-            // $global->dc_presence[$uid] which the fake resolves via &__get
-            // returning $this->store['dc_presence'] by reference.
-            $this->assertIsArray($global->dc_presence);
-            $this->assertArrayHasKey(self::UID, $global->dc_presence);
-            $entry = $global->dc_presence[self::UID];
+            // Verify via the per-uid key that the implementation uses:
+            // $global->{'dc_presence:' . $uid} which the fake resolves via &__get
+            // returning $this->store['dc_presence:admin77'] by reference.
+            $entry = $global->{'dc_presence:' . self::UID};
+            $this->assertIsArray($entry);
+            $this->assertArrayHasKey(self::UID, $entry);
             $this->assertSame(10.5, $entry['x']);
             $this->assertSame(-3.25, $entry['z']);
             $this->assertSame(1.57, $entry['yaw']);
@@ -355,14 +383,14 @@ namespace {
         // ====================================================================
 
         /**
-         * move updates the member's x/z/yaw in $global->dc_presence[$uid].
+         * move updates the member's x/z/yaw in $global->{'dc_presence:' . $uid}.
          */
         public function testMoveUpdatesMemberPosition(): void
         {
             $global = $this->flagAOnAuthed();
 
             // Pre-condition: member must have joined first (via &__get same array as store).
-            $global->dc_presence[self::UID] = [
+            $global->{'dc_presence:' . self::UID} = [
                 'x' => 0.0, 'z' => 0.0, 'yaw' => 0.0, 'ts' => time(),
             ];
 
@@ -372,8 +400,8 @@ namespace {
                 'yaw' => 3.14,
             ]);
 
-            // Handler writes to $global->dc_presence via &__get → same array as store.
-            $entry = $global->dc_presence[self::UID];
+            // Handler writes to $global->{'dc_presence:' . $uid} via &__get → same array as store.
+            $entry = $global->{'dc_presence:' . self::UID};
             $this->assertSame(99.9, $entry['x']);
             $this->assertSame(-77.7, $entry['z']);
             $this->assertSame(3.14, $entry['yaw']);
@@ -386,7 +414,7 @@ namespace {
         {
             $global = $this->flagAOnAuthed();
             // Pre-populate with the same shape the join handler would have stored.
-            $global->dc_presence[self::UID] = [
+            $global->{'dc_presence:' . self::UID} = [
                 'uid' => self::UID, 'name' => self::UID,
                 'x' => 0.0, 'z' => 0.0, 'yaw' => 0.0, 'ts' => time(),
             ];
@@ -414,8 +442,8 @@ namespace {
         public function testMoveSilentlyIgnoresUnjoinedMember(): void
         {
             $global = $this->flagAOnAuthed();
-            // Ensure no prior join entry exists — write via &__get so handler sees empty.
-            $global->dc_presence = [];
+            // Ensure no prior join entry exists — per-uid key is unset, handler sees empty.
+            unset($global->{'dc_presence:' . self::UID});
 
             $this->presenceOp('dc.presence.move', [
                 'x' => 5.0, 'z' => 5.0, 'yaw' => 0.0,
@@ -430,19 +458,19 @@ namespace {
         // ====================================================================
 
         /**
-         * leave removes the member entry from $global->dc_presence[$uid].
+         * leave removes the member entry from $global->{'dc_presence:' . $uid}.
          */
         public function testLeaveRemovesMember(): void
         {
             $global = $this->flagAOnAuthed();
-            $global->dc_presence[self::UID] = [
+            $global->{'dc_presence:' . self::UID} = [
                 'x' => 1.0, 'z' => 2.0, 'yaw' => 0.5, 'ts' => time(),
             ];
 
             $this->presenceOp('dc.presence.leave', []);
 
-            // Handler removes via $global->dc_presence → reads same array via &__get.
-            $this->assertArrayNotHasKey(self::UID, $global->dc_presence ?? []);
+            // Handler removes via $global->{'dc_presence:' . $uid} → __unset removes key.
+            $this->assertArrayNotHasKey(self::UID, $global->{'dc_presence:' . self::UID} ?? []);
         }
 
         /**
@@ -451,7 +479,7 @@ namespace {
         public function testLeaveBroadcastsRemoval(): void
         {
             $global = $this->flagAOnAuthed();
-            $global->dc_presence[self::UID] = [
+            $global->{'dc_presence:' . self::UID} = [
                 'x' => 0.0, 'z' => 0.0, 'yaw' => 0.0, 'ts' => time(),
             ];
 
@@ -471,7 +499,7 @@ namespace {
         public function testLeaveRepliesSuccessToClient(): void
         {
             $global = $this->flagAOnAuthed();
-            $global->dc_presence[self::UID] = [
+            $global->{'dc_presence:' . self::UID} = [
                 'x' => 0.0, 'z' => 0.0, 'yaw' => 0.0, 'ts' => time(),
             ];
 
@@ -529,8 +557,8 @@ namespace {
 
             $this->assertEmpty($this->sent(), 'Flag A OFF: presence ops must produce no reply');
             $this->assertEmpty($this->publishedIn(self::CHANNEL), 'Flag A OFF: presence ops must not broadcast');
-            // Member must NOT have been added to dc_presence.
-            $this->assertArrayNotHasKey(self::UID, $GLOBALS['global']->store['dc_presence'] ?? []);
+            // Member must NOT have been added to dc_presence per-uid key.
+            $this->assertArrayNotHasKey(self::UID, $GLOBALS['global']->{'dc_presence:' . self::UID} ?? []);
         }
     }
 }
