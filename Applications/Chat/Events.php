@@ -89,6 +89,9 @@ class Events
      *
      * @return \Workerman\MySQL\Connection
      */
+    // Note: on MySQL outage this retry loop blocks the worker for up to 5 seconds.
+    // This is acceptable since workers restart daily and MySQL outages are rare.
+    // TODO (optional): implement async retry with non-blocking delay.
     public static function createDbConnection()
     {
         $db_config = include '/home/my/include/config/config.db.php';
@@ -228,6 +231,25 @@ class Events
                 }
                 $timers['hyperv_update_list_timer'] = ['interval' => 3600, 'timer_id' => Timer::add(3600, ['Events', 'hyperv_update_list_timer'], $args)];
                 $timers['hyperv_queue_timer'] = ['interval' => 30, 'timer_id' => Timer::add(30, ['Events', 'hyperv_queue_timer'], $args)];
+
+                // Reaper: clean stale sysinfos entries every 5 minutes (Fix 4)
+                // Each entry has form: ['host' => $host, 'ts' => timestamp, ...]
+                Timer::add(300, function() use ($global) {
+                    $cutoff = microtime(true) - 60; // entries older than 60 seconds
+                    if (!isset($global->sysinfos)) return;
+                    $current = $global->sysinfos;
+                    if (!is_array($current)) return;
+                    $changed = false;
+                    foreach ($current as $k => $v) {
+                        if (is_array($v) && isset($v['ts']) && $v['ts'] < $cutoff) {
+                            unset($current[$k]);
+                            $changed = true;
+                        }
+                    }
+                    if ($changed) {
+                        $global->sysinfos = $current;
+                    }
+                });
 
                 $global->timers = $timers;
                 Events::memcache_queue_timer();
