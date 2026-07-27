@@ -214,7 +214,11 @@ class FeatureFlags
     private static function log($message)
     {
         try {
-            if (class_exists('\Workerman\Worker', false) && \Workerman\Worker::getAllWorkers()) {
+            static $workers = null;
+            if ($workers === null) {
+                $workers = class_exists('\Workerman\Worker', false) ? \Workerman\Worker::getAllWorkers() : [];
+            }
+            if (!empty($workers)) {
                 \Workerman\Worker::safeEcho($message);
                 return;
             }

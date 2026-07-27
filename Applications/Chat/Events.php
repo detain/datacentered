@@ -81,6 +81,22 @@ class Events
     // If long-running workers become a memory concern, add Timer::del($moveBatchTimer) on worker shutdown.
 
     /**
+     * Emit a structured JSON log line (JSON Lines format).
+     *
+     * @param string $event event name (e.g. 'client.connect', 'message.error')
+     * @param array $data additional key-value pairs to include in the entry
+     */
+    public static function logStructured(string $event, array $data = []): void
+    {
+        $entry = [
+            'ts' => date('Y-m-d\TH:i:s.uP'),
+            'event' => $event,
+            'pid' => getmypid(),
+        ] + $data;
+        Worker::safeEcho(json_encode($entry) . "\n");
+    }
+
+    /**
      * Create a Workerman MySQL connection using the appropriate host config.
      *
      * No explicit reconnect/charset logic is needed here: workerman/mysql auto-reconnects
@@ -149,14 +165,14 @@ class Events
         };
         $task_connection->onClose = function ($connection) use ($type, $onError, &$responded) {
             if (!$responded) {
-                Worker::safeEcho("TaskWorker connection closed without response for task {$type}".PHP_EOL);
+                self::logStructured('task.error', ['type' => $type, 'msg' => 'connection closed without response']);
                 if ($onError) {
                     $onError();
                 }
             }
         };
         $task_connection->onError = function ($connection, $code, $msg) use ($type, $onError, &$responded) {
-            Worker::safeEcho("TaskWorker connection error for task {$type}: [{$code}] {$msg}".PHP_EOL);
+            self::logStructured('task.error', ['type' => $type, 'code' => $code, 'msg' => $msg]);
             if (!$responded && $onError) {
                 $responded = true;
                 $onError();
@@ -286,6 +302,7 @@ class Events
      */
     public static function onConnect($client_id)
     {
+        self::logStructured('client.connect', ['client_id' => $client_id]);
     }
 
     /**
@@ -302,7 +319,7 @@ class Events
         //Worker::safeEcho("[{$client_id}] client:{$_SERVER['REMOTE_ADDR']}:{$_SERVER['REMOTE_PORT']} gateway:{$_SERVER['GATEWAY_ADDR']}:{$_SERVER['GATEWAY_PORT']} session:".json_encode($_SESSION)."\n onMessage:".serialize($message).PHP_EOL); // debug
         $message_data = json_decode($message, true); // Client is passed json data
         if (!is_array($message_data)) {
-            Worker::safeEcho("[{$client_id}] Invalid JSON from {$_SERVER['REMOTE_ADDR']}: ".substr($message, 0, 200).PHP_EOL);
+            self::logStructured('message.error', ['client_id' => $client_id, 'msg' => 'invalid JSON: ' . substr($message, 0, 200)]);
             return;
         }
         if (self::isV1Envelope($message_data)) {
@@ -313,14 +330,14 @@ class Events
             return;
         }
         if (!isset($message_data['type'])) {
-            Worker::safeEcho("[{$client_id}] Got message but no type passed from {$_SERVER['REMOTE_ADDR']}".PHP_EOL);
+            self::logStructured('message.error', ['client_id' => $client_id, 'msg' => 'no type in message']);
             return;
         }
-        $method = 'msg'.str_replace(' ', '', ucwords(str_replace(['-','_'], [' ',' '], $message_data['type'])));
+        $method = 'msg'.str_replace(' ', '', ucwords(str_replace(['-','_','.'], [' ',' ',' '], $message_data['type'])));
         if (method_exists('Events', $method)) {
             call_user_func(['Events', $method], $client_id, $message_data);
         } else {
-            Worker::safeEcho("[{$client_id}] Wanted to call method {$method} but it doesnt exist".PHP_EOL);
+            self::logStructured('message.error', ['client_id' => $client_id, 'msg' => "method {$method} does not exist"]);
         }
     }
 
@@ -915,6 +932,8 @@ class Events
         // must always have their IP verified, so a host row with an empty
         // stored IP is an anomalous state that hard-fails rather than
         // silently skipping the check.
+        // Note: bots intentionally skip IP validation (bot_ip=NULL is expected).
+        // If bot IP validation is needed in future, add host-based verification here.
         if ($role !== 'bot' && empty($row[$ip_col])) {
             Worker::safeEcho("[{$client_id}] auth.hello ALERT: {$prefix}{$row[$id_col]} has no registered IP; refusing connection from {$_SERVER['REMOTE_ADDR']}".PHP_EOL);
             self::sendV1Error($client_id, $re, 'ip_mismatch', 'no registered IP for this identity; cannot verify source IP');
@@ -2841,24 +2860,22 @@ class Events
          * @var \GlobalData\Client
          */
         global $global;
-        // SCALABILITY (see docblock): this CAS round-trips the WHOLE channels
-        // map on every append, and the map has no channel-key cap / idle
-        // eviction — unbounded dm:* key minting (unvalidated chat.send `to`)
-        // grows it without limit. Follow-up: per-channel keys + count cap.
-        $global->add('channels', []);
+        // SCALABILITY (see docblock): per-channel key eliminates CAS contention
+        // on a single shared map. Key pattern 'channel_msgs:' . $channel stores
+        // each channel's message list independently.
+        $channelKey = 'channel_msgs:' . $channel;
+        $global->add($channelKey, []);
         do {
-            $old_value = $new_value = $global->channels;
+            $old_value = $new_value = $global->$channelKey;
             if (!is_array($new_value)) {
                 $old_value = $new_value = [];
             }
-            if (!isset($new_value[$channel]) || !is_array($new_value[$channel])) {
-                $new_value[$channel] = [];
+            $new_value[] = $message;
+            if (count($new_value) > self::CHAT_HISTORY_MAX) {
+                self::logStructured('chat.cache.overflow', ['channel' => $channel]);
+                $new_value = array_slice($new_value, -self::CHAT_HISTORY_MAX);
             }
-            $new_value[$channel][] = $message;
-            if (count($new_value[$channel]) > self::CHAT_HISTORY_MAX) {
-                $new_value[$channel] = array_slice($new_value[$channel], -self::CHAT_HISTORY_MAX);
-            }
-        } while (!$global->cas('channels', $old_value, $new_value));
+        } while (!$global->cas($channelKey, $old_value, $new_value));
     }
 
     /**
@@ -3050,11 +3067,7 @@ class Events
         if (!is_array($meta)) {
             $meta = [];
         }
-        $cached = $global->channels;
-        if (!is_array($cached)) {
-            $cached = [];
-        }
-        $ids = array_unique(array_merge(array_keys($meta), array_keys($cached)));
+        $ids = array_keys($meta);
         $channels = [];
         foreach ($ids as $id) {
             $id = (string) $id;
@@ -3116,8 +3129,9 @@ class Events
             return;
         }
         Gateway::joinGroup($client_id, $channel);
-        $cached = $global->channels;
-        $history = is_array($cached) && isset($cached[$channel]) && is_array($cached[$channel]) ? array_values($cached[$channel]) : [];
+        $channelKey = 'channel_msgs:' . $channel;
+        $cached = $global->$channelKey;
+        $history = is_array($cached) ? array_values($cached) : [];
         Gateway::sendToClient($client_id, json_encode([
             'v' => 1,
             're' => $re,
@@ -3411,6 +3425,19 @@ class Events
             self::sendV1Error($client_id, $re, 'forbidden', 'admin.hosts requires role admin');
             return;
         }
+        $cacheKey = 'admin_hosts_cache';
+        $ttlKey = 'admin_hosts_cache_ttl';
+        $cached = $global->$cacheKey;
+        $ttl = $global->$ttlKey;
+        if ($cached !== null && $ttl !== null && (microtime(true) - $ttl) < 5) {
+            Gateway::sendToClient($client_id, json_encode([
+                'v' => 1,
+                're' => $re,
+                'ok' => true,
+                'data' => $cached
+            ]));
+            return;
+        }
         $registry = $global->hosts;
         if (!is_array($registry)) {
             $registry = [];
@@ -3451,14 +3478,14 @@ class Events
                 'module' => $module
             ];
         }
+        $data = ['hosts' => $hosts, 'admins' => $admins];
+        $global->$cacheKey = $data;
+        $global->$ttlKey = microtime(true);
         Gateway::sendToClient($client_id, json_encode([
             'v' => 1,
             're' => $re,
             'ok' => true,
-            'data' => [
-                'hosts' => $hosts,
-                'admins' => $admins
-            ]
+            'data' => $data
         ]));
     }
 
@@ -3677,8 +3704,9 @@ class Events
             'data' => new \stdClass()
         ]));
         $channel = 'dc_presence';
-        // Re-read from per-uid key so broadcast shows the stored entry (not local var)
-        $broadcastEntry = $global->$key;
+        // Use the local entry that was just written — avoids race condition where
+        // another worker could have modified $global->$key between write and re-read
+        $broadcastEntry = $newEntry;
         $payload = json_encode([
             'op' => 'dc.presence.joined',
             'data' => $broadcastEntry
@@ -3950,7 +3978,48 @@ class Events
          * @var \GlobalData\Client
          */
         global $global;
-        Worker::safeEcho("[{$client_id}] client:".($_SESSION['name'] ?? '')." {$_SERVER['REMOTE_ADDR']}:{$_SERVER['REMOTE_PORT']} gateway:{$_SERVER['GATEWAY_ADDR']}:{$_SERVER['GATEWAY_PORT']} onClose:''".PHP_EOL); // debug
+        self::logStructured('client.close', ['client_id' => $client_id, 'uid' => $_SESSION['uid'] ?? null]);
+
+        // Broadcast dc.presence.left BEFORE cleaning up — proactively notify remaining
+        // clients so their avatars disappear immediately instead of waiting for
+        // setupSessionHealthTimer (up to 30s later).
+        $uid = $_SESSION['uid'] ?? null;
+        if ($uid) {
+            $presenceKey = 'dc_presence:' . $uid;
+            $presenceEntry = $global->$presenceKey;
+            if ($presenceEntry && is_array($presenceEntry)) {
+                $channel = 'dc_presence';
+                $payload = json_encode([
+                    'op' => 'dc.presence.left',
+                    'data' => ['uid' => $uid]
+                ]);
+                if (self::$channelClient !== null) {
+                    (self::$channelClient)($channel, $payload);
+                } else {
+                    try {
+                        \Channel\Client::publish($channel, $payload);
+                    } catch (\Throwable $e) {
+                        self::logStructured('client.close.error', ['client_id' => $client_id, 'msg' => $e->getMessage()]);
+                    }
+                }
+                // Atomic delete of per-uid key
+                $global->$presenceKey = null;
+                // Remove uid from index (CAS loop)
+                $uidIndexKey = 'dc_presence_uids';
+                do {
+                    $uidList = $global->$uidIndexKey ?? [];
+                    if (!is_array($uidList)) {
+                        break;
+                    }
+                    $newList = array_values(array_filter($uidList, fn($u) => $u !== $uid));
+                    if ($newList === $uidList) {
+                        break;
+                    }
+                    $oldList = $uidList;
+                } while (!$global->cas($uidIndexKey, $oldList, $newList));
+            }
+        }
+
         // Clean up dc_client_session and dc_ping keys for this client
         $sessionKey = 'dc_client_session:' . $client_id;
         $sessionId = $global->$sessionKey ?? null;
@@ -3999,6 +4068,8 @@ class Events
                             break;
                         }
                     } while (!$global->cas('hosts', $old_value, $new_value));
+                    $global->admin_hosts_cache = null;
+                    $global->admin_hosts_cache_ttl = null;
                 } else {
                     if (count($clientIds) == 1) {
                         // Send command to stop running any processes that were running and directed at this user
@@ -4075,8 +4146,13 @@ class Events
             $global->$var = 0;
         }
         if ($global->cas($var, 0, time())) {
+            // NOTE: For performance, ensure queue_log has a compound index on (history_section, history_new_value).
+            // Verified in staging with: SHOW INDEX FROM queue_log WHERE Key_name = 'idx_boardctl_pending';
+            // If missing, run: ALTER TABLE queue_log ADD INDEX idx_boardctl_pending (history_section, history_new_value);
+            // This index also benefits similar queries at boardctl_queue_timer (line ~4955), boardctl_startup_reap (line ~4210),
+            // and processing_queue_reaper (line ~4263).
             try {
-                $results = self::$db->select('*')->from('queue_log')->where('history_section="process_payment" and history_new_value="pending"')->query();
+                $results = self::$db->select('*')->from('queue_log')->where("history_section='process_payment' and history_new_value='pending'")->query();
             } catch (\Exception $e) {
                 Worker::safeEcho("processing_queue_timer DB error: {$e->getMessage()}\n");
                 self::$db = self::createDbConnection();
@@ -4339,26 +4415,26 @@ class Events
         }
         if (sizeof($results) > 0) {
             $queues = [];
-            foreach ($results as $results[0]) {
-                if (is_numeric($results[0]['history_type'])) {
-                    if (is_null($results[0]['vps_id'])) {
-                        // no vps id in db matching, delete
-                    } else {
-                        $id = $results[0]['vps_server'];
-                        if (in_array($id, array_keys($global->hosts))) {
-                            if (!in_array($id, array_keys($queues))) {
-                                $queues[$id] = [];
-                            }
-                            $queues[$id][] = $results[0];
-                        }
+            foreach ($results as $row) {
+                if (is_numeric($row['history_type'])) {
+                    if (is_null($row['vps_id'])) {
+                        // no vps id in db matching, delete — skip
+                        continue;
                     }
-                } else {
-                    $id = str_replace('vps', '', $results[0]['history_type']);
+                    $id = $row['vps_server'];
                     if (in_array($id, array_keys($global->hosts))) {
                         if (!in_array($id, array_keys($queues))) {
                             $queues[$id] = [];
                         }
-                        $queues[$id][] = $results[0];
+                        $queues[$id][] = $row;
+                    }
+                } else {
+                    $id = str_replace('vps', '', $row['history_type']);
+                    if (in_array($id, array_keys($global->hosts))) {
+                        if (!in_array($id, array_keys($queues))) {
+                            $queues[$id] = [];
+                        }
+                        $queues[$id][] = $row;
                     }
                 }
             }
@@ -4538,7 +4614,7 @@ class Events
      */
     public static function msgSelfUpdate($client_id, $message_data)
     {
-        if ($_SESSION['login'] == true && $_SESSION['ima'] == 'admin') {
+        if ($_SESSION['login'] === true && $_SESSION['ima'] == 'admin') {
             Gateway::sendToGroup('hosts', json_encode($message_data));
         }
         return;
@@ -4635,7 +4711,7 @@ class Events
         * @var \GlobalData\Client
         */
         global $global;
-        if ($_SESSION['login'] == true && $_SESSION['ima'] == 'admin') {
+        if ($_SESSION['login'] === true && $_SESSION['ima'] == 'admin') {
             $sessions = Gateway::getAllClientSessions();
             $clients = [];
             foreach ($sessions as $session_id => $session_data) {
@@ -4687,7 +4763,7 @@ class Events
         * @var \GlobalData\Client
         */
         global $global;
-        if ($_SESSION['login'] == true && $_SESSION['ima'] == 'admin') {
+        if ($_SESSION['login'] === true && $_SESSION['ima'] == 'admin') {
             $message_data = [
                 'type' => 'timers',
                 //'channel' => ChannelClient::getStatus(),
@@ -4741,16 +4817,28 @@ class Events
      */
     public static function msgSay($client_id, $message_data)
     {
-        if ($_SESSION['login'] == true) {
+        if ($_SESSION['login'] === true) {
             // client speaks message: {type:say, is: client|room, to:xx, content:xx}
-            if (!isset($message_data['to'])) { // illegal request
-                throw new \Exception("\$message_data['to'] not set. client_ip:{$_SERVER['REMOTE_ADDR']}");
+            if (!isset($message_data['to'])) {
+                self::sendToClient($client_id, json_encode([
+                    'op' => 'error',
+                    'data' => ['code' => 'MISSING_TO', 'msg' => 'to field required']
+                ]));
+                return;
             }
-            if (!isset($message_data['is'])) { // illegal request
-                throw new \Exception("\$message_data['is'] not set. client_ip:{$_SERVER['REMOTE_ADDR']}");
+            if (!isset($message_data['is'])) {
+                self::sendToClient($client_id, json_encode([
+                    'op' => 'error',
+                    'data' => ['code' => 'MISSING_IS', 'msg' => 'is field required']
+                ]));
+                return;
             }
-            if (!isset($message_data['content'])) { // illegal request
-                throw new \Exception("\$message_data['content'] not set. client_ip:{$_SERVER['REMOTE_ADDR']}");
+            if (!isset($message_data['content'])) {
+                self::sendToClient($client_id, json_encode([
+                    'op' => 'error',
+                    'data' => ['code' => 'MISSING_CONTENT', 'msg' => 'content field required']
+                ]));
+                return;
             }
             return self::say($_SESSION['uid'], $message_data['is'], $message_data['to'], $message_data['content'], $_SESSION['name']);
         }
@@ -4798,7 +4886,7 @@ class Events
     public static function msgRunLocal($client_id, $message_data)
     {
         Worker::safeEcho("[{$client_id}] Got Run Command ".json_encode($message_data).PHP_EOL);
-        if ($_SESSION['login'] == true) {
+        if ($_SESSION['login'] === true) {
             if ($_SESSION['ima'] == 'admin') {
                 Worker::safeEcho("[{$client_id}] running command {$message_data['command']}".PHP_EOL);
                 return self::run_local($client_id, $message_data['cmd'], $message_data['tag'] ?? '');
@@ -4819,7 +4907,7 @@ class Events
     public static function msgRun($client_id, $message_data)
     {
         Worker::safeEcho("[{$client_id}] Got Run Command ".json_encode($message_data).PHP_EOL);
-        if ($_SESSION['login'] == true) {
+        if ($_SESSION['login'] === true) {
             if ($_SESSION['ima'] == 'admin') {
                 Worker::safeEcho("[{$client_id}] running command {$message_data['command']}".PHP_EOL);
                 return self::run_command($message_data['host'], $message_data['command'], $message_data['interact'] ?? false, $_SESSION['uid'], $message_data['rows'] ?? 80, $message_data['cols'] ?? 24, $message_data['update_after'] ?? false);
@@ -4844,7 +4932,7 @@ class Events
         */
         global $global;
         Worker::safeEcho("[{$client_id}] Got Running Command ".json_encode($message_data).PHP_EOL);
-        if ($_SESSION['login'] == true) {
+        if ($_SESSION['login'] === true) {
             $id = $message_data['id'];
             $running = $global->running;
             if (!isset($running[$id])) {
@@ -4900,8 +4988,13 @@ class Events
             if (is_null(self::$db)) return;
         }
         global $global;
+        // NOTE: For performance, ensure queue_log has a compound index on (history_section, history_new_value).
+        // Verified in staging with: SHOW INDEX FROM queue_log WHERE Key_name = 'idx_boardctl_pending';
+        // If missing, run: ALTER TABLE queue_log ADD INDEX idx_boardctl_pending (history_section, history_new_value);
+        // This index also benefits similar queries at processing_queue_timer (line ~4130), boardctl_startup_reap (line ~4210),
+        // and processing_queue_reaper (line ~4263).
         try {
-            $results = self::$db->select('*')->from('queue_log')->where('history_section="boardctl" and history_new_value="pending"')->query();
+            $results = self::$db->select('*')->from('queue_log')->where("history_section='boardctl' and history_new_value='pending'")->query();
         } catch (\Exception $e) {
             Worker::safeEcho("boardctl_queue_timer DB error: {$e->getMessage()}\n");
             self::$db = self::createDbConnection();
@@ -4991,7 +5084,13 @@ class Events
         // response(s) from a run command
         $id = $message_data['id'];
         $running = $global->running;
+        if (!isset($running[$id])) {
+            return;
+        }
         $run = $running[$id];
+        if (!is_string($run['for'] ?? null)) {
+            return;
+        }
         $is = substr($run['for'], 0, 1) == '#' ? 'room' : 'client';
         unset($running[$id]);
         $global->running = $running;
@@ -5019,7 +5118,7 @@ class Events
     public static function msgPhpsysinfo($client_id, $message_data)
     {
         Worker::safeEcho(json_encode($message_data).PHP_EOL);
-        if ($_SESSION['login'] == true) {
+        if ($_SESSION['login'] === true) {
             if ($_SESSION['ima'] == 'admin') {
                 Worker::safeEcho("[{$client_id}] Got phpsysinfo init message ".json_encode($message_data).PHP_EOL);
                 $message_data['for'] = $_SESSION['uid']; // add the client 'for' field from session uid
@@ -5078,6 +5177,8 @@ class Events
                     $old_value = $new_value = $global->hosts;
                     $new_value[$row['vps_id']] = $row;
                 } while (!$global->cas('hosts', $old_value, $new_value));
+                $global->admin_hosts_cache = null;
+                $global->admin_hosts_cache_ttl = null;
                 Gateway::setSession($client_id, $_SESSION);
                 Gateway::bindUid($client_id, $uid);
                 Gateway::joinGroup($client_id, $ima.'s');
