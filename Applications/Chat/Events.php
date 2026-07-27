@@ -77,6 +77,9 @@ class Events
      */
     public static $moveBatchTimer = null;
 
+    // Note: oneshot timer is intentionally not cleared — worker restarts (~daily) reclaim memory.
+    // If long-running workers become a memory concern, add Timer::del($moveBatchTimer) on worker shutdown.
+
     /**
      * Create a Workerman MySQL connection using the appropriate host config.
      *
