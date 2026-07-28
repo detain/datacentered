@@ -24,6 +24,10 @@ if (isset($_POST['action']) && $_POST['action'] == 'map') {
                 echo "echo ".escapeshellarg($map['vnc'])." > /root/cpaneldirect/vps.vncmap;".PHP_EOL;
                 echo 'if [ "$(which virsh)" != "" ]; then
 	    for vps in $(virsh list | grep -v -e "State$" -e "------$" -e "^$" | awk \'{ print $2 }\'); do
+		    # Validate VPS name is safe alphanumeric + dash/underscore before shell use
+		    if ! echo "$vps" | grep -qE \'^[a-zA-Z0-9_-]+$\'; then
+			    continue;
+		    fi;
 		    ip="$(grep "$vps:" /root/cpaneldirect/vps.vncmap | cut -d: -f2)";
 		    if [ "$ip" = "" ]; then
 			    ip="66.45.228.100";
@@ -105,8 +109,14 @@ if (isset($_POST['action']) && $_POST['action'] == 'map') {
 } elseif (isset($_POST['action']) && $_POST['action'] == 'queue') {
     try {
         if (USE_REDIS === true) {
-            while (false !== $queue = $redis->lPop('queue:'.$_SERVER['REMOTE_ADDR'])) {
-                echo $queue.PHP_EOL;
+            $maxItems = 100;
+            $count = 0;
+            while ($count < $maxItems && false !== ($queue = $redis->lPop('queue:' . $_SERVER['REMOTE_ADDR']))) {
+                echo $queue . PHP_EOL;
+                $count++;
+            }
+            if ($count >= $maxItems) {
+                Worker::safeEcho("queue: hit max items limit ($maxItems), remaining items stay in queue\n");
             }
         } else {
             $queueArray = $memcache->get('queue');

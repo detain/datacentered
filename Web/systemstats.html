@@ -33,17 +33,16 @@
 		});
 	}
 
+	// Chart instance tracking to prevent memory leaks
+	const chartInstances = {};
+
 	// Get all data as json every 5 minutes
 	function get_all_json_data() {
 		$.getJSON('systemstats_data.php?q=all', function(data) {
 			// Give each html element a value
 			$.each(data, function(key, value) {
 				if (typeof value != "object") {
-					value = value.toString();
-					while (value.indexOf("\n") > -1) {
-						value = value.replace("\n", "<br />");
-					}
-					$('#'+key).html(value);
+					$('#'+key).texth(value.toString());
 				}
 			});
 			// Clears the graphs, so that they dont paint over each other.
@@ -77,8 +76,11 @@
 		});
 	}
 	function create_cpu_graph(free, used) {
+		if (chartInstances['cpu'] && chartInstances['cpu'].destroy) {
+			chartInstances['cpu'].destroy();
+		}
 		var cpu_data = [[['Free', free], ['Used', used]]];
-		var plot3 = $.jqplot('cpu', cpu_data, {
+		chartInstances['cpu'] = $.jqplot('cpu', cpu_data, {
 			grid: {
 				drawBorder: false,
 				drawGridlines: false,
@@ -100,8 +102,11 @@
 		});
 	}
 	function create_root_graph(free, used) {
+		if (chartInstances['fs'] && chartInstances['fs'].destroy) {
+			chartInstances['fs'].destroy();
+		}
 		var root_data = [[['Free', free], ['Used', used]]];
-		var plot3 = $.jqplot('fs', root_data, {
+		chartInstances['fs'] = $.jqplot('fs', root_data, {
 			grid: {
 				drawBorder: false,
 				drawGridlines: false,
@@ -124,8 +129,11 @@
 	}
 
 	function create_swap_graph(free, used ) {
+		if (chartInstances['swap'] && chartInstances['swap'].destroy) {
+			chartInstances['swap'].destroy();
+		}
 		var swap_data = [[['Free', free],['Used', used]]];
-		var plot3 = $.jqplot('swap', swap_data, {
+		chartInstances['swap'] = $.jqplot('swap', swap_data, {
 			grid: {
 				drawBorder: false,
 				drawGridlines: false,
@@ -148,8 +156,11 @@
 	}
 
 	function create_ram_graph(free, used) {
+		if (chartInstances['ram'] && chartInstances['ram'].destroy) {
+			chartInstances['ram'].destroy();
+		}
 		var ram_data = [[['Free', free],['Used', used]]];
-		var plot3 = $.jqplot('ram', ram_data, {
+		chartInstances['ram'] = $.jqplot('ram', ram_data, {
 			grid: {
 				drawBorder: false,
 				drawGridlines: false,

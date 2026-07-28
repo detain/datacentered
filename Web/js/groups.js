@@ -3,6 +3,13 @@ WEB_SOCKET_SWF_LOCATION = "/swf/WebSocketMain.swf"; // If the browser does not s
 WEB_SOCKET_DEBUG = true; // Open flash websocket debug
 var ws;
 
+// Helper to validate image src - reject javascript:, data:, vbscript: URLs
+function isValidImageSrc(src) {
+	if (!src || typeof src !== 'string') return false;
+	const lower = src.toLowerCase().trim();
+	return !(lower.startsWith('javascript:') || lower.startsWith('data:') || lower.startsWith('vbscript:'));
+}
+
 var ChOpper = (function (app) { //contacts
 	function Contact (id,name,ima,img,online) {
 		this.id = id;
@@ -146,7 +153,13 @@ var ChOpper = (function ChOpperModel (app) { //model
 			//var to_client_id = $("#client_list option:selected").attr("value");
 			//var to_client_name = $("#client_list option:selected").text();
 			var is_type = 'client';
-			ws.send('{"type":"say","to":"'+myChatId+'","is":"'+is_type+'","content":"'+$(".input-message").val().replace(/"/g, '\\"').replace(/\n/g,'\\n').replace(/\r/g, '\\r')+'"}');
+			const payload = {
+				type: 'say',
+				to: myChatId,
+				is: is_type,
+				content: $(".input-message").val()
+			};
+			ws.send(JSON.stringify(payload));
 			var msg = new appMessages($(".input-message").val(),contact.name,new Date().getHours() + ":" + new Date().getMinutes(),true,false,contact.img);
 			ChOpper.View.printMessage(msg);
 			currentChat.addMessage(msg);
@@ -306,35 +319,97 @@ var ChOpper = (function ChOpperView(app) { //view
 			$(".chat-head i").hide();
 			$(".information").css("display", "flex");
 			$("#close-contact-information").show();
+
+			// Build contact info safely using DOM APIs
+			const container = document.createElement('div');
+			const infoDiv = document.createElement('div');
+			const img = document.createElement('img');
+			const nameDiv = document.createElement('div');
+			const nameHeading = document.createElement('h1');
+			const namePara = document.createElement('p');
+			const listRoomsDiv = document.createElement('div');
+			const listRoomsHeading = document.createElement('h1');
+
+			container.appendChild(img);
+			container.appendChild(infoDiv);
+			infoDiv.appendChild(nameHeading);
+			infoDiv.appendChild(namePara);
+			container.appendChild(listRoomsDiv);
+			listRoomsDiv.id = 'listRooms';
+			listRoomsDiv.appendChild(listRoomsHeading);
+
+			// Validate and set img src
+			if (isValidImageSrc(currentChat.img)) {
+				img.src = currentChat.img;
+			} else {
+				img.src = '';
+				img.alt = 'Invalid avatar';
+			}
+			img.alt = 'Contact Avatar';
+
+			// Use textContent for name to prevent XSS
+			nameHeading.textContent = 'Name:';
+			namePara.textContent = currentChat.name || '';
+
 			if (currentChat.members == undefined) {
-				$(".information").append("<img src='" + currentChat.img + "'><div><h1>Name:</h1><p>" + currentChat.name + "</p></div><div id='listRooms'><h1>Rooms:</h1></div>");
+				// Rooms branch
+				listRoomsHeading.textContent = 'Rooms:';
+				$(".information").append(container);
 				for (var i = 0; i < currentChat.rooms.length; i++) {
-					html = $("<div class='listRooms'><img src='" + currentChat.rooms[i].img + "'><p>" + currentChat.rooms[i].name + "</p></div>");
-					$("#listRooms").append(html);
-					$(html).click(function (e) {
-						for (var i = 0; i < contactList.length; i++) {
-							if (($(currentChat).find("p").text()) == contactList[i].name) {
+					var roomItem = document.createElement('div');
+					roomItem.className = 'listRooms';
+					var roomImg = document.createElement('img');
+					var roomPara = document.createElement('p');
+					if (isValidImageSrc(currentChat.rooms[i].img)) {
+						roomImg.src = currentChat.rooms[i].img;
+					} else {
+						roomImg.src = '';
+						roomImg.alt = 'Invalid room image';
+					}
+					roomPara.textContent = currentChat.rooms[i].name || '';
+					roomItem.appendChild(roomImg);
+					roomItem.appendChild(roomPara);
+					var thatRoom = currentChat.rooms[i];
+					$(roomItem).click(function (e) {
+						for (var j = 0; j < contactList.length; j++) {
+							if ($(this).find("p").text() == contactList[j].name) {
 								$(".active-contact").removeClass("active-contact");
-								$("#" + contactList[i].id).addClass("active-contact");
-								ChOpper.Rooms.printChat(contactList[i]);
+								$("#" + contactList[j].id).addClass("active-contact");
+								ChOpper.Rooms.printChat(contactList[j]);
 							}
 						}
 					});
+					$("#listRooms").append(roomItem);
 				}
 			} else {
-				$(".information").append("<img src='" + currentChat.img + "'><div><h1>Name:</h1><p>" + currentChat.name + "</p></div><div id='listRooms'><h1>Members:</h1></div>");
+				// Members branch
+				listRoomsHeading.textContent = 'Members:';
+				$(".information").append(container);
 				for (var i = 0; i < currentChat.members.length; i++) {
-					html = $("<div class='listRooms'><img src='" + currentChat.members[i].img + "'><p>" + currentChat.members[i].name + "</p></div>");
-					$("#listRooms").append(html);
-					$(html).click(function (e) {
-						for (var i = 0; i < contactList.length; i++) {
-							if (($(currentChat).find("p").text()) == contactList[i].name) {
+					var memberItem = document.createElement('div');
+					memberItem.className = 'listRooms';
+					var memberImg = document.createElement('img');
+					var memberPara = document.createElement('p');
+					if (isValidImageSrc(currentChat.members[i].img)) {
+						memberImg.src = currentChat.members[i].img;
+					} else {
+						memberImg.src = '';
+						memberImg.alt = 'Invalid member image';
+					}
+					memberPara.textContent = currentChat.members[i].name || '';
+					memberItem.appendChild(memberImg);
+					memberItem.appendChild(memberPara);
+					var thatMember = currentChat.members[i];
+					$(memberItem).click(function (e) {
+						for (var j = 0; j < contactList.length; j++) {
+							if ($(this).find("p").text() == contactList[j].name) {
 								$(".active-contact").removeClass("active-contact");
-								$("#" + contactList[i].id).addClass("active-contact");
-								ChOpper.Contacts.printChat(contactList[i]);
+								$("#" + contactList[j].id).addClass("active-contact");
+								ChOpper.Contacts.printChat(contactList[j]);
 							}
 						}
 					});
+					$("#listRooms").append(memberItem);
 				}
 			}
 		},
@@ -476,7 +551,13 @@ var ChOpper = (function ChOpperCtrl(app) { //controller
 					var to_client_id = $("#client_list option:selected").attr("value");
 					var to_client_name = $("#client_list option:selected").text();
 					var is_type = 'client';
-					ws.send('{"type":"say","to":"'+to_client_id+'","is":"'+is_type+'","content":"'+input.value.replace(/"/g, '\\"').replace(/\n/g,'\\n').replace(/\r/g, '\\r')+'"}');
+					const msg = {
+						type: 'say',
+						to: to_client_id,
+						is: is_type,
+						content: input.value
+					};
+					ws.send(JSON.stringify(msg));
 					input.value = "";
 					input.focus();
 				});
