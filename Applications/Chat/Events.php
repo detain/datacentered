@@ -262,22 +262,66 @@ class Events
                 $timers['hyperv_update_list_timer'] = ['interval' => 3600, 'timer_id' => Timer::add(3600, ['Events', 'hyperv_update_list_timer'], $args)];
                 $timers['hyperv_queue_timer'] = ['interval' => 30, 'timer_id' => Timer::add(30, ['Events', 'hyperv_queue_timer'], $args)];
 
-                // Reaper: clean stale sysinfos entries every 5 minutes (Fix 4)
+                // Reaper: clean stale sysinfos entries every 5 minutes (MAJOR-10)
                 // Each entry has form: ['host' => $host, 'ts' => timestamp, ...]
                 Timer::add(300, function() use ($global) {
                     $cutoff = microtime(true) - 60; // entries older than 60 seconds
                     if (!isset($global->sysinfos)) return;
-                    $current = $global->sysinfos;
-                    if (!is_array($current)) return;
+                    $oldValue = $global->sysinfos;
+                    if (!is_array($oldValue)) return;
+                    $newValue = $oldValue;
                     $changed = false;
-                    foreach ($current as $k => $v) {
+                    foreach ($newValue as $k => $v) {
                         if (is_array($v) && isset($v['ts']) && $v['ts'] < $cutoff) {
-                            unset($current[$k]);
+                            unset($newValue[$k]);
                             $changed = true;
                         }
                     }
                     if ($changed) {
-                        $global->sysinfos = $current;
+                        $attempts = 0;
+                        do {
+                            $oldValue = $global->sysinfos;
+                            if (!is_array($oldValue)) break;
+                            $newValue = $oldValue;
+                            foreach ($oldValue as $k => $v) {
+                                if (is_array($v) && isset($v['ts']) && $v['ts'] < $cutoff) {
+                                    unset($newValue[$k]);
+                                }
+                            }
+                        } while (!$global->cas('sysinfos', $oldValue, $newValue) && $attempts++ < 5 && usleep(1000));
+                        if ($attempts >= 5 && !$global->cas('sysinfos', $oldValue, $newValue)) {
+                            Worker::safeEcho("sysinfos_reaper: CAS failed after all retries, stale entries remain\n");
+                        }
+                    }
+                });
+
+                // Reaper: clean stale channel messages entries every 60 seconds (MAJOR-11)
+                // Remove channels from channel_msgs_channels if no activity for 1 hour
+                Timer::add(60, function() use ($global) {
+                    $cutoff = time() - 3600; // 1 hour inactivity threshold
+                    if (!isset($global->channel_msgs_channels)) return;
+                    $oldChannels = $global->channel_msgs_channels;
+                    if (!is_array($oldChannels)) return;
+                    $newChannels = [];
+                    foreach ($oldChannels as $channel) {
+                        $tsKey = 'channel_msgs_ts:' . $channel;
+                        $ts = $global->$tsKey;
+                        if ($ts !== null && $ts > $cutoff) {
+                            $newChannels[] = $channel;
+                        } else {
+                            // Channel is stale - unset its timestamp key
+                            unset($global->$tsKey);
+                        }
+                    }
+                    if (count($newChannels) !== count($oldChannels)) {
+                        $attempts = 0;
+                        while ($attempts < 5) {
+                            if ($global->cas('channel_msgs_channels', $oldChannels, $newChannels)) {
+                                break;
+                            }
+                            $attempts++;
+                            usleep(1000);
+                        }
                     }
                 });
 
@@ -2877,17 +2921,22 @@ class Events
         $channelKey = 'channel_msgs:' . $channel;
         $global->add($channelKey, []);
 
-        // Track channels that have data for cleanup/enumeration
+        // Track channels that have data for cleanup/enumeration (MAJOR-11)
         $channelsKey = 'channel_msgs_channels';
         $global->add($channelsKey, []);
-        $channels = $global->$channelsKey;
-        if (!is_array($channels)) {
-            $channels = [];
-        }
-        if (!in_array($channel, $channels, true)) {
-            $channels[] = $channel;
-            $global->$channelsKey = $channels;
-        }
+        $timestampKey = 'channel_msgs_ts:' . $channel;
+        $now = time();
+        $global->$timestampKey = $now;
+
+        do {
+            $old_channels = $new_channels = $global->$channelsKey;
+            if (!is_array($old_channels)) {
+                $old_channels = $new_channels = [];
+            }
+            if (!in_array($channel, $old_channels, true)) {
+                $new_channels[] = $channel;
+            }
+        } while (!$global->cas($channelsKey, $old_channels, $new_channels));
 
         do {
             $old_value = $new_value = $global->$channelKey;
@@ -4216,6 +4265,8 @@ class Events
                     'time' => date('Y-m-d H:i:s')
                 ];
                 $rooms = $global->rooms;
+                if (!is_array($rooms)) $rooms = [];
+                $oldRooms = $rooms;
                 $updated = false;
                 foreach ($rooms as $idx => $room) {
                     if (($key = array_search($_SESSION['uid'], $room['members'])) !== false) {
@@ -4226,7 +4277,18 @@ class Events
                     }
                 }
                 if ($updated === true) {
-                    $global->rooms = $rooms;
+                    $attempts = 0;
+                    do {
+                        $oldRooms = $global->rooms;
+                        if (!is_array($oldRooms)) break;
+                        $rooms = $oldRooms;
+                        foreach ($oldRooms as $idx => $room) {
+                            if (($key = array_search($_SESSION['uid'], $room['members'])) !== false) {
+                                unset($rooms[$idx]['members'][$key]);
+                            }
+                        }
+                        $rooms = array_values($rooms);
+                    } while (!$global->cas('rooms', $oldRooms, $rooms) && $attempts++ < 5 && usleep(1000));
                 }
             }
             if (isset($_SESSION['ima'])) {

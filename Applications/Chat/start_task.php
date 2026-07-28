@@ -92,9 +92,7 @@ $task_worker->onMessage = function ($connection, $task_data) {
     if (isset($task_data['type']) && in_array($task_data['type'], $functions)) {
         // Lazy-load the task file on first call
         $task_file = __DIR__ . '/../../Tasks/' . $task_data['type'] . '.php';
-        if (file_exists($task_file)) {
-            require_once $task_file;
-        }
+        require_once $task_file;
         try {
             if (isset($task_data['args'])) {
                 $return = call_user_func($task_data['type'], $task_data['args']);

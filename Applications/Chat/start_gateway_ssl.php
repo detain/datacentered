@@ -30,8 +30,7 @@ $gateway_ssl->lanIp = '127.0.0.1'; // When distributed deployment set to intrane
 $gateway_ssl->startPort = 2400; // Internal communication start port. If $ gateway-> count = 4, the starting port is 2300. 2300 2301 2302 2303 4 ports are generally used as the internal communication port
 $gateway_ssl->pingInterval = 60; // Heartbeat interval
 $gateway_ssl->pingNotResponseLimit = 2;
-//$gateway->pingData = '{"type":"ping"}'; // heartbeat data
-$gateway_ssl->pingData = ''; // heartbeat data
+$gateway_ssl->pingData = '{"type":"ping"}'; // heartbeat data
 $gateway_ssl->registerAddress = GLOBALDATA_IP.':1236'; // Service registration address
 //$gateway->maxSendBufferSize = 102400000;
 //$gateway->onWorkerStart = function($worker) {};
