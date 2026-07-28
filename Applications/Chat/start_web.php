@@ -29,8 +29,17 @@ define('WEBROOT', realpath(__DIR__.'/../../Web'));
 
 $web->onMessage = function (TcpConnection $connection, Request $request) {
     global $_GET, $_POST;
-    $addr = explode(':', $connection->getRemoteAddress());
-    $_SERVER['REMOTE_ADDR'] = $addr[0];
+    $remoteAddr = $connection->getRemoteAddress();
+    // Handle IPv6 addresses like [::1]:55151 or fe80::1:55151
+    if (strpos($remoteAddr, '[') !== false) {
+        // IPv6 format: [address]:port
+        preg_match('/\[([^\]]+)\]:?(\d+)?/', $remoteAddr, $matches);
+        $_SERVER['REMOTE_ADDR'] = $matches[1] ?? $remoteAddr;
+    } else {
+        // IPv4 format: address:port
+        $parts = explode(':', $remoteAddr);
+        $_SERVER['REMOTE_ADDR'] = $parts[0];
+    }
     $_GET = $request->get();
     $_POST = $request->post();
     $path = $request->path();
@@ -55,7 +64,7 @@ $web->onMessage = function (TcpConnection $connection, Request $request) {
     if (!empty($if_modified_since = $request->header('if-modified-since'))) {
         // Check 304.
         $info = \stat($file);
-        $modified_time = $info ? \date('D, d M Y H:i:s', $info['mtime']) . ' ' . \date_default_timezone_get() : '';
+        $modified_time = $info ? \gmdate('D, d M Y H:i:s', $info['mtime']) . ' GMT' : '';
         if ($modified_time === $if_modified_since) {
             $connection->send(new Response(304));
             return;
@@ -71,7 +80,7 @@ function exec_php_file($file)
     // Try to include php file.
     try {
         include $file;
-    } catch (\Exception $e) {
+    } catch (\Throwable $e) {
         echo $e;
     }
     return \ob_get_clean();
