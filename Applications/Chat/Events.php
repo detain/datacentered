@@ -18,7 +18,6 @@ use Workerman\Timer;
 
 require_once __DIR__.'/Process.php';
 require_once __DIR__.'/stdObject.php';
-require_once '/home/sites/mystage/include/Session.php';
 require_once __DIR__.'/FeatureFlags.php';
 
 class Events

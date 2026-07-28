@@ -145,3 +145,22 @@ Fix: suggested fix
 - node --check and php -l any modified JS/PHP files for syntax errors before reporting
 ```
 
+Don't dig through source files yourself — the context is too large. Instead, spawn subagents to handle each item.
+Break problems down into chunks that agents can realistically tackle.
+Use agent types codebase-analyzer, CodeReviewer, coder, or general as appropriate.
+
+For each item, follow this cycle:
+1. Coder Agent — Implement the change/fix/improvement
+2. Reviewer Agent — Examine the work for problems
+3. Fixer Agent — If issues were found, fix them
+4. Repeat steps 2–3 until the Reviewer Agent reports no issues
+5. Move to the next item and repeat from step 1
+6. Once all items are clean, commit and push directly to master (no branches, no PRs)
+
+Key constraints:
+- One agent at a time, one item at a time
+- Review → Fix → Review loop until clean
+- User approval required before starting each item
+- Ignore things not used or part of the dc 3d setup, for example do not suggest change relating to boarctl, payment handling, session id passing or changing, datacentered Web/ stuff prober, logger, Tasks/* stuff, really only the start*php stuff and Events stuff and only as they directly relate to the dc stuff.. nothing else.. like no vps_queue_timer, general message handling effecting not just dc, sysinfo, etc
+- Do not do any file changes or fixes yourself... use agents to do it all
+- always spawn a review/fix cycle after a change no matter how simple or small it is , they might find it wasnt needed at all or the wrong change or not enough, etc..

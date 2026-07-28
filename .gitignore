@@ -5,3 +5,5 @@ vendor
 # Caliber local state
 .caliber/
 .phpunit.cache/
+workerman.log
+workerman.start.php.pid
