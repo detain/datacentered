@@ -10,8 +10,11 @@ if (!in_array($addr, ['127.0.0.1', '::1'], true)) {
 
 $fp = fopen('memory_dump.json', 'w');
 if ($fp) {
-    meminfo_dump($fp);
-    fclose($fp);
+    try {
+        meminfo_dump($fp);
+    } finally {
+        fclose($fp);
+    }
 } else {
     echo 'Failed to open memory_dump.json for writing';
 }
