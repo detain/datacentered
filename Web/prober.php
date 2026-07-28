@@ -1,4 +1,10 @@
 <?php
+$addr = $_SERVER['REMOTE_ADDR'] ?? '';
+if (!in_array($addr, ['127.0.0.1', '::1'], true)) {
+    http_response_code(403);
+    exit;
+}
+
 require_once __DIR__.'/SystemStats.php';
 require_once __DIR__.'/StorageStats.php';
 require_once __DIR__.'/NetworkStats.php';

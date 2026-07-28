@@ -60,6 +60,12 @@ $trigger_payment_respond = function ($payload) {
 };
 
 try {
+    // --- IP allowlist: local-only -------------------------------------------
+    $addr = $_SERVER['REMOTE_ADDR'] ?? '';
+    if (!in_array($addr, ['127.0.0.1', '::1'], true)) {
+        $trigger_payment_respond(['status' => 'error', 'error' => 'unauthorized']);
+        return;
+    }
     // --- auth: shared-secret token, constant-time compare -------------------
     $configuredToken = defined('WS_TRIGGER_TOKEN') ? (string) constant('WS_TRIGGER_TOKEN') : '';
     $presentedToken = isset($_POST['token']) ? (string) $_POST['token'] : '';

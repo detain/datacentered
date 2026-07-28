@@ -1,12 +1,19 @@
 <?php
 
+$addr = $_SERVER['REMOTE_ADDR'] ?? '';
+if (!in_array($addr, ['127.0.0.1', '::1'], true)) {
+    http_response_code(403);
+    exit;
+}
+
 include_once __DIR__.'/../../vps_hosts/workerman/SystemStats.php';
 include_once __DIR__.'/../../vps_hosts/workerman/NetworkStats.php';
 include_once __DIR__.'/../../vps_hosts/workerman/StorageStats.php';
 
 header('Content-type: application/json');
 $stats = [];
-if ($_GET['q'] == 'all') {
+$q = $_GET['q'] ?? '';
+if ($q === 'all') {
     foreach (['System','Network','Storage'] as $base) {
         $class_methods = get_class_methods($base.'Stats');
         foreach ($class_methods as $method_name) {
@@ -15,10 +22,10 @@ if ($_GET['q'] == 'all') {
             }
         }
     }
-} elseif ($_GET['q'] == 'cpu') {
+} elseif ($q === 'cpu') {
     $stats['cpu_load_perc_free'] = SystemStats::cpu_load_perc_free();
     $stats['cpu_load_perc_used'] = SystemStats::cpu_load_perc_used();
-} elseif ($_GET['q'] == 'network') {
+} elseif ($q === 'network') {
     $stats['dl_speed'] = NetworkStats::dl_speed();
     $stats['ul_speed'] = NetworkStats::ul_speed();
     $stats['total_downloaded'] = NetworkStats::total_downloaded();
