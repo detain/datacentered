@@ -11,7 +11,8 @@ function vps_queue_task($args)
     */
     global $global;
     $db = App::db();
-    $db->query("select * from vps_masters left join vps_master_details using (vps_id) where vps_id=".$args['id']);
+    $db->bindValue('id', (int)$args['id'], 'int');
+    $db->query("select * from vps_masters left join vps_master_details using (vps_id) where vps_id=:id", __LINE__, __FILE__);
     $rows = [];
     $sids = [];
     $output = '';
@@ -21,6 +22,7 @@ function vps_queue_task($args)
         $rows[$db->Record['vps_id']] = $db->Record;
         $sids[] = $db->Record['vps_id'];
     }
+    $sids = array_map('intval', $sids);
     $db->query("select * from vps where vps_status='pending-setup' and vps_server in (".implode(',', $sids).")", __LINE__, __FILE__);
     if ($db->num_rows() > 0) {
         while ($db->next_record(MYSQL_ASSOC)) {

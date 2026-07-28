@@ -21,6 +21,10 @@ function sync_hyperv_queue($args)
         $rows[$db->Record['vps_id']] = $db->Record;
         $sids[] = $db->Record['vps_id'];
     }
+    if (empty($sids)) {
+        // No HyperV masters found — nothing to sync
+        return;
+    }
     $db->query("select * from vps, accounts where vps_status='pending-setup' and vps_custid=account_id and account_status != 'locked' and vps_server in (".implode(',', $sids).")", __LINE__, __FILE__);
     if ($db->num_rows() > 0) {
         while ($db->next_record(MYSQL_ASSOC)) {

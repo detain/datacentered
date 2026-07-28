@@ -83,10 +83,10 @@ function map_queue_task($args)
                                 Worker::safeEcho('Updating '.$prefix.'_ips '.$ip.' '.implode(', ', $uptext).PHP_EOL);
                                 $worker_db->update($prefix.'_ips')
                                     ->cols(['ips_used', 'ips_main', 'ips_'.$prefix])
-                                    ->where("ips_ip='{$ip}'")
+                                    ->where('ips_ip=:ip')
+                                    ->bindValue('ip', $ip)
                                     ->bindValues(['ips_used' => 1, 'ips_main' => 0, 'ips_'.$prefix => $row[$prefix.'_id']])
                                     ->query();
-                                error_log('SQL Query '.__LINE__.' '.__FILE__.' '."update {$prefix}_ips set ips_used=1, ips_main=0, ips_{$prefix}={$row[$prefix.'_id']} where ips_ip='{$ip}'");
                             }
                         }
                     }

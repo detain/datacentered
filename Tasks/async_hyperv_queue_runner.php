@@ -31,23 +31,26 @@ function async_hyperv_queue_runner($args)
         $global->$var = 0;
     }
     if ($global->cas($var, 0, time())) {
-        $global->$requestVar = 'get_new_vps';
-        Worker::safeEcho("timer running hyperv async queue processing for {$service_id} {$service_master['vps_name']}\n");
-        function_requirements('vps_queue_handler');
-        if (sizeof($service_master['newvps']) > 0) {
-            myadmin_log('myadmin', 'info', 'Processing New VPS for '.$service_master['vps_name'], __LINE__, __FILE__, 'vps');
-            vps_queue_handler($service_master, 'get_new_vps', $service_master['newvps']);
+        try {
+            $global->$requestVar = 'get_new_vps';
+            Worker::safeEcho("timer running hyperv async queue processing for {$service_id} {$service_master['vps_name']}\n");
+            function_requirements('vps_queue_handler');
+            if (sizeof($service_master['newvps']) > 0) {
+                myadmin_log('myadmin', 'info', 'Processing New VPS for '.$service_master['vps_name'], __LINE__, __FILE__, 'vps');
+                vps_queue_handler($service_master, 'get_new_vps', $service_master['newvps']);
+            }
+            $global->$requestVar = time();
+            $global->$requestVar = 'get_queue';
+            if (sizeof($service_master['queue']) > 0) {
+                myadmin_log('myadmin', 'info', 'Processing VPS Queue for '.$service_master['vps_name'], __LINE__, __FILE__, 'vps');
+                vps_queue_handler($service_master, 'get_queue', $service_master['queue']);
+            }
+            $global->$requestVar = time();
+            $global->$requestVar = 'server_list';
+            vps_queue_handler($service_master, 'server_list');
+        } finally {
+            $global->$var = 0;
         }
-        $global->$requestVar = time();
-        $global->$requestVar = 'get_queue';
-        if (sizeof($service_master['queue']) > 0) {
-            myadmin_log('myadmin', 'info', 'Processing VPS Queue for '.$service_master['vps_name'], __LINE__, __FILE__, 'vps');
-            vps_queue_handler($service_master, 'get_queue', $service_master['queue']);
-        }
-        $global->$requestVar = time();
-        $global->$requestVar = 'server_list';
-        vps_queue_handler($service_master, 'server_list');
-        $global->$var = 0;
     } else {
         $delay = (int)time() - (int)$global->$var;
         Worker::safeEcho("timer couldnt get lock to start hyperv async queue processing for {$service_master['vps_name']} (currently running {$global->$requestVar} for {$delay} seconds)\n");
