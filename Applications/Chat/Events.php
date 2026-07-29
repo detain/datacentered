@@ -80,6 +80,45 @@ class Events
     // Note: oneshot timer is intentionally not cleared — worker restarts (~daily) reclaim memory.
     // If long-running workers become a memory concern, add Timer::del($moveBatchTimer) on worker shutdown.
 
+    // ====================================================================
+    // Bot Presence System (DataCenter 3D)
+    // When a real user joins the DC presence session, spawn a simulated bot
+    // avatar that walks around the datacenter building.
+    // ====================================================================
+
+    /** Default datacenter/location name when no location is specified. */
+    const BOT_DEFAULT_LOCATION = 'main';
+
+    /** Bot movement interval in seconds (500ms). */
+    const BOT_MOVE_INTERVAL = 0.5;
+
+    /** Bot walking speed in units per second (realistic human walking pace ~1.2 units/sec). */
+    const BOT_WALK_SPEED = 1.2;
+
+    /** Default datacenter bounds (X axis). */
+    const BOT_BOUNDS_X_MIN = -50.0;
+    const BOT_BOUNDS_X_MAX = 50.0;
+
+    /** Default datacenter bounds (Z axis). */
+    const BOT_BOUNDS_Z_MIN = -50.0;
+    const BOT_BOUNDS_Z_MAX = 50.0;
+
+    /** Distance threshold to consider bot has reached its target (units). */
+    const BOT_TARGET_THRESHOLD = 1.0;
+
+    /**
+     * Bot names - randomly selected for variety.
+     *
+     * @var string[]
+     */
+    private static $botNames = [
+        'Visitor',
+        'Guest',
+        'Explorer',
+        'Traveler',
+        'Wanderer',
+    ];
+
     /**
      * Emit a structured JSON log line (JSON Lines format).
      *
@@ -3853,6 +3892,12 @@ class Events
             }
         } while (!$global->cas($activeClientsKey, $oldActiveClients ?? [], $activeClients));
 
+        // Bot Presence System: spawn a bot avatar for this location if one doesn't exist
+        // The bot walks around the datacenter, simulating other visitors
+        if (FeatureFlags::dcBotPresenceEnabled()) {
+            self::spawnBotForLocation(self::BOT_DEFAULT_LOCATION);
+        }
+
         Worker::safeEcho("[{$client_id}] dc.presence.join: {$uid} joined at ({$x}, {$z}, {$yaw})\n");
         Gateway::sendToClient($client_id, json_encode([
             'v' => 1,
@@ -4080,6 +4125,26 @@ class Events
 
         // Clean up client_id index (CAS loop to prevent concurrent leaves on different workers losing entries)
         $clientIndexKey = 'dc_presence_clients';
+
+        // Bot Presence System: check if this was the last real user at this location
+        // If so, clean up the bot for that location
+        $wasLastRealUser = false;
+        $clientListBefore = $global->$clientIndexKey ?? [];
+        if (is_array($clientListBefore)) {
+            $realUserCount = 0;
+            foreach ($clientListBefore as $cid) {
+                if (is_string($cid) && strpos($cid, 'bot_') === 0) {
+                    continue;  // Skip bot client IDs
+                }
+                if ($cid !== $client_id) {
+                    $realUserCount++;
+                }
+            }
+            if ($realUserCount === 0) {
+                $wasLastRealUser = true;
+            }
+        }
+
         do {
             $clientList = $global->$clientIndexKey ?? [];
             if (!is_array($clientList)) { break; }
@@ -4087,6 +4152,11 @@ class Events
             if ($newList === $clientList) { break; }  // nothing changed
             $oldList = $clientList;
         } while (!$global->cas($clientIndexKey, $oldList, $newList));
+
+        // If this was the last real user, clean up the bot for this location
+        if ($wasLastRealUser && FeatureFlags::dcBotPresenceEnabled()) {
+            self::cleanupBotForLocation(self::BOT_DEFAULT_LOCATION);
+        }
 
         Worker::safeEcho("[{$client_id}] dc.presence.leave: uid={$uid} client_id={$client_id} left the scene\n");
         Gateway::sendToClient($client_id, json_encode([
@@ -4249,6 +4319,329 @@ class Events
                 Worker::safeEcho("[dc_presence] dropped {$clientId} — missed keepalive\n");
             }
         });
+    }
+
+    // ====================================================================
+    // Bot Presence System (DataCenter 3D)
+    // ====================================================================
+
+    /**
+     * Spawn a bot avatar for a given datacenter location if one doesn't exist.
+     * The bot walks around the datacenter building, simulating a real user.
+     * Uses GlobalData to store bot state so multiple BusinessWorkers can access it.
+     *
+     * @param string $location Datacenter location name (default: 'main')
+     */
+    public static function spawnBotForLocation(string $location = self::BOT_DEFAULT_LOCATION): void
+    {
+        if (!FeatureFlags::dcBotPresenceEnabled()) {
+            return;
+        }
+
+        global $global;
+
+        $botId = 'bot_' . $location;
+        $botTimerKey = 'dc_bot_timer:' . $location;
+        $botStateKey = 'dc_bot_state:' . $location;
+
+        // Check for stale timer from lost state
+        $existingTimer = $global->{$botTimerKey} ?? null;
+        $existingState = $global->{$botStateKey} ?? null;
+        if ($existingTimer !== null) {
+            if ($existingState === null) {
+                // Stale timer from lost state - clean it up
+                Timer::del($existingTimer);
+                unset($global->{$botTimerKey});
+            } else {
+                return; // Bot already exists for this location
+            }
+        }
+
+        // Pick a random bot name
+        $botName = self::$botNames[array_rand(self::$botNames)] . ' ' . substr(md5(uniqid((string)mt_rand(), true)), 0, 4);
+
+        // Spawn position - random position within bounds
+        $spawnX = self::BOT_BOUNDS_X_MIN + lcg_value() * (self::BOT_BOUNDS_X_MAX - self::BOT_BOUNDS_X_MIN);
+        $spawnZ = self::BOT_BOUNDS_Z_MIN + lcg_value() * (self::BOT_BOUNDS_Z_MAX - self::BOT_BOUNDS_Z_MIN);
+        $spawnYaw = lcg_value() * 2 * M_PI;  // Random initial facing direction
+
+        // Initialize bot state
+        $botState = [
+            'uid' => $botId,
+            'name' => $botName,
+            'x' => $spawnX,
+            'z' => $spawnZ,
+            'yaw' => $spawnYaw,
+            'target_x' => $spawnX,
+            'target_z' => $spawnZ,
+            'ts' => time(),
+            'client_id' => $botId,
+            'location' => $location,
+        ];
+        $global->$botStateKey = $botState;
+
+        // Write bot presence entry to GlobalData (same format as real users)
+        $presenceKey = 'dc_presence:client:' . $botId;
+        $global->$presenceKey = $botState;
+
+        // Add bot to active clients list (CRIT-8 pattern for atomicity)
+        $activeClientsKey = 'dc_active_clients';
+        do {
+            $activeClients = $global->$activeClientsKey ?? [];
+            $activeClients = is_array($activeClients) ? $activeClients : [];
+            if (!in_array($botId, $activeClients, true)) {
+                $activeClients[] = $botId;
+            }
+            $oldActiveClients = $global->$activeClientsKey ?? null;
+            if ($oldActiveClients === $activeClients) {
+                break;
+            }
+        } while (!$global->cas($activeClientsKey, $oldActiveClients ?? [], $activeClients));
+
+        // Add bot to client index so it's included in batch broadcasts
+        $clientIndexKey = 'dc_presence_clients';
+        do {
+            $currentList = $global->$clientIndexKey;
+            $clientList = is_array($currentList) ? array_values($currentList) : [];
+            if (!in_array($botId, $clientList, true)) {
+                $clientList[] = $botId;
+            }
+            $oldForCas = is_array($currentList) ? $currentList : [];
+            if ($currentList === $clientList || $global->cas($clientIndexKey, $oldForCas, $clientList)) {
+                break;
+            }
+        } while (true);
+
+        // Start the bot movement timer
+        // Using repeating timer that calls moveBot every BOT_MOVE_INTERVAL seconds
+        $timerId = Timer::add(
+            self::BOT_MOVE_INTERVAL,
+            ['Events', 'moveBot'],
+            [$location],
+            true  // repeating
+        );
+        $global->{$botTimerKey} = $timerId;
+
+        Worker::safeEcho("[dc_bot] spawned bot '{$botName}' ({$botId}) at location '{$location}' at ({$spawnX}, {$spawnZ})\n");
+    }
+
+    /**
+     * Move the bot for a given location - called every BOT_MOVE_INTERVAL seconds.
+     * Implements realistic wandering: picks a target point and walks toward it.
+     *
+     * @param string $location Datacenter location name
+     */
+    public static function moveBot(string $location = self::BOT_DEFAULT_LOCATION): void
+    {
+        if (!FeatureFlags::dcBotPresenceEnabled()) {
+            self::cleanupBotForLocation($location);
+            return;
+        }
+
+        // Skip broadcasting if no real users are watching
+        if (!self::hasRealUsersAtLocation($location)) {
+            return;
+        }
+
+        global $global;
+
+        $botId = 'bot_' . $location;
+        $botStateKey = 'dc_bot_state:' . $location;
+        $botState = $global->{$botStateKey};
+
+        if (!$botState || !is_array($botState)) {
+            // Bot state missing - try to recover or stop
+            self::cleanupBotForLocation($location);
+            return;
+        }
+
+        $currentX = (float)$botState['x'];
+        $currentZ = (float)$botState['z'];
+        $targetX = (float)($botState['target_x'] ?? $currentX);
+        $targetZ = (float)($botState['target_z'] ?? $currentZ);
+
+        // Calculate distance to target
+        $dx = $targetX - $currentX;
+        $dz = $targetZ - $currentZ;
+        $distance = sqrt($dx * $dx + $dz * $dz);
+
+        // If close to target or no target, pick a new random target
+        if ($distance < self::BOT_TARGET_THRESHOLD) {
+            $randomSeed = lcg_value();
+            $targetX = self::BOT_BOUNDS_X_MIN + $randomSeed * (self::BOT_BOUNDS_X_MAX - self::BOT_BOUNDS_X_MIN);
+            $targetZ = self::BOT_BOUNDS_Z_MIN + (1 - $randomSeed) * (self::BOT_BOUNDS_Z_MAX - self::BOT_BOUNDS_Z_MIN);
+            $botState['target_x'] = $targetX;
+            $botState['target_z'] = $targetZ;
+
+            // Recalculate for new target
+            $dx = $targetX - $currentX;
+            $dz = $targetZ - $currentZ;
+            $distance = sqrt($dx * $dx + $dz * $dz);
+        }
+
+        if ($distance > 0.01) {
+            // Normalize direction
+            $dirX = $dx / $distance;
+            $dirZ = $dz / $distance;
+
+            // Move toward target (speed * interval = distance per tick)
+            $moveDistance = self::BOT_WALK_SPEED * self::BOT_MOVE_INTERVAL;
+            $newX = $currentX + $dirX * $moveDistance;
+            $newZ = $currentZ + $dirZ * $moveDistance;
+
+            // Clamp to bounds (should already be within bounds, but safety check)
+            $newX = max(self::BOT_BOUNDS_X_MIN, min(self::BOT_BOUNDS_X_MAX, $newX));
+            $newZ = max(self::BOT_BOUNDS_Z_MIN, min(self::BOT_BOUNDS_Z_MAX, $newZ));
+
+            // Calculate yaw to face movement direction
+            $yaw = atan2(-$dirX, -$dirZ);  // Yaw in radians, 0 = facing +Z
+
+            $botState['x'] = $newX;
+            $botState['z'] = $newZ;
+            $botState['yaw'] = $yaw;
+            $botState['ts'] = time();
+
+            // Update bot state in GlobalData
+            $global->$botStateKey = $botState;
+
+            // Write to batch key so batch timer broadcasts this move
+            $batchKey = 'dc_move_batch:' . $botId;
+            $global->{$batchKey} = json_encode($botState);
+
+            // Schedule batch flush if not already scheduled (same pattern as handleDcPresenceMove)
+            if (self::$moveBatchTimer === null) {
+                self::$moveBatchTimer = Timer::add(0.05, function () {
+                    global $global;
+                    $batch = [];
+                    $clientIndexKey = 'dc_presence_clients';
+                    $clientList = $global->$clientIndexKey ?? [];
+                    if (is_array($clientList)) {
+                        foreach ($clientList as $cid) {
+                            $bk = 'dc_move_batch:' . $cid;
+                            $encoded = $global->{$bk};
+                            if ($encoded) {
+                                $decoded = json_decode($encoded, true);
+                                if ($decoded) {
+                                    $batch[$cid] = $decoded;
+                                }
+                            }
+                        }
+                    }
+                    if (empty($batch)) {
+                        self::$moveBatchTimer = null;
+                        return;
+                    }
+                    self::$moveBatchTimer = null;
+
+                    // Broadcast the batch
+                    $payload = json_encode([
+                        'op' => 'dc.presence.batch_updated',
+                        'data' => $batch
+                    ]);
+                    if (self::$channelClient !== null) {
+                        (self::$channelClient)('dc_presence', $payload);
+                    } else {
+                        try {
+                            \Channel\Client::publish('dc_presence', $payload);
+                        } catch (\Throwable $e) {
+                            Worker::safeEcho("dc_bot batch publish failed: {$e->getMessage()}\n");
+                        }
+                    }
+
+                    // Clear batch entries
+                    foreach ($batch as $moverCid => $moverEntry) {
+                        $bk = 'dc_move_batch:' . $moverCid;
+                        unset($global->{$bk});
+                    }
+                }, [], false);
+            }
+        }
+    }
+
+    /**
+     * Clean up (remove) the bot for a given datacenter location.
+     * Called when the last real user leaves the location.
+     *
+     * @param string $location Datacenter location name
+     */
+    public static function cleanupBotForLocation(string $location = self::BOT_DEFAULT_LOCATION): void
+    {
+        global $global;
+
+        $botId = 'bot_' . $location;
+        $botTimerKey = 'dc_bot_timer:' . $location;
+        $botStateKey = 'dc_bot_state:' . $location;
+
+        // Stop and remove the timer
+        $timerId = $global->{$botTimerKey} ?? null;
+        if ($timerId !== null) {
+            Timer::del($timerId);
+            unset($global->{$botTimerKey});
+        }
+
+        // Remove bot state
+        unset($global->{$botStateKey});
+
+        // Remove bot presence entry
+        $presenceKey = 'dc_presence:client:' . $botId;
+        $global->$presenceKey = null;
+
+        // Remove from active clients list (CRIT-8 pattern)
+        $activeClientsKey = 'dc_active_clients';
+        do {
+            $activeClients = $global->$activeClientsKey ?? [];
+            $activeClients = is_array($activeClients) ? $activeClients : [];
+            $filtered = array_values(array_filter($activeClients, fn($c) => $c !== $botId));
+            $oldActiveClients = $global->$activeClientsKey ?? null;
+            if ($oldActiveClients === $filtered) {
+                break;
+            }
+        } while (!$global->cas($activeClientsKey, $oldActiveClients ?? [], $filtered));
+
+        // Remove from client index
+        $clientIndexKey = 'dc_presence_clients';
+        do {
+            $currentList = $global->$clientIndexKey ?? [];
+            if (!is_array($currentList)) break;
+            $newList = array_values(array_filter($currentList, fn($c) => $c !== $botId));
+            if ($newList === $currentList) break;
+            $oldList = $currentList;
+        } while (!$global->cas($clientIndexKey, $oldList, $newList));
+
+        // Clean up any pending batch entries
+        unset($global->{'dc_move_batch:' . $botId});
+
+        Worker::safeEcho("[dc_bot] cleaned up bot for location '{$location}'\n");
+    }
+
+    /**
+     * Check if any real (non-bot) users are present at a location.
+     * Returns true if there are real users, false if only bots or no users.
+     *
+     * @param string $location Datacenter location name
+     * @return bool True if real users exist
+     */
+    private static function hasRealUsersAtLocation(string $location = self::BOT_DEFAULT_LOCATION): bool
+    {
+        global $global;
+
+        $clientIndexKey = 'dc_presence_clients';
+        $clientList = $global->$clientIndexKey ?? [];
+
+        if (!is_array($clientList) || empty($clientList)) {
+            return false;
+        }
+
+        foreach ($clientList as $clientId) {
+            // Skip bot client IDs
+            if (is_string($clientId) && strpos($clientId, 'bot_') === 0) {
+                continue;
+            }
+            // This is a real user
+            return true;
+        }
+
+        return false;
     }
 
     /**

@@ -50,6 +50,9 @@ class FeatureFlags
     /** Flag B variable name in GlobalData. */
     public const VAR_LEGACY_COMPAT = 'ws_legacy_compat';
 
+    /** Flag C variable name in GlobalData — DC bot presence (datacenter 3D). */
+    public const VAR_DC_BOT_PRESENCE = 'dc_bot_presence';
+
     /**
      * Lazily-created fallback GlobalData client (used when no $global exists
      * in this process, e.g. web/CLI contexts).
@@ -120,6 +123,52 @@ class FeatureFlags
         } catch (\Throwable $e) {
             self::log('FeatureFlags::legacyCompatEnabled GlobalData error, defaulting ON: '.$e->getMessage()."\n");
             return true;
+        }
+    }
+
+    /**
+     * Flag C — is the DC bot presence system enabled?
+     *
+     * When enabled, a bot avatar wanders the datacenter for each location
+     * whenever a real user joins the DC presence session.
+     *
+     * @return bool true when bot presence is enabled (the default);
+     *              false when disabled via operator toggle
+     */
+    public static function dcBotPresenceEnabled()
+    {
+        try {
+            $global = self::globalData();
+            if ($global === null) {
+                return true;  // Default to enabled when GlobalData unavailable
+            }
+            $var = self::VAR_DC_BOT_PRESENCE;
+            return isset($global->$var) ? (bool) $global->$var : true;
+        } catch (\Throwable $e) {
+            self::log('FeatureFlags::dcBotPresenceEnabled GlobalData error, defaulting ON: '.$e->getMessage()."\n");
+            return true;
+        }
+    }
+
+    /**
+     * Set Flag C (DC bot presence) at runtime (operator tooling).
+     *
+     * @param bool $on
+     * @return bool true if the flag was written to GlobalData
+     */
+    public static function setDcBotPresence($on)
+    {
+        try {
+            $global = self::globalData();
+            if ($global === null) {
+                return false;
+            }
+            $var = self::VAR_DC_BOT_PRESENCE;
+            $global->$var = $on ? 1 : 0;
+            return true;
+        } catch (\Throwable $e) {
+            self::log('FeatureFlags::setDcBotPresence GlobalData error: '.$e->getMessage()."\n");
+            return false;
         }
     }
 
