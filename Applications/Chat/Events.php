@@ -876,6 +876,7 @@ class Events
                 'data' => [
                     'session' => $hub_session,
                     'uid' => $uid,
+                    'clientId' => $client_id,
                     'name' => $results[0]['account_lid'],
                     'hub_time' => time()
                 ]
@@ -1013,6 +1014,7 @@ class Events
                 'session' => $hub_session,
                 'host_id' => intval($row[$id_col]),
                 'uid' => $uid,
+                'clientId' => $client_id,
                 'name' => $_SESSION['name'],
                 'hub_time' => time(),
                 // Minimal stub for this step: real timer scheduling is a later
@@ -3805,8 +3807,8 @@ class Events
         $yaw = isset($data['yaw']) && is_numeric($data['yaw']) ? (float) $data['yaw'] : 0.0;
         $name = $_SESSION['name'] ?? '';
 
-        // Per-uid key eliminates CAS contention across all concurrent join/move/leave ops
-        $key = 'dc_presence:' . $uid;
+        // Per-client_id key so multiple tabs with same session/uid each get their own presence entry
+        $key = 'dc_presence:client:' . $client_id;
         $newEntry = [
             'uid' => $uid,
             'name' => $name,
@@ -3822,17 +3824,17 @@ class Events
         }
         $global->$key = $newEntry;
 
-        // Maintain uid → key mapping for efficient iteration in setupSessionHealthTimer
-        // CAS loop to prevent concurrent joins on different workers losing uid entries
-        $uidIndexKey = 'dc_presence_uids';
+        // Maintain client_id → key mapping for efficient iteration in setupSessionHealthTimer
+        // CAS loop to prevent concurrent joins on different workers losing client_id entries
+        $clientIndexKey = 'dc_presence_clients';
         do {
-            $currentList = $global->$uidIndexKey;
-            $uidList = is_array($currentList) ? array_values($currentList) : [];
-            if (!in_array($uid, $uidList, true)) {
-                $uidList[] = $uid;
+            $currentList = $global->$clientIndexKey;
+            $clientList = is_array($currentList) ? array_values($currentList) : [];
+            if (!in_array($client_id, $clientList, true)) {
+                $clientList[] = $client_id;
             }
             $oldForCas = is_array($currentList) ? $currentList : [];
-            if ($currentList === $uidList || $global->cas($uidIndexKey, $oldForCas, $uidList)) {
+            if ($currentList === $clientList || $global->cas($clientIndexKey, $oldForCas, $clientList)) {
                 break;
             }
         } while (true);
@@ -3911,8 +3913,10 @@ class Events
         $z   = isset($data['z']) && is_numeric($data['z']) ? (float) $data['z'] : null;
         $yaw = isset($data['yaw']) && is_numeric($data['yaw']) ? (float) $data['yaw'] : null;
 
-        // Per-uid key: eliminates CAS contention from N×4 moves/sec serializing on one key
-        $key = 'dc_presence:' . $uid;
+        // client_id from the move message identifies which presence entry to update
+        $moveClientId = isset($data['clientId']) ? intval($data['clientId']) : $client_id;
+        // Per-client key: each browser tab has its own presence entry
+        $key = 'dc_presence:client:' . $moveClientId;
         $entry = $global->$key;
         if (!$entry || !is_array($entry)) {
             return;  // member not in scene — silent ignore per spec
@@ -3949,25 +3953,25 @@ class Events
         // Queue for batched broadcast — stores in GlobalData so timer on ANY worker can flush.
         // Static $moveBatch is process-local; with N BusinessWorker processes the timer could
         // fire on a different process that has an empty batch, silently dropping all moves.
-        $batchKey = 'dc_move_batch:' . $uid;
+        $batchKey = 'dc_move_batch:' . $moveClientId;
         $global->{$batchKey} = json_encode($newEntry);
 
         // Schedule flush if not already scheduled (one-shot timer, re-armed on next move)
         if (self::$moveBatchTimer === null) {
             self::$moveBatchTimer = \Workerman\Timer::add(0.05, function () {
                 global $global;
-                // Read ALL move batch entries from GlobalData (keys are dc_move_batch:{uid})
+                // Read ALL move batch entries from GlobalData (keys are dc_move_batch:{client_id})
                 $batch = [];
-                $uidIndexKey = 'dc_presence_uids';
-                $uidList = $global->$uidIndexKey ?? [];
-                if (is_array($uidList)) {
-                    foreach ($uidList as $u) {
-                        $bk = 'dc_move_batch:' . $u;
+                $clientIndexKey = 'dc_presence_clients';
+                $clientList = $global->$clientIndexKey ?? [];
+                if (is_array($clientList)) {
+                    foreach ($clientList as $cid) {
+                        $bk = 'dc_move_batch:' . $cid;
                         $encoded = $global->{$bk};
                         if ($encoded) {
                             $decoded = json_decode($encoded, true);
                             if ($decoded) {
-                                $batch[$u] = $decoded;
+                                $batch[$cid] = $decoded;
                             }
                         }
                     }
@@ -3982,8 +3986,6 @@ class Events
                 // moved peer in their viewport AABB. Fall back to channel publish if
                 // viewport data is unavailable for all recipients (back-compat).
                 $activeClients = $global->dc_active_clients ?? [];
-                $uidIndexKey = 'dc_presence_uids';
-                $uidList = $global->$uidIndexKey ?? [];
                 $hasAnyViewport = false;
                 $clientPayloads = [];
 
@@ -3996,9 +3998,9 @@ class Events
                     if ($peerVp !== null) {
                         $hasAnyViewport = true;
                         $visibleEntries = [];
-                        foreach ($batch as $moverUid => $moverEntry) {
+                        foreach ($batch as $moverCid => $moverEntry) {
                             if (self::isInPeerViewport($moverEntry['x'], $moverEntry['z'], $peerVp)) {
-                                $visibleEntries[$moverUid] = $moverEntry;
+                                $visibleEntries[$moverCid] = $moverEntry;
                             }
                         }
                         if (!empty($visibleEntries)) {
@@ -4035,8 +4037,8 @@ class Events
                 // are out of every client's viewport — drop the batch silently.
 
                 // CRIT-7 fix: Clear batch entries from GlobalData after flush
-                foreach ($batch as $moverUid => $moverEntry) {
-                    $bk = 'dc_move_batch:' . $moverUid;
+                foreach ($batch as $moverCid => $moverEntry) {
+                    $bk = 'dc_move_batch:' . $moverCid;
                     unset($global->{$bk});
                 }
             }, [], false);
@@ -4046,9 +4048,9 @@ class Events
     /**
      * Handle dc.presence.leave — client exiting the datacenter 3D scene.
      *
-     * Removes the member's entry from $global->dc_presence[$uid], broadcasts
-     * dc.presence.left to the dc_presence channel, and replies with
-     * {ok: true} to the sender.
+     * Removes the member's entry from $global->dc_presence[client:$client_id],
+     * broadcasts dc.presence.left to the dc_presence channel (using client_id
+     * so each browser tab is tracked independently), and replies with {ok: true}.
      *
      * @param int   $client_id
      * @param array $envelope v1 envelope
@@ -4065,7 +4067,8 @@ class Events
             self::sendV1Error($client_id, $re, 'forbidden', 'dc.presence.leave requires authentication');
             return;
         }
-        $key = 'dc_presence:' . $uid;
+        // Per-client key so each browser tab has its own presence entry
+        $key = 'dc_presence:client:' . $client_id;
         $entry = $global->$key;
         if (!$entry) {
             self::sendV1Error($client_id, $re, 'forbidden', 'dc.presence.leave: member not found');
@@ -4075,17 +4078,17 @@ class Events
         // Atomic delete: individual key deletion is inherently atomic (single key op)
         $global->$key = null;
 
-        // Clean up uid index (CAS loop to prevent concurrent leaves on different workers losing uid entries)
-        $uidIndexKey = 'dc_presence_uids';
+        // Clean up client_id index (CAS loop to prevent concurrent leaves on different workers losing entries)
+        $clientIndexKey = 'dc_presence_clients';
         do {
-            $uidList = $global->$uidIndexKey ?? [];
-            if (!is_array($uidList)) { break; }
-            $newList = array_values(array_filter($uidList, fn($u) => $u !== $uid));
-            if ($newList === $uidList) { break; }  // nothing changed
-            $oldList = $uidList;
-        } while (!$global->cas($uidIndexKey, $oldList, $newList));
+            $clientList = $global->$clientIndexKey ?? [];
+            if (!is_array($clientList)) { break; }
+            $newList = array_values(array_filter($clientList, fn($c) => $c !== $client_id));
+            if ($newList === $clientList) { break; }  // nothing changed
+            $oldList = $clientList;
+        } while (!$global->cas($clientIndexKey, $oldList, $newList));
 
-        Worker::safeEcho("[{$client_id}] dc.presence.leave: {$uid} left the scene\n");
+        Worker::safeEcho("[{$client_id}] dc.presence.leave: uid={$uid} client_id={$client_id} left the scene\n");
         Gateway::sendToClient($client_id, json_encode([
             'v' => 1,
             're' => $re,
@@ -4095,7 +4098,7 @@ class Events
         $channel = 'dc_presence';
         $payload = json_encode([
             'op' => 'dc.presence.left',
-            'data' => ['uid' => $uid]
+            'data' => ['uid' => $uid, 'clientId' => $client_id]
         ]);
         if (self::$channelClient !== null) {
             (self::$channelClient)($channel, $payload);
@@ -4149,10 +4152,10 @@ class Events
             global $global;
             $now = time();
 
-            // Iterate via uid index to avoid reading the now-deprecated monolithic dc_presence array
-            $uidIndexKey = 'dc_presence_uids';
-            $uidList = $global->$uidIndexKey ?? [];
-            if (!is_array($uidList) || empty($uidList)) {
+            // Iterate via client_id index (dc_presence_clients) to avoid reading monolithic dc_presence array
+            $clientIndexKey = 'dc_presence_clients';
+            $clientList = $global->$clientIndexKey ?? [];
+            if (!is_array($clientList) || empty($clientList)) {
                 return;
             }
 
@@ -4166,26 +4169,20 @@ class Events
             $clientEntries = [];  // uid => [entry, clientId, lastPing]
 
             // Phase 1: Read all entries and their OLD ping timestamps
-            foreach ($uidList as $uid) {
-                $key = 'dc_presence:' . $uid;
+            foreach ($clientList as $clientId) {
+                $key = 'dc_presence:client:' . $clientId;
                 $entry = $global->$key;
                 if (!$entry || !is_array($entry)) {
-                    $toDrop[] = ['uid' => $uid, 'clientId' => null];  // stale entry, mark for cleanup
-                    continue;
-                }
-                $clientId = $entry['client_id'] ?? null;
-                if (!$clientId) {
-                    $toDrop[] = ['uid' => $uid, 'clientId' => null];
+                    $toDrop[] = ['clientId' => $clientId];  // stale entry, mark for cleanup
                     continue;
                 }
                 $pk = 'dc_ping:' . $clientId;
                 $lastPing = $global->$pk ?? 0;
-                $clientEntries[$uid] = ['entry' => $entry, 'clientId' => $clientId, 'lastPing' => $lastPing];
+                $clientEntries[$clientId] = ['entry' => $entry, 'clientId' => $clientId, 'lastPing' => $lastPing];
             }
 
             // Phase 2: Send pings to all active clients (updates timestamps)
-            foreach ($clientEntries as $uid => $data) {
-                $clientId = $data['clientId'];
+            foreach ($clientEntries as $clientId => $data) {
                 Gateway::sendToClient($clientId, json_encode([
                     'v' => 1, 'op' => 'ping', 'id' => 'keepalive', 'ts' => $now,
                     'data' => new \stdClass()
@@ -4194,63 +4191,62 @@ class Events
             }
 
             // Phase 3: Check staleness using OLD timestamps (from Phase 1) and drop stale clients
-            foreach ($clientEntries as $uid => $data) {
+            foreach ($clientEntries as $clientId => $data) {
                 $lastPing = $data['lastPing'];
                 if ($lastPing > 0 && $lastPing < $cutoff) {
-                    $toDrop[] = ['uid' => $uid, 'clientId' => $data['clientId']];
+                    $toDrop[] = ['clientId' => $clientId];
                 }
             }
 
-            // Drop stale clients AFTER the loop (avoids modifying uidList during iteration)
+            // Drop stale clients AFTER the loop (avoids modifying clientList during iteration)
             // CRIT-9 fix: Two-phase approach — mark cleanup before CAS removal to prevent orphaned entries
             foreach ($toDrop as $dropInfo) {
-                $uid = $dropInfo['uid'];
                 $clientId = $dropInfo['clientId'];
-                $key = 'dc_presence:' . $uid;
-                $entry = $global->$key;
+                if (!$clientId) {
+                    continue;
+                }
+                $presenceKey = 'dc_presence:client:' . $clientId;
+                $entry = $global->$presenceKey;
 
                 // Phase 1: Mark client as being cleaned up (prevents race with handleDcPresenceJoin)
                 // Write a sentinel value so concurrent joins can detect cleanup-in-progress
-                if ($clientId) {
-                    $global->{'dc_cleanup:' . $clientId} = $now;
-                }
+                $global->{'dc_cleanup:' . $clientId} = $now;
 
                 // CRIT-9: If this client's cleanup has already been handled by onClose, skip
                 // Only skip if sentinel is set AND key is already null (onClose completed cleanup)
                 // If sentinel set but key is not null, timer should still proceed (onClose in progress)
-                if ($clientId && $global->{'dc_cleanup:' . $clientId} && $global->$key === null) {
+                if ($global->{'dc_cleanup:' . $clientId} && $global->$presenceKey === null) {
                     continue;
                 }
 
-                // Phase 2: Delete per-uid key atomically
-                $global->$key = null;
+                // Phase 2: Delete per-client presence key atomically
+                $global->$presenceKey = null;
 
-                if ($clientId) {
-                    $ck = 'dc_client_session:' . $clientId;
-                    $sessionId = $global->$ck ?? null;
-                    if ($sessionId) {
-                        $listKey = 'dc_session_clients:' . $sessionId;
-                        $clients = $global->$listKey ?? [];
-                        $clients = array_values(array_filter($clients, fn($c) => $c !== $clientId));
-                        $global->$listKey = $clients;
-                        unset($global->$ck);
-                    }
-                    unset($global->{'dc_ping:' . $clientId});
-                    unset($global->{'dc_cleanup:' . $clientId});
-                    Gateway::closeClient($clientId, 'missed_keepalive');
+                // Clean up session mapping
+                $ck = 'dc_client_session:' . $clientId;
+                $sessionId = $global->$ck ?? null;
+                if ($sessionId) {
+                    $listKey = 'dc_session_clients:' . $sessionId;
+                    $clients = $global->$listKey ?? [];
+                    $clients = array_values(array_filter($clients, fn($c) => $c !== $clientId));
+                    $global->$listKey = $clients;
+                    unset($global->$ck);
                 }
+                unset($global->{'dc_ping:' . $clientId});
+                unset($global->{'dc_cleanup:' . $clientId});
+                Gateway::closeClient($clientId, 'missed_keepalive');
 
-                // Remove from uid index (CAS loop)
-                $uidIndexKey = 'dc_presence_uids';
+                // Remove clientId from dc_presence_clients index (CAS loop)
+                $clientIndexKey = 'dc_presence_clients';
                 do {
-                    $uidList = $global->$uidIndexKey ?? [];
-                    if (!is_array($uidList)) break;
-                    $newList = array_values(array_filter($uidList, fn($u) => $u !== $uid));
-                    if ($newList === $uidList) break;
-                    $oldList = $uidList;
-                } while (!$global->cas($uidIndexKey, $oldList, $newList));
+                    $currentList = $global->$clientIndexKey ?? [];
+                    if (!is_array($currentList)) break;
+                    $newList = array_values(array_filter($currentList, fn($c) => $c !== $clientId));
+                    if ($newList === $currentList) break;
+                    $oldList = $currentList;
+                } while (!$global->cas($clientIndexKey, $oldList, $newList));
 
-                Worker::safeEcho("[dc_presence] dropped {$clientId} ({$uid}) — missed keepalive\n");
+                Worker::safeEcho("[dc_presence] dropped {$clientId} — missed keepalive\n");
             }
         });
     }
@@ -4273,13 +4269,14 @@ class Events
         // setupSessionHealthTimer (up to 30s later).
         $uid = $_SESSION['uid'] ?? null;
         if ($uid) {
-            $presenceKey = 'dc_presence:' . $uid;
+            // Per-client presence key so each browser tab is tracked independently
+            $presenceKey = 'dc_presence:client:' . $client_id;
             $presenceEntry = $global->$presenceKey;
             if ($presenceEntry && is_array($presenceEntry)) {
                 $channel = 'dc_presence';
                 $payload = json_encode([
                     'op' => 'dc.presence.left',
-                    'data' => ['uid' => $uid]
+                    'data' => ['uid' => $uid, 'clientId' => $client_id]
                 ]);
                 if (self::$channelClient !== null) {
                     (self::$channelClient)($channel, $payload);
@@ -4294,21 +4291,21 @@ class Events
                 // Phase 1: Mark client as being cleaned up (so health timer can detect and skip)
                 $global->{'dc_cleanup:' . $client_id} = time();
 
-                // Phase 2: Atomic delete of per-uid key
+                // Phase 2: Atomic delete of per-client key
                 $global->$presenceKey = null;
-                // Remove uid from index (CAS loop)
-                $uidIndexKey = 'dc_presence_uids';
+                // Remove client_id from index (CAS loop)
+                $clientIndexKey = 'dc_presence_clients';
                 do {
-                    $uidList = $global->$uidIndexKey ?? [];
-                    if (!is_array($uidList)) {
+                    $clientList = $global->$clientIndexKey ?? [];
+                    if (!is_array($clientList)) {
                         break;
                     }
-                    $newList = array_values(array_filter($uidList, fn($u) => $u !== $uid));
-                    if ($newList === $uidList) {
+                    $newList = array_values(array_filter($clientList, fn($c) => $c !== $client_id));
+                    if ($newList === $clientList) {
                         break;
                     }
-                    $oldList = $uidList;
-                } while (!$global->cas($uidIndexKey, $oldList, $newList));
+                    $oldList = $clientList;
+                } while (!$global->cas($clientIndexKey, $oldList, $newList));
 
                 unset($global->{'dc_cleanup:' . $client_id});
             }
