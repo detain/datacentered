@@ -2927,15 +2927,19 @@ class Events
         $now = time();
         $global->$timestampKey = $now;
 
-        do {
-            $old_channels = $new_channels = $global->$channelsKey;
-            if (!is_array($old_channels)) {
-                $old_channels = $new_channels = [];
-            }
-            if (!in_array($channel, $old_channels, true)) {
-                $new_channels[] = $channel;
-            }
-        } while (!$global->cas($channelsKey, $old_channels, $new_channels));
+        // MAJOR-12: REMOVED the CAS loop that updated channel_msgs_channels here.
+        // The per-channel timestamp keys (channel_msgs_ts:<channel>) already track
+        // which channels are active for the reaper; the shared channel list was a
+        // contention point where all channels competed on a single key.
+        // do {
+        //     $old_channels = $new_channels = $global->$channelsKey;
+        //     if (!is_array($old_channels)) {
+        //         $old_channels = $new_channels = [];
+        //     }
+        //     if (!in_array($channel, $old_channels, true)) {
+        //         $new_channels[] = $channel;
+        //     }
+        // } while (!$global->cas($channelsKey, $old_channels, $new_channels));
 
         do {
             $old_value = $new_value = $global->$channelKey;
@@ -3812,6 +3816,10 @@ class Events
             'ts' => time(),
             'client_id' => $client_id,
         ];
+        // CRIT-9: If cleanup is in progress for this client_id, log and proceed anyway (onClose will clean up after us)
+        if ($client_id && $global->{'dc_cleanup:' . $client_id}) {
+            Worker::safeEcho("dc.presence.join {$client_id}: cleanup in progress, overwriting anyway\n");
+        }
         $global->$key = $newEntry;
 
         // Maintain uid → key mapping for efficient iteration in setupSessionHealthTimer
@@ -3828,6 +3836,20 @@ class Events
                 break;
             }
         } while (true);
+
+        // CRIT-8 fix: Add to active clients for viewport filtering (CAS loop for atomicity)
+        $activeClientsKey = 'dc_active_clients';
+        do {
+            $activeClients = $global->$activeClientsKey ?? [];
+            $activeClients = is_array($activeClients) ? $activeClients : [];
+            if (!in_array($client_id, $activeClients, true)) {
+                $activeClients[] = $client_id;
+            }
+            $oldActiveClients = $global->$activeClientsKey ?? null;
+            if ($oldActiveClients === $activeClients) {
+                break;
+            }
+        } while (!$global->cas($activeClientsKey, $oldActiveClients ?? [], $activeClients));
 
         Worker::safeEcho("[{$client_id}] dc.presence.join: {$uid} joined at ({$x}, {$z}, {$yaw})\n");
         Gateway::sendToClient($client_id, json_encode([
@@ -3924,19 +3946,36 @@ class Events
             }
         }
 
-        // Queue for batched broadcast — collects all moves over a 50ms sliding window
-        self::$moveBatch[$uid] = $newEntry;
+        // Queue for batched broadcast — stores in GlobalData so timer on ANY worker can flush.
+        // Static $moveBatch is process-local; with N BusinessWorker processes the timer could
+        // fire on a different process that has an empty batch, silently dropping all moves.
+        $batchKey = 'dc_move_batch:' . $uid;
+        $global->{$batchKey} = json_encode($newEntry);
 
         // Schedule flush if not already scheduled (one-shot timer, re-armed on next move)
         if (self::$moveBatchTimer === null) {
             self::$moveBatchTimer = \Workerman\Timer::add(0.05, function () {
                 global $global;
-                if (empty(self::$moveBatch)) {
+                // Read ALL move batch entries from GlobalData (keys are dc_move_batch:{uid})
+                $batch = [];
+                $uidIndexKey = 'dc_presence_uids';
+                $uidList = $global->$uidIndexKey ?? [];
+                if (is_array($uidList)) {
+                    foreach ($uidList as $u) {
+                        $bk = 'dc_move_batch:' . $u;
+                        $encoded = $global->{$bk};
+                        if ($encoded) {
+                            $decoded = json_decode($encoded, true);
+                            if ($decoded) {
+                                $batch[$u] = $decoded;
+                            }
+                        }
+                    }
+                }
+                if (empty($batch)) {
                     self::$moveBatchTimer = null;
                     return;
                 }
-                $batch = self::$moveBatch;
-                self::$moveBatch = [];
                 self::$moveBatchTimer = null;
 
                 // IDEA-3: viewport filtering — send only to clients that have at least one
@@ -3994,6 +4033,12 @@ class Events
                 }
                 // If $hasAnyViewport is true but $clientPayloads is empty, all moved peers
                 // are out of every client's viewport — drop the batch silently.
+
+                // CRIT-7 fix: Clear batch entries from GlobalData after flush
+                foreach ($batch as $moverUid => $moverEntry) {
+                    $bk = 'dc_move_batch:' . $moverUid;
+                    unset($global->{$bk});
+                }
             }, [], false);
         }
     }
@@ -4076,6 +4121,10 @@ class Events
          * @var \GlobalData\Client
          */
         global $global;
+        // MAJOR-14: require session auth
+        if (empty($_SESSION['uid']) || empty($_SESSION['login'])) {
+            return;
+        }
         $data = is_array($envelope['data']) ? $envelope['data'] : [];
         $vp = $data;  // $data IS the viewport object, not $data['data']
         $global->{'dc_viewport:' . $client_id} = [
@@ -4107,47 +4156,73 @@ class Events
                 return;
             }
 
-            // Combined loop: send ping and check staleness for each client in one pass
+            // CRIT-9 fix: Three-phase approach to avoid reading newly-written ping timestamps.
+            // Phase 1: Collect all client entries and their OLD ping timestamps BEFORE sending pings.
+            // Phase 2: Send pings to all clients (updates timestamps AFTER reading old ones).
+            // Phase 3: Check staleness using OLD timestamps, then drop stale clients.
             $cutoff = $now - 90;  // 3 × 30s missed = stale
 
-            $toDrop = [];  // collect uids to drop after iteration
+            $toDrop = [];  // collect {uid, clientId} pairs to drop after ping phase
+            $clientEntries = [];  // uid => [entry, clientId, lastPing]
 
+            // Phase 1: Read all entries and their OLD ping timestamps
             foreach ($uidList as $uid) {
                 $key = 'dc_presence:' . $uid;
                 $entry = $global->$key;
                 if (!$entry || !is_array($entry)) {
-                    $toDrop[] = $uid;  // stale entry, mark for cleanup
+                    $toDrop[] = ['uid' => $uid, 'clientId' => null];  // stale entry, mark for cleanup
                     continue;
                 }
                 $clientId = $entry['client_id'] ?? null;
                 if (!$clientId) {
-                    $toDrop[] = $uid;
+                    $toDrop[] = ['uid' => $uid, 'clientId' => null];
                     continue;
                 }
+                $pk = 'dc_ping:' . $clientId;
+                $lastPing = $global->$pk ?? 0;
+                $clientEntries[$uid] = ['entry' => $entry, 'clientId' => $clientId, 'lastPing' => $lastPing];
+            }
 
-                // Phase 1: Send ping to this client
+            // Phase 2: Send pings to all active clients (updates timestamps)
+            foreach ($clientEntries as $uid => $data) {
+                $clientId = $data['clientId'];
                 Gateway::sendToClient($clientId, json_encode([
                     'v' => 1, 'op' => 'ping', 'id' => 'keepalive', 'ts' => $now,
                     'data' => new \stdClass()
                 ]));
                 $global->{'dc_ping:' . $clientId} = $now;
+            }
 
-                // Phase 2: Check staleness — did this client miss 3+ pings?
-                $pk = 'dc_ping:' . $clientId;
-                $lastPing = $global->$pk ?? 0;
+            // Phase 3: Check staleness using OLD timestamps (from Phase 1) and drop stale clients
+            foreach ($clientEntries as $uid => $data) {
+                $lastPing = $data['lastPing'];
                 if ($lastPing > 0 && $lastPing < $cutoff) {
-                    $toDrop[] = $uid;
+                    $toDrop[] = ['uid' => $uid, 'clientId' => $data['clientId']];
                 }
             }
 
             // Drop stale clients AFTER the loop (avoids modifying uidList during iteration)
-            foreach ($toDrop as $uid) {
+            // CRIT-9 fix: Two-phase approach — mark cleanup before CAS removal to prevent orphaned entries
+            foreach ($toDrop as $dropInfo) {
+                $uid = $dropInfo['uid'];
+                $clientId = $dropInfo['clientId'];
                 $key = 'dc_presence:' . $uid;
                 $entry = $global->$key;
-                if (!$entry) continue;
-                $clientId = $entry['client_id'] ?? null;
 
-                // Delete per-uid key atomically
+                // Phase 1: Mark client as being cleaned up (prevents race with handleDcPresenceJoin)
+                // Write a sentinel value so concurrent joins can detect cleanup-in-progress
+                if ($clientId) {
+                    $global->{'dc_cleanup:' . $clientId} = $now;
+                }
+
+                // CRIT-9: If this client's cleanup has already been handled by onClose, skip
+                // Only skip if sentinel is set AND key is already null (onClose completed cleanup)
+                // If sentinel set but key is not null, timer should still proceed (onClose in progress)
+                if ($clientId && $global->{'dc_cleanup:' . $clientId} && $global->$key === null) {
+                    continue;
+                }
+
+                // Phase 2: Delete per-uid key atomically
                 $global->$key = null;
 
                 if ($clientId) {
@@ -4161,6 +4236,7 @@ class Events
                         unset($global->$ck);
                     }
                     unset($global->{'dc_ping:' . $clientId});
+                    unset($global->{'dc_cleanup:' . $clientId});
                     Gateway::closeClient($clientId, 'missed_keepalive');
                 }
 
@@ -4214,7 +4290,11 @@ class Events
                         self::logStructured('client.close.error', ['client_id' => $client_id, 'msg' => $e->getMessage()]);
                     }
                 }
-                // Atomic delete of per-uid key
+                // CRIT-9 fix: Two-phase cleanup — mark before CAS removal to prevent race with health timer
+                // Phase 1: Mark client as being cleaned up (so health timer can detect and skip)
+                $global->{'dc_cleanup:' . $client_id} = time();
+
+                // Phase 2: Atomic delete of per-uid key
                 $global->$presenceKey = null;
                 // Remove uid from index (CAS loop)
                 $uidIndexKey = 'dc_presence_uids';
@@ -4229,15 +4309,22 @@ class Events
                     }
                     $oldList = $uidList;
                 } while (!$global->cas($uidIndexKey, $oldList, $newList));
+
+                unset($global->{'dc_cleanup:' . $client_id});
             }
         }
 
-        // Remove from active clients list (CRIT-1 session health tracking)
-        $activeClients = $global->dc_active_clients ?? [];
-        if (is_array($activeClients)) {
-            $activeClients = array_values(array_filter($activeClients, fn($c) => $c !== $client_id));
-            $global->dc_active_clients = $activeClients;
-        }
+        // Remove from active clients list (CRIT-8 fix: use CAS for atomicity)
+        $activeClientsKey = 'dc_active_clients';
+        do {
+            $activeClients = $global->$activeClientsKey ?? [];
+            $activeClients = is_array($activeClients) ? $activeClients : [];
+            $filtered = array_values(array_filter($activeClients, fn($c) => $c !== $client_id));
+            $oldActiveClients = $global->$activeClientsKey ?? null;
+            if ($oldActiveClients === $filtered) {
+                break;
+            }
+        } while (!$global->cas($activeClientsKey, $oldActiveClients ?? [], $filtered));
 
         // Clean up dc_client_session and dc_ping keys for this client
         $sessionKey = 'dc_client_session:' . $client_id;
@@ -4254,6 +4341,8 @@ class Events
         }
         // IDEA-3: clean up viewport data for this client
         unset($global->{'dc_viewport:' . $client_id});
+        // MAJOR-13: clean up move throttle key for this client
+        unset($global->{'dc_move_throttle:' . $client_id});
 
         if (isset($_SESSION['uid'])) {
             $clientIds = Gateway::getClientIdByUid($_SESSION['uid']);
