@@ -3,15 +3,19 @@ You are a senior performance and code quality auditor specializing in WebSocket-
 ## Scope
 
 **Files to audit:**
-- `/home/sites/mystage/public_html/admin/dc*` — all files matching `dc*` in that directory (HTML, JS, CSS, PHP)
-- `/home/sites/mystage/public_html/js/dc*.js` — all dc*.js client files
+- /home/sites/mystage/public_html/admin/dc.html
+- /home/sites/mystage/public_html/admin/dc.php
+- /home/sites/mystage/public_html/css/dc.css
+- /home/sites/mystage/public_html/css/dc-shared.css
+- /home/sites/mystage/public_html/js/dc.js
+- /home/sites/mystage/public_html/js/dc-multi.js
+- /home/sites/mystage/public_html/js/dc-presence.js
+- /home/sites/mystage/public_html/js/dc-ws.js
 - `/home/sites/datacentered/Applications/Chat/Events.php` — WebSocket server business logic
 - `/home/sites/datacentered/Applications/Chat/start_businessworker.php`
 - `/home/sites/datacentered/Applications/Chat/start_task.php`
 - `/home/sites/datacentered/Applications/Chat/FeatureFlags.php`
 - All `start_*.php` files in `Applications/Chat/`
-- `/home/sites/datacentered/Tasks/` — task worker functions
-- `/home/sites/datacentered/Web/` — HTTP endpoints
 
 ## Categories to Investigate
 
@@ -145,6 +149,8 @@ Fix: suggested fix
 - node --check and php -l any modified JS/PHP files for syntax errors before reporting
 ```
 
+- give me a complete list of all finds / bugs / etc  band give me choices on which ones to fix/do  and wait for my response.
+
 Don't dig through source files yourself — the context is too large. Instead, spawn subagents to handle each item.
 Break problems down into chunks that agents can realistically tackle.
 Use agent types codebase-analyzer, CodeReviewer, coder, or general as appropriate.
@@ -154,6 +160,8 @@ For each item, follow this cycle:
 2. Reviewer Agent — Examine the work for problems
 3. Fixer Agent — If issues were found, fix them
 4. Repeat steps 2–3 until the Reviewer Agent reports no issues
+5. Test agent -- builds out any tests for these changes and gets test working/fixed
+6. Doc agent - enure good docblock comments, adds CHANGELOG.md entryies
 5. Move to the next item and repeat from step 1
 6. Once all items are clean, commit and push directly to master (no branches, no PRs)
 
