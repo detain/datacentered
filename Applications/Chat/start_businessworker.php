@@ -48,6 +48,7 @@ $worker->onError = function ($connection, $code, $msg) {
 };
 $worker->onWorkerStart = function ($worker) {
     if ($worker->id === 0) {
+        \Events::onWorkerStart($worker);
         \Events::setupSessionHealthTimer();
     }
 };

@@ -3421,6 +3421,11 @@ class Events
             self::handleStatusCommand($client_id, $re, $channel, $level);
             return;
         }
+        $bodyLower = strtolower(trim($body));
+        if ($bodyLower === 'ping') {
+            self::handlePingCommand($client_id, $re, $channel, $level);
+            return;
+        }
         self::chatPublishMessage($client_id, $re, $channel, $body, $level);
     }
 
@@ -3463,6 +3468,45 @@ class Events
             'from' => 'system',
             'from_name' => 'Status Bot',
             'body' => $statusText,
+            'level' => 'chat',
+            'msg_id' => 0
+        ])));
+    }
+
+    /**
+     * Handles the ping command — returns "pong" with bot coordinates to the
+     * requesting client only (not broadcast to the channel).
+     *
+     * Reads bot position from GlobalData dc_presence:bot_main entry.
+     * If no bot state exists, returns "pong - no bot present".
+     * This is a pure response with no side effects and no DB persistence.
+     *
+     * @param int $client_id gateway client id
+     * @param mixed $re request envelope id being answered
+     * @param string $channel the channel the command was received on
+     * @param string $level message level (hardcoded to 'chat' for response rendering)
+     */
+    private static function handlePingCommand($client_id, $re, $channel, $level)
+    {
+        /**
+         * @var \GlobalData\Client
+         */
+        global $global;
+
+        $botState = $global->{'dc_presence:bot_main'} ?? null;
+        if (!$botState || !is_array($botState)) {
+            $body = 'pong - no bot present';
+        } else {
+            $x = $botState['x'] ?? '?';
+            $z = $botState['z'] ?? '?';
+            $body = "pong x={$x} z={$z}";
+        }
+
+        Gateway::sendToClient($client_id, json_encode(self::v1Envelope('channel.message', [
+            'channel' => $channel,
+            'from' => 'system',
+            'from_name' => 'Ping Bot',
+            'body' => $body,
             'level' => 'chat',
             'msg_id' => 0
         ])));
@@ -4435,6 +4479,7 @@ class Events
             'client_id' => $botId,
             'location' => $location,
         ];
+        Worker::safeEcho('[dc_bot] spawn x=' . $botState['x'] . ' z=' . $botState['z'] . "\n");
         $global->$botStateKey = $botState;
 
         // Write bot presence entry to GlobalData (same format as real users)
@@ -4576,13 +4621,15 @@ class Events
             // Update bot state in GlobalData
             $global->$botStateKey = $botState;
 
+            Worker::safeEcho('[dc_bot] moveBot location=' . $location . ' bot_x:' . $botState['x'] . ' bot_z:' . $botState['z'] . ' target_x:' . $botState['target_x'] . ' target_z:' . $botState['target_z'] . "\n");
+
             // Write to batch key so batch timer broadcasts this move
             $batchKey = 'dc_move_batch:' . $botId;
             $global->{$batchKey} = json_encode($botState);
 
             // Schedule batch flush if not already scheduled (same pattern as handleDcPresenceMove)
             if (self::$moveBatchTimer === null) {
-                self::$moveBatchTimer = Timer::add(0.05, function () {
+                self::$moveBatchTimer = Timer::add(0.05, function () use ($location) {
                     global $global;
                     $batch = [];
                     $clientIndexKey = 'dc_presence_clients';
@@ -4619,6 +4666,8 @@ class Events
                             Worker::safeEcho("dc_bot batch publish failed: {$e->getMessage()}\n");
                         }
                     }
+
+                    Worker::safeEcho('[dc_bot] batch_updated for location=' . $location . ' count=' . count($batch) . "\n");
 
                     // Clear batch entries
                     foreach ($batch as $moverCid => $moverEntry) {
@@ -4710,9 +4759,11 @@ class Events
                 continue;
             }
             // This is a real user
+            Worker::safeEcho('[dc_bot] hasRealUsersAtLocation=true location=' . $location . "\n");
             return true;
         }
 
+        Worker::safeEcho('[dc_bot] hasRealUsersAtLocation=false location=' . $location . "\n");
         return false;
     }
 
