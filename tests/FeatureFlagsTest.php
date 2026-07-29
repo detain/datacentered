@@ -194,8 +194,8 @@ class FeatureFlagsTest extends TestCase
     {
         $this->injectClient();
 
-        // Starts OFF (no var set).
-        $this->assertFalse(FeatureFlags::useNewHandling());
+        // Starts ON (no var set, new handling is the default).
+        $this->assertTrue(FeatureFlags::useNewHandling());
 
         $this->assertTrue(FeatureFlags::setNewHandling(null, true));
         $this->assertTrue(

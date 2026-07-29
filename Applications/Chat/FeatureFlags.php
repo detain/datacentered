@@ -3,7 +3,7 @@
 /**
  * WS-revamp feature flags (plan B8 two-flag lifecycle).
  *
- * Flag A `WS_NEW_HANDLING` — default OFF. Settable globally AND per
+ * Flag A `WS_NEW_HANDLING` — default ON. Settable globally AND per
  * individual web/datacentered server or VPS/QS host (per-host override
  * falls back to the global default when unset).
  * Flag B `LEGACY_COMPAT` — default ON, global only.
@@ -11,7 +11,7 @@
  * Storage: GlobalData variables at GLOBALDATA_IP:2207, so flags are
  * runtime-readable/toggleable across every worker process without a
  * redeploy or restart. Absent variables mean "default" — a fresh
- * GlobalData server (or an unreachable one) yields A=OFF, B=ON, i.e.
+ * GlobalData server (or an unreachable one) yields A=ON, B=ON, i.e.
  * exactly today's behavior.
  *
  * GlobalData variable names:
@@ -77,7 +77,7 @@ class FeatureFlags
      * @param string|int|null $hostId optional VPS/QS host or server identifier;
      *                                 null/'' consults only the global default
      * @return bool true only if Flag A is ON for this host (or globally);
-     *              false on any error or when unset (fail-safe to legacy)
+     *              false on error; true when unset (new handling is the default)
      */
     public static function useNewHandling($hostId = null)
     {
@@ -93,9 +93,9 @@ class FeatureFlags
                 }
             }
             $var = self::VAR_NEW_HANDLING;
-            return isset($global->$var) ? (bool) $global->$var : false;
+            return isset($global->$var) ? (bool) $global->$var : true;
         } catch (\Throwable $e) {
-            self::log('FeatureFlags::useNewHandling GlobalData error, defaulting OFF: '.$e->getMessage()."\n");
+            self::log('FeatureFlags::useNewHandling GlobalData error, defaulting OFF (legacy path): '.$e->getMessage()."\n");
             return false;
         }
     }

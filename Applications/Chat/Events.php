@@ -3434,7 +3434,7 @@ class Events
      * @param int $client_id gateway client id
      * @param mixed $re request envelope id being answered
      * @param string $channel the channel the command was received on
-     * @param string $level message level (always hardcoded to 'info' for status responses)
+     * @param string $level message level (hardcoded to 'chat' for status responses so the name prefix renders)
      */
     private static function handleStatusCommand($client_id, $re, $channel, $level)
     {
@@ -3458,19 +3458,14 @@ class Events
         $timestamp = date('Y-m-d H:i:s');
         $statusText = "Status: {$timestamp} | Clients: {$clientCount} | Channels: {$channelCount}";
 
-        Gateway::sendToClient($client_id, json_encode([
-            'v' => 1,
-            'op' => 'channel.message',
-            'data' => [
-                'channel' => $channel,
-                'from' => 'system',
-                'from_name' => 'Status Bot',
-                'body' => $statusText,
-                'level' => 'info',
-                'ts' => time(),
-                'msg_id' => 0
-            ]
-        ]));
+        Gateway::sendToClient($client_id, json_encode(self::v1Envelope('channel.message', [
+            'channel' => $channel,
+            'from' => 'system',
+            'from_name' => 'Status Bot',
+            'body' => $statusText,
+            'level' => 'chat',
+            'msg_id' => 0
+        ])));
     }
 
     /**
@@ -3968,6 +3963,9 @@ class Events
         // Use the local entry that was just written — avoids race condition where
         // another worker could have modified $global->$key between write and re-read
         $broadcastEntry = $newEntry;
+        // Frontend expects camelCase clientId, not snake_case client_id
+        $broadcastEntry['clientId'] = $broadcastEntry['client_id'];
+        unset($broadcastEntry['client_id']);
         $payload = json_encode([
             'op' => 'dc.presence.joined',
             'data' => $broadcastEntry
@@ -4473,9 +4471,13 @@ class Events
 
         // Broadcast bot presence to dc_presence channel so frontend creates avatar entries
         $channel = 'dc_presence';
+        // Frontend expects camelCase clientId, not snake_case client_id
+        $botBroadcastEntry = $botState;
+        $botBroadcastEntry['clientId'] = $botBroadcastEntry['client_id'];
+        unset($botBroadcastEntry['client_id']);
         $payload = json_encode([
             'op' => 'dc.presence.joined',
-            'data' => $botState
+            'data' => $botBroadcastEntry
         ]);
         if (self::$channelClient !== null) {
             (self::$channelClient)($channel, $payload);
