@@ -3413,7 +3413,61 @@ class Events
             self::sendV1Error($client_id, $re, 'bad_request', 'channel.publish data.level must be "chat", "log", "info", "warn" or "error"');
             return;
         }
+        $body = trim($body);
+        if ($body === '/status') {
+            self::handleStatusCommand($client_id, $re, $channel, $level);
+            return;
+        }
         self::chatPublishMessage($client_id, $re, $channel, $body, $level);
+    }
+
+    /**
+     * Handles the /status command — returns system status info to the
+     * requesting client only (not broadcast to the channel).
+     *
+     * Gathers: connected WebSocket client count, current timestamp,
+     * and number of active channels from the channel_meta registry.
+     *
+     * @param int $client_id gateway client id
+     * @param mixed $re request envelope id being answered
+     * @param string $channel the channel the command was received on
+     * @param string $level message level (always hardcoded to 'info' for status responses)
+     */
+    private static function handleStatusCommand($client_id, $re, $channel, $level)
+    {
+        /**
+         * @var \GlobalData\Client
+         */
+        global $global;
+
+        $clientCount = 0;
+        $sessions = Gateway::getAllClientSessions();
+        if (is_array($sessions)) {
+            $clientCount = count($sessions);
+        }
+
+        $channelCount = 0;
+        $meta = $global->channel_meta ?? [];
+        if (is_array($meta)) {
+            $channelCount = count($meta);
+        }
+
+        $timestamp = date('Y-m-d H:i:s');
+        $statusText = "Status: {$timestamp} | Clients: {$clientCount} | Channels: {$channelCount}";
+
+        Gateway::sendToClient($client_id, json_encode([
+            'v' => 1,
+            'op' => 'channel.message',
+            'data' => [
+                'channel' => $channel,
+                'from' => 'system',
+                'from_name' => 'Status Bot',
+                'body' => $statusText,
+                'level' => 'info',
+                'ts' => time(),
+                'msg_id' => 0
+            ]
+        ]));
     }
 
     /**
@@ -3561,7 +3615,9 @@ class Events
         }
         $hosts = [];
         $admins = [];
-        $sessions = Gateway::getAllClientSessions();
+        $admin_sessions = Gateway::getClientSessionsByGroup('admins');
+        $host_sessions = Gateway::getClientSessionsByGroup('hosts');
+        $sessions = array_merge($admin_sessions ?: [], $host_sessions ?: []);
         foreach ($sessions as $session_id => $session_data) {
             if (!isset($session_data['uid'])) {
                 continue;
@@ -5442,7 +5498,9 @@ class Events
         */
         global $global;
         if ($_SESSION['login'] === true && $_SESSION['ima'] == 'admin') {
-            $sessions = Gateway::getAllClientSessions();
+            $admin_sessions = Gateway::getClientSessionsByGroup('admins');
+            $host_sessions = Gateway::getClientSessionsByGroup('hosts');
+            $sessions = array_merge($admin_sessions ?: [], $host_sessions ?: []);
             $clients = [];
             foreach ($sessions as $session_id => $session_data) {
                 if (isset($session_data['uid'])) {
