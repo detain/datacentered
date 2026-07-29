@@ -916,7 +916,7 @@ class Events
                     'session' => $hub_session,
                     'uid' => $uid,
                     'clientId' => $client_id,
-                    'name' => $results[0]['account_lid'],
+                    'name' => $results[0]['account_lid'] ?? $results[0]['account_id'] ?? 'Unknown',
                     'hub_time' => time()
                 ]
             ]));
@@ -3067,6 +3067,9 @@ class Events
         } else {
             Gateway::sendToGroup($message['channel'], $push);
         }
+        // Also send directly to the publishing client (covers the race where
+        // sendToGroup misses the sender because channel.join is still in-flight)
+        Gateway::sendToClient($client_id, $push);
         Gateway::sendToClient($client_id, json_encode([
             'v' => 1,
             're' => $re,
@@ -4507,11 +4510,6 @@ class Events
     {
         if (!FeatureFlags::dcBotPresenceEnabled()) {
             self::cleanupBotForLocation($location);
-            return;
-        }
-
-        // Skip broadcasting if no real users are watching
-        if (!self::hasRealUsersAtLocation($location)) {
             return;
         }
 
