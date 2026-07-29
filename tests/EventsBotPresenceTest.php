@@ -66,7 +66,7 @@ namespace {
         public $store = [];
 
         /** @var array<string> timers that would be created (Timer::add) */
-        public $ timers = [];
+        public $timers = [];
 
         public function __construct()
         {
@@ -387,6 +387,41 @@ namespace {
             $this->assertSame(self::BOT_ID, $botState['uid']);
             $this->assertArrayHasKey('target_x', $botState);
             $this->assertArrayHasKey('target_z', $botState);
+        }
+
+        /**
+         * VERIFY: spawnBotForLocation broadcasts dc.presence.joined event via Channel\Client::publish.
+         * When a bot spawns, it announces its presence to the dc_presence channel so the frontend
+         * can render the bot avatar.
+         */
+        public function testSpawnBotBroadcastsJoinedEvent(): void
+        {
+            $global = $this->botFlagOn();
+
+            \Events::spawnBotForLocation(self::LOCATION);
+
+            // Find the dc.presence.joined broadcast
+            $found = false;
+            foreach (BotFakeChannelClient::$published as $entry) {
+                if ($entry['channel'] === 'dc_presence') {
+                    $msg = json_decode($entry['message'], true);
+                    if (isset($msg['op']) && $msg['op'] === 'dc.presence.joined') {
+                        $found = true;
+                        // Verify bot state data is included in the payload
+                        $this->assertArrayHasKey('client_id', $msg['data'], 'Payload must contain client_id');
+                        $this->assertArrayHasKey('location', $msg['data'], 'Payload must contain location');
+                        $this->assertArrayHasKey('x', $msg['data'], 'Payload must contain x');
+                        $this->assertArrayHasKey('z', $msg['data'], 'Payload must contain z');
+                        $this->assertArrayHasKey('yaw', $msg['data'], 'Payload must contain yaw');
+                        $this->assertArrayHasKey('name', $msg['data'], 'Payload must contain name');
+                        // Verify the bot ID in payload matches expected format
+                        $this->assertSame(self::BOT_ID, $msg['data']['client_id']);
+                        $this->assertSame(self::LOCATION, $msg['data']['location']);
+                        break;
+                    }
+                }
+            }
+            $this->assertTrue($found, 'spawnBotForLocation must broadcast dc.presence.joined to dc_presence channel');
         }
 
         // ========================================================================

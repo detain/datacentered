@@ -4412,6 +4412,22 @@ class Events
             }
         } while (true);
 
+        // Broadcast bot presence to dc_presence channel so frontend creates avatar entries
+        $channel = 'dc_presence';
+        $payload = json_encode([
+            'op' => 'dc.presence.joined',
+            'data' => $botState
+        ]);
+        if (self::$channelClient !== null) {
+            (self::$channelClient)($channel, $payload);
+        } else {
+            try {
+                \Channel\Client::publish($channel, $payload);
+            } catch (\Throwable $e) {
+                Worker::safeEcho("[dc_bot] {$botId} presence broadcast failed: {$e->getMessage()}\n");
+            }
+        }
+
         // Start the bot movement timer
         // Using repeating timer that calls moveBot every BOT_MOVE_INTERVAL seconds
         $timerId = Timer::add(
