@@ -14,7 +14,15 @@
  * first), then require FeatureFlags.php + Events.php. Keeping the stub in one
  * place avoids a duplicate-class fatal when PHPUnit loads every test file into
  * the same process.
+ *
+ * tests/TestBootstrap.php is required FIRST (see its docblock): it declares the
+ * offline \GlobalData\Client and the \Channel\Client tripwire, both of which
+ * must be in place before the composer autoloader could resolve the real ones.
  */
+
+namespace {
+    require_once __DIR__.'/TestBootstrap.php';
+}
 
 namespace GatewayWorker\Lib {
     class Gateway
@@ -143,6 +151,34 @@ namespace GatewayWorker\Lib {
             return self::$allSessions;
         }
 
+        /**
+         * Fake uid => client_id[] map for getClientIdByUid().
+         *
+         * onClose() calls Gateway::getClientIdByUid($_SESSION['uid']) and
+         * branches on count($clientIds) === 1, so this method's absence turned
+         * every onClose() test into an "undefined method" error.
+         *
+         * @var array<int|string,array<int,string>>
+         */
+        public static $uidClientIds = [];
+
+        /** @return array<int,string> client_ids currently bound to $uid */
+        public static function getClientIdByUid($uid)
+        {
+            return self::$uidClientIds[$uid] ?? [];
+        }
+
+        /**
+         * Legacy handlers reply through sendToCurrentClient() (no explicit
+         * client_id); captured in the same $sent array with a null client_id so
+         * existing reply assertions keep working.
+         */
+        public static function sendToCurrentClient($message, $raw = false)
+        {
+            self::$sent[] = ['client_id' => null, 'message' => $message];
+            return true;
+        }
+
         /** Reset every capture array (call in test setUp/tearDown). */
         public static function reset()
         {
@@ -158,6 +194,7 @@ namespace GatewayWorker\Lib {
             self::$groupSessions = [];
             self::$groupCounts = [];
             self::$allSessions = [];
+            self::$uidClientIds = [];
         }
     }
 }

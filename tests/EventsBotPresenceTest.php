@@ -1,17 +1,40 @@
 <?php
 
 /**
- * Tests for the DataCenter Bot Presence System in Events.php.
+ * Tests for the DataCenter bot-presence system: a simulated visitor avatar that
+ * walks the 3D scene while real users are there.
  *
- * These tests verify the bot avatar system that simulates visitors walking
- * around the datacenter 3D scene when real users are present.
+ * WHAT CHANGED HERE AND WHY
  *
- * Key patterns under test:
- *   - Bot client_id format: bot_$location
- *   - Bot state stored at dc_bot_state:$location
- *   - Bot timer stored at dc_bot_timer:$location
- *   - Bot moves at BOT_WALK_SPEED (1.2 units/sec)
- *   - Bot skips broadcasting when no real users at location
+ *  - 22 of 26 cases were ERRORS on baseline: every spawn/move/cleanup path ends
+ *    in \Workerman\Timer::add(), which throws 'Timer can only be used in
+ *    workerman running environment' outside a worker. TestTimer (see
+ *    tests/TestBootstrap.php) injects a recording
+ *    Workerman\Events\EventInterface into Timer's own $event seam, so the bot
+ *    timers are now created, inspected, DELETED and FIRED for real.
+ *
+ *  - The fake GlobalData double's cas() treated an absent key as [] and compared
+ *    with ===, so the CAS loops always succeeded first try. The real server
+ *    compares md5(serialize()) and reports an absent key as NULL, which is what
+ *    InMemoryGlobalData now models — see the dc_presence_clients livelock pinned
+ *    in EventsV1DcPresenceTest.
+ *
+ *  - Broadcast assertions went through Events::$channelClient, which the old
+ *    setUp() ALWAYS installed. That is precisely how the dead
+ *    \Channel\Client::publish() transport (BUG-A3) stayed green for months.
+ *    The seam is gone; broadcasts are asserted on
+ *    Gateway::sendToGroup('dc_presence', …) and the dead transport is a
+ *    recording tripwire every test checks.
+ *
+ *  - Real-user fixtures used int client_id 999. A gateway client_id is a 20-char
+ *    hex STRING; the bot's is the non-hex sentinel 'bot_<location>'. Both shapes
+ *    coexist in dc_presence_clients and the bot/real distinction is
+ *    `strpos($cid, 'bot_') === 0`, so the fixtures must use realistic hex ids
+ *    (dc_client_id()) or that discrimination is never really exercised.
+ *
+ *  - testMoveBotSkipsWhenNoRealUsers asserted only that bot state still
+ *    existed — true whether or not anything was skipped. Replaced with the real
+ *    invariants (walk step, target selection, clamp, timer ownership).
  *
  * @see Events::spawnBotForLocation()
  * @see Events::moveBot()
@@ -22,223 +45,23 @@
 namespace {
     use PHPUnit\Framework\TestCase;
 
-    require_once __DIR__ . '/V1TestSupport.php';
+    require_once __DIR__.'/V1TestSupport.php';
 
-    /**
-     * FakeChannelClient — captures Channel::publish() calls for assertion.
-     */
-    if (!class_exists('Channel\Client')) {
-        class_alias(stdClass::class, 'Channel\Client');
-    }
-
-    class BotFakeChannelClient
-    {
-        /** @var array<int,array{channel:string,message:string}> */
-        public static $published = [];
-
-        public static function publish($channel, $message)
-        {
-            self::$published[] = ['channel' => $channel, 'message' => $message];
-            return true;
-        }
-
-        public static function reset(): void
-        {
-            self::$published = [];
-        }
-    }
-
-    // class_alias must happen BEFORE Events.php loads to redirect Channel\Client
-    class_alias(BotFakeChannelClient::class, 'Channel\Client');
-
-    /**
-     * In-memory GlobalData client for bot presence tests.
-     *
-     * Extends the MultiTabFakeGlobalDataClient pattern and adds support for:
-     *   - dc_bot_state:$location
-     *   - dc_bot_timer:$location
-     *   - dc_move_batch:bot_$location
-     *   - Bot presence key: dc_presence:client:bot_$location
-     */
-    class BotFakeGlobalDataClient extends \GlobalData\Client
-    {
-        /** @var array<string,mixed> */
-        public $store = [];
-
-        /** @var array<string> timers that would be created (Timer::add) */
-        public $timers = [];
-
-        public function __construct()
-        {
-            // No address needed for fake
-        }
-
-        public function &__get($key)
-        {
-            // Bot state keys: dc_bot_state:main
-            if (strpos($key, 'dc_bot_state:') === 0) {
-                if (!isset($this->store[$key]) || !is_array($this->store[$key])) {
-                    $this->store[$key] = null;
-                }
-                return $this->store[$key];
-            }
-            // Bot timer keys: dc_bot_timer:main
-            if (strpos($key, 'dc_bot_timer:') === 0) {
-                if (!isset($this->store[$key])) {
-                    $this->store[$key] = null;
-                }
-                return $this->store[$key];
-            }
-            // Bot move batch keys: dc_move_batch:bot_main
-            if (strpos($key, 'dc_move_batch:') === 0) {
-                if (!isset($this->store[$key])) {
-                    $this->store[$key] = null;
-                }
-                return $this->store[$key];
-            }
-            // Per-client presence keys: dc_presence:client:100 or dc_presence:client:bot_main
-            if (strpos($key, 'dc_presence:client:') === 0) {
-                if (!isset($this->store[$key]) || !is_array($this->store[$key])) {
-                    $this->store[$key] = null;
-                }
-                return $this->store[$key];
-            }
-            // dc_presence_clients index
-            if ($key === 'dc_presence_clients') {
-                if (!isset($this->store[$key]) || !is_array($this->store[$key])) {
-                    $this->store[$key] = [];
-                }
-                return $this->store[$key];
-            }
-            // dc_active_clients index
-            if ($key === 'dc_active_clients') {
-                if (!isset($this->store[$key]) || !is_array($this->store[$key])) {
-                    $this->store[$key] = [];
-                }
-                return $this->store[$key];
-            }
-            // Ping, cleanup, session, viewport, throttle keys
-            if (preg_match('/^(dc_ping|dc_cleanup|dc_client_session|dc_session_clients|dc_viewport|dc_move_throttle|dc_presence|dc_bot_presence):/', $key)) {
-                if (!isset($this->store[$key])) {
-                    $this->store[$key] = null;
-                }
-                return $this->store[$key];
-            }
-            // CAS keys like hosts, running, ptys, etc.
-            if (array_key_exists($key, $this->store)) {
-                return $this->store[$key];
-            }
-            // Auto-create for keys like hosts, running, ptys (needed for auth flow)
-            if (in_array($key, ['hosts', 'running', 'ptys', 'sysinfos', 'rooms'])) {
-                $this->store[$key] = [];
-                return $this->store[$key];
-            }
-            // Key never stored — return static dummy by reference
-            static $dummy = [];
-            return $dummy;
-        }
-
-        public function __set($key, $value)
-        {
-            $this->store[$key] = $value;
-        }
-
-        public function __isset($key)
-        {
-            if (strpos($key, 'dc_bot_state:') === 0 || strpos($key, 'dc_bot_timer:') === 0 || strpos($key, 'dc_move_batch:') === 0) {
-                return array_key_exists($key, $this->store);
-            }
-            if (strpos($key, 'dc_presence:client:') === 0) {
-                return isset($this->store[$key]) && is_array($this->store[$key]);
-            }
-            if (in_array($key, ['dc_presence_clients', 'dc_active_clients'])) {
-                return isset($this->store[$key]) && is_array($this->store[$key]);
-            }
-            if (preg_match('/^(dc_ping|dc_cleanup|dc_client_session|dc_session_clients|dc_viewport|dc_move_throttle|dc_presence|dc_bot_presence):/', $key)) {
-                return isset($this->store[$key]);
-            }
-            return array_key_exists($key, $this->store);
-        }
-
-        public function __unset($key)
-        {
-            unset($this->store[$key]);
-        }
-
-        /**
-         * CAS operation — compares by value for arrays, by reference otherwise.
-         */
-        public function cas($key, $old, $new)
-        {
-            $current = $this->store[$key] ?? null;
-            if (is_array($current) && is_array($old)) {
-                if ($current === $old) {
-                    $this->store[$key] = $new;
-                    return true;
-                }
-                return false;
-            }
-            if ($current === $old) {
-                $this->store[$key] = $new;
-                return true;
-            }
-            return false;
-        }
-
-        /**
-         * Add a key with initial value if it doesn't exist (atomic increment-like).
-         */
-        public function add($key, $initial)
-        {
-            if (!isset($this->store[$key])) {
-                $this->store[$key] = $initial;
-                return true;
-            }
-            return false;
-        }
-
-        /**
-         * Record a timer that would have been created via Timer::add.
-         * Returns a fake timer ID for tracking.
-         */
-        public function createTimer(float $interval, $callback, array $args, bool $persistent): mixed
-        {
-            $timerId = 'timer_' . count($this->timers) . '_' . uniqid();
-            $this->timers[] = [
-                'id' => $timerId,
-                'interval' => $interval,
-                'callback' => $callback,
-                'args' => $args,
-                'persistent' => $persistent,
-            ];
-            return $timerId;
-        }
-
-        /**
-         * Delete a recorded timer.
-         */
-        public function deleteTimer(string $timerId): void
-        {
-            $this->timers = array_values(array_filter(
-                $this->timers,
-                fn($t) => $t['id'] !== $timerId
-            ));
-        }
-    }
-
-    /**
-     * Tests for the DataCenter Bot Presence System.
-     */
     class EventsBotPresenceTest extends TestCase
     {
+        use DcTransportAssertions;
+
         private const LOCATION = 'main';
         private const BOT_ID = 'bot_main';
 
+        /** @var string a real user's 20-char hex connection id */
+        private string $userId;
+
         protected function setUp(): void
         {
+            $this->userId = dc_client_id(2001);
             $this->resetState();
             $_SERVER['REMOTE_ADDR'] = '203.0.113.10';
-            \Events::$channelClient = [BotFakeChannelClient::class, 'publish'];
         }
 
         protected function tearDown(): void
@@ -248,19 +71,21 @@ namespace {
 
         private function resetState(): void
         {
-            \GatewayWorker\Lib\Gateway::$sent = [];
-            \GatewayWorker\Lib\Gateway::$closed = [];
-            \GatewayWorker\Lib\Gateway::$sessions = [];
-            \GatewayWorker\Lib\Gateway::$bound = [];
-            \GatewayWorker\Lib\Gateway::$joined = [];
-            \GatewayWorker\Lib\Gateway::$left = [];
+            \GatewayWorker\Lib\Gateway::reset();
+            \Channel\Client::reset();
+            \GlobalData\Client::resetConstructed();
+            TestTimer::install();
             $_SESSION = [];
             \Events::$db = null;
-            \Events::$channelClient = null;
+            \Events::$channelClient = null;   // production configuration
             \Events::$moveBatch = [];
             \Events::$moveBatchTimer = null;
-            BotFakeChannelClient::reset();
             unset($GLOBALS['global']);
+
+            // Bot timer ids are process-local statics that survive between tests.
+            $botTimers = new ReflectionProperty(\Events::class, 'botTimers');
+            $botTimers->setAccessible(true);
+            $botTimers->setValue(null, []);
 
             $ref = new ReflectionClass(FeatureFlags::class);
             $prop = $ref->getProperty('client');
@@ -268,730 +93,1027 @@ namespace {
             $prop->setValue(null, null);
         }
 
-        /**
-         * Set up Flag C (dcBotPresenceEnabled) ON with bot presence enabled.
-         * Returns the fake GlobalData client for direct assertion.
-         */
-        private function botFlagOn(): BotFakeGlobalDataClient
+        /** Flag C (dc_bot_presence) ON, with the indexes a live worker seeds. */
+        private function botFlagOn(array $seed = []): InMemoryGlobalData
         {
-            $client = new BotFakeGlobalDataClient();
-            $client->store[FeatureFlags::VAR_DC_BOT_PRESENCE] = 1;
-            $client->store['dc_presence_clients'] = [];
-            $client->store['dc_active_clients'] = [];
-            $GLOBALS['global'] = $client;
+            $global = new InMemoryGlobalData(array_merge([
+                FeatureFlags::VAR_NEW_HANDLING => 1,
+                FeatureFlags::VAR_DC_BOT_PRESENCE => 1,
+                'dc_presence_clients' => [],
+                'dc_active_clients' => [],
+            ], $seed));
+            $GLOBALS['global'] = $global;
+            return $global;
+        }
 
-            return $client;
+        /** Flag C explicitly OFF. */
+        private function botFlagOff(array $seed = []): InMemoryGlobalData
+        {
+            return $this->botFlagOn(array_merge([FeatureFlags::VAR_DC_BOT_PRESENCE => 0], $seed));
+        }
+
+        /** Add a real (non-bot) user with a hex client_id at ($x,$z). */
+        private function addRealUser(InMemoryGlobalData $global, string $clientId, float $x = 0.0, float $z = 0.0): void
+        {
+            $global->store['dc_presence:client:'.$clientId] = [
+                'uid' => 4242, 'name' => 'admin', 'x' => $x, 'z' => $z, 'yaw' => 0.0,
+                'ts' => time(), 'client_id' => $clientId,
+            ];
+            $list = $global->raw('dc_presence_clients') ?? [];
+            $list[] = $clientId;
+            $global->store['dc_presence_clients'] = array_values(array_unique($list));
+            $active = $global->raw('dc_active_clients') ?? [];
+            $active[] = $clientId;
+            $global->store['dc_active_clients'] = array_values(array_unique($active));
         }
 
         /**
-         * Set up Flag C (dcBotPresenceEnabled) OFF.
+         * The ownership marker spawnBotForLocation() writes for THIS process.
+         *
+         * datacentered runs on three systems sharing one GlobalData store, and pids
+         * are not unique across them, so the marker is host-qualified "<host>:<pid>"
+         * rather than a bare pid. Fixtures elsewhere in this file deliberately still
+         * seed the legacy bare-pid form: markerIsSelf()/botOwnerAlive() must keep
+         * honouring it or a rolling restart across the three hosts would have the
+         * owning process fail to recognise its own marker and retire its own timer,
+         * killing the bot on its first tick.
          */
-        private function botFlagOff(): BotFakeGlobalDataClient
+        private function selfMarker(): string
         {
-            $client = new BotFakeGlobalDataClient();
-            $client->store[FeatureFlags::VAR_DC_BOT_PRESENCE] = 0;
-            $client->store['dc_presence_clients'] = [];
-            $client->store['dc_active_clients'] = [];
-            $GLOBALS['global'] = $client;
-
-            return $client;
+            $host = gethostname();
+            return (($host === false || $host === '') ? 'unknown-host' : $host).':'.getmypid();
         }
 
-        // ========================================================================
-        // spawnBotForLocation: basic creation
-        // ========================================================================
+        /** The recorded repeating bot move timer(s). */
+        private function botMoveTimers(): array
+        {
+            return array_values(array_filter(
+                TestTimer::added(),
+                static fn(array $t) => abs($t['interval'] - \Events::BOT_MOVE_INTERVAL) < 1e-9
+                    && $t['args'] === [self::LOCATION]
+            ));
+        }
 
-        /**
-         * VERIFY: spawnBotForLocation creates bot entry at dc_presence:client:bot_main.
-         */
-        public function testSpawnBotCreatesPresenceEntry(): void
+        // ====================================================================
+        // spawnBotForLocation
+        // ====================================================================
+
+        public function testSpawnBotCreatesStatePresenceEntryAndIndexes(): void
         {
             $global = $this->botFlagOn();
 
             \Events::spawnBotForLocation(self::LOCATION);
 
-            $presenceKey = 'dc_presence:client:' . self::BOT_ID;
-            $entry = $global->$presenceKey;
-
-            $this->assertNotNull($entry, 'Bot presence entry must exist');
-            $this->assertIsArray($entry);
+            $entry = $global->raw('dc_presence:client:'.self::BOT_ID);
+            $this->assertIsArray($entry, 'the bot gets a presence entry like any client');
             $this->assertSame(self::BOT_ID, $entry['uid']);
             $this->assertSame(self::BOT_ID, $entry['client_id']);
             $this->assertSame(self::LOCATION, $entry['location']);
-            $this->assertArrayHasKey('name', $entry);
-            $this->assertArrayHasKey('x', $entry);
-            $this->assertArrayHasKey('z', $entry);
-            $this->assertArrayHasKey('yaw', $entry);
+            $this->assertIsString($entry['name']);
+            $this->assertIsFloat($entry['x']);
+            $this->assertIsFloat($entry['z']);
+            $this->assertIsFloat($entry['yaw']);
+
+            $state = $global->raw('dc_bot_state:'.self::LOCATION);
+            $this->assertIsArray($state);
+            $this->assertArrayHasKey('target_x', $state);
+            $this->assertArrayHasKey('target_z', $state);
+            $this->assertSame($entry['x'], $state['x'], 'presence entry and bot state start identical');
+
+            $this->assertSame([self::BOT_ID], $global->raw('dc_presence_clients'));
+            $this->assertSame([self::BOT_ID], $global->raw('dc_active_clients'));
+            $this->assertDeadChannelTransportUnused('spawn:');
         }
 
         /**
-         * VERIFY: Bot position is within defined bounds.
+         * A bot client_id is the non-hex sentinel 'bot_<location>'. Everything
+         * that separates bots from sockets keys off that prefix
+         * (`strpos($cid, 'bot_') === 0`), so it must never be hex-shaped.
          */
-        public function testSpawnBotPositionWithinBounds(): void
+        public function testBotClientIdIsThePrefixedSentinelNotAHexId(): void
         {
             $global = $this->botFlagOn();
 
             \Events::spawnBotForLocation(self::LOCATION);
 
-            $presenceKey = 'dc_presence:client:' . self::BOT_ID;
-            $entry = $global->$presenceKey;
-
-            $this->assertGreaterThanOrEqual(\Events::BOT_BOUNDS_X_MIN, $entry['x']);
-            $this->assertLessThanOrEqual(\Events::BOT_BOUNDS_X_MAX, $entry['x']);
-            $this->assertGreaterThanOrEqual(\Events::BOT_BOUNDS_Z_MIN, $entry['z']);
-            $this->assertLessThanOrEqual(\Events::BOT_BOUNDS_Z_MAX, $entry['z']);
+            $this->assertSame(self::BOT_ID, $global->raw('dc_presence_clients')[0]);
+            $this->assertStringStartsWith('bot_', $global->raw('dc_presence_clients')[0]);
+            $this->assertDoesNotMatchRegularExpression(
+                '/^[0-9a-f]{20}$/',
+                $global->raw('dc_presence_clients')[0],
+                'a bot id must be distinguishable from a real 20-char hex client_id'
+            );
         }
 
-        /**
-         * VERIFY: Bot is added to dc_presence_clients index.
-         */
-        public function testSpawnBotAddsToClientsIndex(): void
+        public function testSpawnBotStartsARepeatingMoveTimerOwnedByThisPid(): void
         {
             $global = $this->botFlagOn();
 
             \Events::spawnBotForLocation(self::LOCATION);
 
-            $clientList = $global->dc_presence_clients;
-            $this->assertIsArray($clientList);
-            $this->assertContains(self::BOT_ID, $clientList, 'Bot must be in dc_presence_clients index');
+            $timers = $this->botMoveTimers();
+            $this->assertCount(1, $timers, 'exactly one bot move timer');
+            $this->assertTrue($timers[0]['persistent'], 'the bot walks on a REPEATING timer');
+            $this->assertSame(\Events::BOT_MOVE_INTERVAL, $timers[0]['interval']);
+            $this->assertSame(['Events', 'moveBot'], $timers[0]['func']);
+
+            // THE BOT #4: GlobalData carries the OWNING PROCESS (host-qualified); the
+            // raw (process-local) timer id must stay in the private static, because
+            // Timer::del() of another process's id kills an unrelated timer in this one.
+            $this->assertSame($this->selfMarker(), $global->raw('dc_bot_timer:'.self::LOCATION));
+            $this->assertNotSame($timers[0]['id'], $global->raw('dc_bot_timer:'.self::LOCATION));
+
+            $botTimers = new ReflectionProperty(\Events::class, 'botTimers');
+            $botTimers->setAccessible(true);
+            $this->assertSame([self::LOCATION => $timers[0]['id']], $botTimers->getValue());
         }
 
-        /**
-         * VERIFY: Bot is added to dc_active_clients list.
-         */
-        public function testSpawnBotAddsToActiveClients(): void
+        /** The joined announcement goes out on the Gateway group, as an event. */
+        public function testSpawnBotAnnouncesJoinedOverGatewayGroup(): void
         {
-            $global = $this->botFlagOn();
+            $this->botFlagOn();
 
             \Events::spawnBotForLocation(self::LOCATION);
 
-            $activeClients = $global->dc_active_clients;
-            $this->assertIsArray($activeClients);
-            $this->assertContains(self::BOT_ID, $activeClients, 'Bot must be in dc_active_clients');
+            $events = $this->presenceGroupEvents('dc.presence.joined');
+            $this->assertCount(1, $events, 'the bot must announce itself so frontends create the avatar');
+            $this->assertIsV1Event($events[0], 'dc.presence.joined');
+
+            $data = $events[0]['data'];
+            $this->assertSame(self::BOT_ID, $data['clientId'], 'camelCase clientId, as the frontend expects');
+            $this->assertArrayNotHasKey('client_id', $data);
+            $this->assertSame(self::LOCATION, $data['location']);
+            $this->assertArrayHasKey('name', $data);
+            $this->assertArrayHasKey('x', $data);
+            $this->assertArrayHasKey('z', $data);
+            $this->assertArrayHasKey('yaw', $data);
+            $this->assertDeadChannelTransportUnused('spawn announce:');
         }
 
-        /**
-         * VERIFY: Bot state is stored at dc_bot_state:main.
-         */
-        public function testSpawnBotStoresBotState(): void
-        {
-            $global = $this->botFlagOn();
-
-            \Events::spawnBotForLocation(self::LOCATION);
-
-            $botStateKey = 'dc_bot_state:' . self::LOCATION;
-            $botState = $global->$botStateKey;
-
-            $this->assertNotNull($botState, 'Bot state must be stored');
-            $this->assertIsArray($botState);
-            $this->assertSame(self::BOT_ID, $botState['uid']);
-            $this->assertArrayHasKey('target_x', $botState);
-            $this->assertArrayHasKey('target_z', $botState);
-        }
-
-        /**
-         * VERIFY: spawnBotForLocation broadcasts dc.presence.joined event via Channel\Client::publish.
-         * When a bot spawns, it announces its presence to the dc_presence channel so the frontend
-         * can render the bot avatar.
-         */
-        public function testSpawnBotBroadcastsJoinedEvent(): void
-        {
-            $global = $this->botFlagOn();
-
-            \Events::spawnBotForLocation(self::LOCATION);
-
-            // Find the dc.presence.joined broadcast
-            $found = false;
-            foreach (BotFakeChannelClient::$published as $entry) {
-                if ($entry['channel'] === 'dc_presence') {
-                    $msg = json_decode($entry['message'], true);
-                    if (isset($msg['op']) && $msg['op'] === 'dc.presence.joined') {
-                        $found = true;
-                        // Verify bot state data is included in the payload
-                        $this->assertArrayHasKey('client_id', $msg['data'], 'Payload must contain client_id');
-                        $this->assertArrayHasKey('location', $msg['data'], 'Payload must contain location');
-                        $this->assertArrayHasKey('x', $msg['data'], 'Payload must contain x');
-                        $this->assertArrayHasKey('z', $msg['data'], 'Payload must contain z');
-                        $this->assertArrayHasKey('yaw', $msg['data'], 'Payload must contain yaw');
-                        $this->assertArrayHasKey('name', $msg['data'], 'Payload must contain name');
-                        // Verify the bot ID in payload matches expected format
-                        $this->assertSame(self::BOT_ID, $msg['data']['client_id']);
-                        $this->assertSame(self::LOCATION, $msg['data']['location']);
-                        break;
-                    }
-                }
-            }
-            $this->assertTrue($found, 'spawnBotForLocation must broadcast dc.presence.joined to dc_presence channel');
-        }
-
-        // ========================================================================
-        // spawnBotForLocation: flag control
-        // ========================================================================
-
-        /**
-         * VERIFY: Bot is NOT spawned when Flag C is disabled.
-         */
-        public function testSpawnBotSkippedWhenFlagDisabled(): void
+        public function testSpawnBotSkippedWhenFlagCDisabled(): void
         {
             $global = $this->botFlagOff();
 
             \Events::spawnBotForLocation(self::LOCATION);
 
-            $presenceKey = 'dc_presence:client:' . self::BOT_ID;
-            $this->assertNull($global->$presenceKey, 'Bot must NOT be created when flag is off');
-
-            $botStateKey = 'dc_bot_state:' . self::LOCATION;
-            $this->assertNull($global->$botStateKey, 'Bot state must NOT be created when flag is off');
+            $this->assertNull($global->raw('dc_presence:client:'.self::BOT_ID));
+            $this->assertNull($global->raw('dc_bot_state:'.self::LOCATION));
+            $this->assertSame([], $this->botMoveTimers(), 'no timer may be armed with Flag C off');
+            $this->assertSame([], \GatewayWorker\Lib\Gateway::$sentToGroup);
         }
 
-        // ========================================================================
-        // spawnBotForLocation: stale timer handling
-        // ========================================================================
-
-        /**
-         * VERIFY: Handles stale timer (timer exists but state lost).
-         * When the timer exists but state is null, the stale timer should be cleaned up
-         * and a new bot should be spawned.
-         */
-        public function testSpawnBotHandlesStaleTimer(): void
+        /** A live bot with a live owner is not respawned. */
+        public function testSpawnBotIsIdempotentWhileTheOwnerIsAlive(): void
         {
             $global = $this->botFlagOn();
 
-            // Simulate a stale timer from a previous crash/power loss
-            // Timer exists but state is gone
-            $botTimerKey = 'dc_bot_timer:' . self::LOCATION;
-            $global->$botTimerKey = 'stale_timer_123';
+            \Events::spawnBotForLocation(self::LOCATION);
+            $first = $global->raw('dc_bot_state:'.self::LOCATION);
+            $timerCountAfterFirst = count($this->botMoveTimers());
 
-            // State should be null initially (simulating lost state)
-            $botStateKey = 'dc_bot_state:' . self::LOCATION;
-            $this->assertNull($global->$botStateKey, 'State should be null (simulating lost state)');
-
-            // Spawn should succeed after cleaning up stale timer
             \Events::spawnBotForLocation(self::LOCATION);
 
-            // Bot should now exist
-            $presenceKey = 'dc_presence:client:' . self::BOT_ID;
-            $this->assertNotNull($global->$presenceKey, 'Bot should be spawned after stale timer cleanup');
+            $this->assertSame($first, $global->raw('dc_bot_state:'.self::LOCATION), 'state must not be rewritten');
+            $this->assertCount($timerCountAfterFirst, $this->botMoveTimers(), 'no second move timer');
         }
 
         /**
-         * VERIFY: Spawn returns early if bot already exists (timer AND state present).
+         * A marker naming a DEAD pid means that worker's timer died with it, so
+         * the bot would sit frozen forever. Ownership must be taken here.
          */
-        public function testSpawnBotSkipsIfAlreadyExists(): void
+        public function testSpawnBotTakesOverWhenTheOwnerPidIsGone(): void
         {
-            $global = $this->botFlagOn();
-
-            // Pre-populate bot state
-            $botStateKey = 'dc_bot_state:' . self::LOCATION;
-            $global->$botStateKey = [
-                'uid' => self::BOT_ID,
-                'name' => 'Existing Bot',
-                'x' => 10.0,
-                'z' => 20.0,
-                'yaw' => 1.5,
-                'target_x' => 30.0,
-                'target_z' => 40.0,
-                'client_id' => self::BOT_ID,
-                'location' => self::LOCATION,
-            ];
-            // Pre-populate timer
-            $botTimerKey = 'dc_bot_timer:' . self::LOCATION;
-            $global->$botTimerKey = 'existing_timer_456';
-
-            // Capture state before attempting second spawn
-            $presenceKey = 'dc_presence:client:' . self::BOT_ID;
-            $originalEntry = $global->$presenceKey;
+            // pid 1 exists, so use an implausible one that is not us.
+            $deadPid = 4194303;
+            $global = $this->botFlagOn([
+                'dc_bot_timer:'.self::LOCATION => $deadPid,
+                'dc_bot_state:'.self::LOCATION => [
+                    'uid' => self::BOT_ID, 'name' => 'Ghost', 'x' => 1.0, 'z' => 2.0, 'yaw' => 0.0,
+                    'target_x' => 1.0, 'target_z' => 2.0, 'client_id' => self::BOT_ID,
+                    'location' => self::LOCATION,
+                ],
+            ]);
+            $this->assertFalse(is_dir('/proc/'.$deadPid), 'fixture pid must really be dead');
 
             \Events::spawnBotForLocation(self::LOCATION);
 
-            // Entry should be unchanged
-            $this->assertSame($originalEntry, $global->$presenceKey, 'Existing bot entry must not be modified');
+            $this->assertSame(
+                $this->selfMarker(),
+                $global->raw('dc_bot_timer:'.self::LOCATION),
+                'ownership must transfer to the respawning worker'
+            );
+            $this->assertCount(1, $this->botMoveTimers(), 'a fresh move timer is armed here');
+            $this->assertNotSame(
+                'Ghost',
+                $global->raw('dc_bot_state:'.self::LOCATION)['name'],
+                'the frozen bot is replaced, not adopted'
+            );
         }
 
-        // ========================================================================
-        // moveBot: real users check
-        // ========================================================================
-
-        /**
-         * VERIFY: moveBot skips broadcasting when no real users at location.
-         * (hasRealUsersAtLocation returns false when only bots are present)
-         */
-        public function testMoveBotSkipsWhenNoRealUsers(): void
+        /** A marker with no state at all is stale: drop it and respawn. */
+        public function testSpawnBotClearsAStaleMarkerWithNoState(): void
         {
-            $global = $this->botFlagOn();
+            $global = $this->botFlagOn([
+                'dc_bot_timer:'.self::LOCATION => 4194303,
+            ]);
 
-            // Spawn bot first
             \Events::spawnBotForLocation(self::LOCATION);
 
-            // Ensure NO real users - only the bot is in the clients list
-            // (already set up that way by spawnBotForLocation)
+            $this->assertIsArray($global->raw('dc_bot_state:'.self::LOCATION));
+            $this->assertSame($this->selfMarker(), $global->raw('dc_bot_timer:'.self::LOCATION));
+        }
 
-            // Clear any previous move batch
-            $batchKey = 'dc_move_batch:' . self::BOT_ID;
-            $global->$batchKey = null;
+        // ====================================================================
+        // Cross-host ownership (three datacentered instances, one GlobalData)
+        // ====================================================================
 
-            // Call moveBot
+        /**
+         * A marker owned by ANOTHER instance whose bot is still being walked must be
+         * left completely alone. Pre-fix, ownership was a bare pid checked with a LOCAL
+         * is_dir('/proc/<pid>'), so a foreign pid that did not happen to exist on this
+         * box read as "owner gone" and this host spawned a SECOND bot over one another
+         * host was actively driving.
+         */
+        public function testForeignHostBotWithFreshHeartbeatIsNotTakenOver(): void
+        {
+            $global = $this->botFlagOn([
+                'dc_bot_timer:'.self::LOCATION => 'my-web-9.example.net:4194303',
+                'dc_bot_state:'.self::LOCATION => [
+                    'uid' => self::BOT_ID, 'name' => 'RemoteWalker',
+                    'x' => 5.0, 'z' => 6.0, 'yaw' => 0.0,
+                    'target_x' => 5.0, 'target_z' => 6.0, 'client_id' => self::BOT_ID,
+                    'location' => self::LOCATION,
+                    'ts' => time(),   // heartbeat: moveBot() refreshes this every 0.5s
+                ],
+            ]);
+
+            \Events::spawnBotForLocation(self::LOCATION);
+
+            $this->assertSame(
+                'my-web-9.example.net:4194303',
+                $global->raw('dc_bot_timer:'.self::LOCATION),
+                'must not steal ownership of a bot another instance is walking'
+            );
+            $this->assertSame(
+                'RemoteWalker',
+                $global->raw('dc_bot_state:'.self::LOCATION)['name'],
+                'the remote bot state must be left intact'
+            );
+            $this->assertSame([], $this->botMoveTimers(), 'no competing move timer here');
+        }
+
+        /**
+         * ...but if that instance has stopped refreshing the heartbeat it is presumed
+         * dead and we DO take over — otherwise a bot orphaned by a dead host sits
+         * frozen forever, which is indistinguishable from "the bot is broken". We
+         * cannot inspect a remote /proc, so the bot's own ts is the liveness signal.
+         */
+        public function testForeignHostBotWithStaleHeartbeatIsTakenOver(): void
+        {
+            $global = $this->botFlagOn([
+                'dc_bot_timer:'.self::LOCATION => 'my-web-9.example.net:4194303',
+                'dc_bot_state:'.self::LOCATION => [
+                    'uid' => self::BOT_ID, 'name' => 'Abandoned',
+                    'x' => 5.0, 'z' => 6.0, 'yaw' => 0.0,
+                    'target_x' => 5.0, 'target_z' => 6.0, 'client_id' => self::BOT_ID,
+                    'location' => self::LOCATION,
+                    'ts' => time() - (\Events::BOT_OWNER_HEARTBEAT_MAX_AGE + 5),
+                ],
+            ]);
+
+            \Events::spawnBotForLocation(self::LOCATION);
+
+            $this->assertSame(
+                $this->selfMarker(),
+                $global->raw('dc_bot_timer:'.self::LOCATION),
+                'a heartbeat this stale means the owning instance is gone'
+            );
+            $this->assertNotSame(
+                'Abandoned',
+                $global->raw('dc_bot_state:'.self::LOCATION)['name'],
+                'the frozen bot is replaced, not adopted'
+            );
+            $this->assertCount(1, $this->botMoveTimers());
+        }
+
+        /**
+         * The owning process must recognise its OWN host-qualified marker. If it does
+         * not, moveBot()'s duplicate-timer guard retires the very timer that drives the
+         * bot, and the bot stops after a single tick.
+         */
+        public function testOwningProcessRecognisesItsOwnHostQualifiedMarker(): void
+        {
+            $global = $this->botFlagOn();
+            \Events::spawnBotForLocation(self::LOCATION);
+            $this->assertSame($this->selfMarker(), $global->raw('dc_bot_timer:'.self::LOCATION));
+
+            $before = $this->botMoveTimers();
+            $this->assertCount(1, $before);
+
             \Events::moveBot(self::LOCATION);
 
-            // Bot state should be updated but no batch write should happen
-            // (because hasRealUsersAtLocation returns false when only bot is present)
-            $botStateKey = 'dc_bot_state:' . self::LOCATION;
-            $botState = $global->$botStateKey;
-            $this->assertNotNull($botState, 'Bot state should still exist');
+            $botTimers = new ReflectionProperty(\Events::class, 'botTimers');
+            $botTimers->setAccessible(true);
+            $this->assertSame(
+                [self::LOCATION => $before[0]['id']],
+                $botTimers->getValue(),
+                'the owner must NOT retire its own timer'
+            );
+            $this->assertNotNull($global->raw('dc_bot_state:'.self::LOCATION));
         }
 
+        // ====================================================================
+        // Spawn position (contract BOT-BOUNDS)
+        // ====================================================================
+
         /**
-         * VERIFY: moveBot proceeds when real users ARE present.
+         * With no reported bounds the bot spawns inside the FALLBACK +/-50 box,
+         * inset so it never clips the walls.
          */
-        public function testMoveBotProceedsWhenRealUsersPresent(): void
+        public function testSpawnPositionStaysInsideTheInsetFallbackBounds(): void
         {
             $global = $this->botFlagOn();
 
-            // Spawn bot
             \Events::spawnBotForLocation(self::LOCATION);
+            $state = $global->raw('dc_bot_state:'.self::LOCATION);
 
-            // Add a real user to the clients list
-            $clientList = $global->dc_presence_clients;
-            $clientList[] = 999; // Real user client_id
-            $global->dc_presence_clients = $clientList;
+            $inset = \Events::BOT_BOUNDS_INSET;
+            $this->assertGreaterThanOrEqual(\Events::BOT_BOUNDS_X_MIN + $inset, $state['x']);
+            $this->assertLessThanOrEqual(\Events::BOT_BOUNDS_X_MAX - $inset, $state['x']);
+            $this->assertGreaterThanOrEqual(\Events::BOT_BOUNDS_Z_MIN + $inset, $state['z']);
+            $this->assertLessThanOrEqual(\Events::BOT_BOUNDS_Z_MAX - $inset, $state['z']);
+            $this->assertSame(
+                [
+                    'minX' => \Events::BOT_BOUNDS_X_MIN + $inset,
+                    'maxX' => \Events::BOT_BOUNDS_X_MAX - $inset,
+                    'minZ' => \Events::BOT_BOUNDS_Z_MIN + $inset,
+                    'maxZ' => \Events::BOT_BOUNDS_Z_MAX - $inset,
+                ],
+                $state['bounds'],
+                'the recorded bounds are the INSET walkable box'
+            );
+        }
 
-            // Add real user's presence entry
-            $global->{'dc_presence:client:999'} = [
-                'uid' => 'admin1',
-                'name' => 'Admin One',
-                'x' => 5.0,
-                'z' => 5.0,
-                'yaw' => 0.0,
-                'client_id' => 999,
-            ];
+        /**
+         * THE BOT #1: with browser-reported bounds the bot spawns inside the REAL
+         * room, which dc.js builds nowhere near the world origin (racks start at
+         * offsetX/offsetZ = -100), so the fallback box would put it out of sight.
+         */
+        public function testSpawnUsesBrowserReportedRoomBounds(): void
+        {
+            $global = $this->botFlagOn();
+            $reported = ['minX' => -200.0, 'maxX' => -100.0, 'minZ' => -200.0, 'maxZ' => -100.0];
 
-            // Record original position
-            $botStateKey = 'dc_bot_state:' . self::LOCATION;
-            $originalState = $global->$botStateKey;
-            $originalX = $originalState['x'];
-            $originalZ = $originalState['z'];
+            \Events::spawnBotForLocation(self::LOCATION, null, $reported);
+            $state = $global->raw('dc_bot_state:'.self::LOCATION);
 
-            // Call moveBot
+            $this->assertSame($reported, $global->raw(\Events::DC_ROOM_BOUNDS_KEY_PREFIX.self::LOCATION));
+            $this->assertGreaterThanOrEqual(-198.0, $state['x'], 'inside the reported room, not the +/-50 box');
+            $this->assertLessThanOrEqual(-102.0, $state['x']);
+            $this->assertGreaterThanOrEqual(-198.0, $state['z']);
+            $this->assertLessThanOrEqual(-102.0, $state['z']);
+        }
+
+        /**
+         * THE BOT #1/#3: the bot spawns within BOT_SPAWN_RADIUS of the joining
+         * player, so it is actually visible instead of wandering empty space.
+         */
+        public function testSpawnIsNearTheJoiningPlayer(): void
+        {
+            $global = $this->botFlagOn();
+            $reported = ['minX' => -300.0, 'maxX' => 300.0, 'minZ' => -300.0, 'maxZ' => 300.0];
+            $near = ['x' => 150.0, 'z' => -150.0];
+
+            \Events::spawnBotForLocation(self::LOCATION, $near, $reported);
+            $state = $global->raw('dc_bot_state:'.self::LOCATION);
+
+            $distance = sqrt(
+                ($state['x'] - $near['x']) ** 2 + ($state['z'] - $near['z']) ** 2
+            );
+            $this->assertLessThanOrEqual(
+                \Events::BOT_SPAWN_RADIUS + 1e-9,
+                $distance,
+                'the bot must spawn within BOT_SPAWN_RADIUS of the joining player'
+            );
+        }
+
+        /**
+         * With no $near, the anchor falls back to a random REAL player's last
+         * known position (THE BOT #3) rather than a uniform point in the box.
+         */
+        public function testSpawnFallsBackToARealPlayerPositionWhenNoNearGiven(): void
+        {
+            $global = $this->botFlagOn();
+            $reported = ['minX' => -400.0, 'maxX' => 400.0, 'minZ' => -400.0, 'maxZ' => 400.0];
+            $global->store[\Events::DC_ROOM_BOUNDS_KEY_PREFIX.self::LOCATION] = $reported;
+            $this->addRealUser($global, $this->userId, 300.0, 300.0);
+
+            \Events::spawnBotForLocation(self::LOCATION);
+            $state = $global->raw('dc_bot_state:'.self::LOCATION);
+
+            $distance = sqrt(($state['x'] - 300.0) ** 2 + ($state['z'] - 300.0) ** 2);
+            $this->assertLessThanOrEqual(
+                \Events::BOT_SPAWN_RADIUS + 1e-9,
+                $distance,
+                'the only real player\'s position must be used as the spawn anchor'
+            );
+        }
+
+        // ====================================================================
+        // moveBot — the step-clamp invariant
+        // ====================================================================
+
+        /**
+         * THE CLAMP INVARIANT.
+         *
+         * One tick moves BOT_WALK_SPEED * BOT_MOVE_INTERVAL = 11.7 * 0.5 = 5.85
+         * units, which is far MORE than BOT_TARGET_THRESHOLD (1.0). An unclamped
+         * step therefore overshoots the target, the next tick overshoots back,
+         * and the bot oscillates around the target forever without ever getting
+         * within the threshold to pick a new one. moveBot() must clamp the step
+         * to the remaining distance:
+         *     min(BOT_WALK_SPEED * BOT_MOVE_INTERVAL, $distance)
+         *
+         * Here the target is 2.0 units away — less than one tick — so after the
+         * tick the bot must be exactly ON the target, never past it.
+         */
+        public function testMoveBotClampsTheStepToTheRemainingDistance(): void
+        {
+            $tick = \Events::BOT_WALK_SPEED * \Events::BOT_MOVE_INTERVAL;
+            $this->assertGreaterThan(
+                \Events::BOT_TARGET_THRESHOLD,
+                $tick,
+                'precondition: one tick is longer than the arrival threshold, so the clamp is load-bearing'
+            );
+
+            $global = $this->botFlagOn([
+                'dc_room_bounds:'.self::LOCATION => ['minX' => -100.0, 'maxX' => 100.0, 'minZ' => -100.0, 'maxZ' => 100.0],
+                'dc_bot_timer:'.self::LOCATION => getmypid(),
+                'dc_bot_state:'.self::LOCATION => [
+                    'uid' => self::BOT_ID, 'name' => 'Walker',
+                    'x' => 0.0, 'z' => 0.0, 'yaw' => 0.0,
+                    // 2.0 units away: more than the 1.0 threshold, less than a 5.85 tick.
+                    'target_x' => 2.0, 'target_z' => 0.0,
+                    'ts' => time(), 'client_id' => self::BOT_ID, 'location' => self::LOCATION,
+                ],
+            ]);
+            $this->addRealUser($global, $this->userId, 0.0, 0.0);
+
+            \Events::moveBot(self::LOCATION);
+            $state = $global->raw('dc_bot_state:'.self::LOCATION);
+
+            $this->assertEqualsWithDelta(
+                2.0,
+                $state['x'],
+                1e-9,
+                'the step must be clamped to the remaining 2.0 units — an unclamped 5.85 step '
+                .'would land at x=5.85 and overshoot the target'
+            );
+            $this->assertEqualsWithDelta(0.0, $state['z'], 1e-9);
+            $this->assertLessThanOrEqual(
+                2.0,
+                sqrt($state['x'] ** 2 + $state['z'] ** 2),
+                'the bot must never travel further than the distance to its target'
+            );
+            // Having arrived, the next tick is free to pick a new target.
+            $arrival = sqrt(($state['target_x'] - $state['x']) ** 2 + ($state['target_z'] - $state['z']) ** 2);
+            $this->assertLessThan(
+                \Events::BOT_TARGET_THRESHOLD,
+                $arrival,
+                'after a clamped step the bot is within the arrival threshold — which is the whole '
+                .'point: without the clamp it can never get there'
+            );
+        }
+
+        /** A far target produces exactly one full tick of travel. */
+        public function testMoveBotWalksOneFullTickTowardADistantTarget(): void
+        {
+            $tick = \Events::BOT_WALK_SPEED * \Events::BOT_MOVE_INTERVAL;
+            $global = $this->botFlagOn([
+                'dc_room_bounds:'.self::LOCATION => ['minX' => -500.0, 'maxX' => 500.0, 'minZ' => -500.0, 'maxZ' => 500.0],
+                'dc_bot_timer:'.self::LOCATION => getmypid(),
+                'dc_bot_state:'.self::LOCATION => [
+                    'uid' => self::BOT_ID, 'name' => 'Walker',
+                    'x' => 0.0, 'z' => 0.0, 'yaw' => 0.0,
+                    'target_x' => 400.0, 'target_z' => 0.0,
+                    'ts' => time(), 'client_id' => self::BOT_ID, 'location' => self::LOCATION,
+                ],
+            ]);
+            $this->addRealUser($global, $this->userId, 0.0, 0.0);
+
+            \Events::moveBot(self::LOCATION);
+            $state = $global->raw('dc_bot_state:'.self::LOCATION);
+
+            $this->assertEqualsWithDelta($tick, $state['x'], 1e-9, 'one tick = speed * interval = 5.85 units');
+            $this->assertSame(400.0, $state['target_x'], 'a distant target is kept, not re-rolled');
+        }
+
+        /**
+         * Repeated ticks must CONVERGE. Without the clamp this loop oscillates
+         * around the target forever and the assertion below never holds.
+         */
+        public function testRepeatedTicksConvergeOnTheTargetInsteadOfOscillating(): void
+        {
+            $global = $this->botFlagOn([
+                'dc_room_bounds:'.self::LOCATION => ['minX' => -100.0, 'maxX' => 100.0, 'minZ' => -100.0, 'maxZ' => 100.0],
+                'dc_bot_timer:'.self::LOCATION => getmypid(),
+                'dc_bot_state:'.self::LOCATION => [
+                    'uid' => self::BOT_ID, 'name' => 'Walker',
+                    'x' => 0.0, 'z' => 0.0, 'yaw' => 0.0,
+                    'target_x' => 20.0, 'target_z' => 0.0,
+                    'ts' => time(), 'client_id' => self::BOT_ID, 'location' => self::LOCATION,
+                ],
+            ]);
+            // No real players: randomRealClientPosition() returns null, so a new
+            // target would be uniform in bounds — but we assert convergence on the
+            // ORIGINAL target, which is only reachable if the step is clamped.
+            $arrived = false;
+            for ($tick = 0; $tick < 4; $tick++) {
+                \Events::moveBot(self::LOCATION);
+                $state = $global->raw('dc_bot_state:'.self::LOCATION);
+                if (abs($state['x'] - 20.0) < \Events::BOT_TARGET_THRESHOLD && abs($state['z']) < 1e-9) {
+                    $arrived = true;
+                    break;
+                }
+                $this->assertLessThanOrEqual(
+                    20.0,
+                    $state['x'],
+                    'the bot must never step PAST the target (overshoot = oscillation forever)'
+                );
+            }
+            $this->assertTrue(
+                $arrived,
+                '20 units at 5.85/tick must be covered in 4 ticks; failing this means the step '
+                .'overshoots and the bot never "arrives" to pick a new target'
+            );
+        }
+
+        /** On arrival a new target is chosen, inside the room bounds. */
+        public function testMoveBotPicksANewInBoundsTargetOnArrival(): void
+        {
+            $bounds = ['minX' => -60.0, 'maxX' => 60.0, 'minZ' => -60.0, 'maxZ' => 60.0];
+            $global = $this->botFlagOn([
+                'dc_room_bounds:'.self::LOCATION => $bounds,
+                'dc_bot_timer:'.self::LOCATION => getmypid(),
+                'dc_bot_state:'.self::LOCATION => [
+                    'uid' => self::BOT_ID, 'name' => 'Walker',
+                    'x' => 0.0, 'z' => 0.0, 'yaw' => 0.0,
+                    // Already within BOT_TARGET_THRESHOLD of the target.
+                    'target_x' => 0.1, 'target_z' => 0.1,
+                    'ts' => time(), 'client_id' => self::BOT_ID, 'location' => self::LOCATION,
+                ],
+            ]);
+            $this->addRealUser($global, $this->userId, 10.0, 10.0);
+
+            \Events::moveBot(self::LOCATION);
+            $state = $global->raw('dc_bot_state:'.self::LOCATION);
+
+            $this->assertNotEquals(0.1, $state['target_x'], 'arrival must trigger a new target');
+            $inset = \Events::BOT_BOUNDS_INSET;
+            $this->assertGreaterThanOrEqual($bounds['minX'] + $inset, $state['target_x']);
+            $this->assertLessThanOrEqual($bounds['maxX'] - $inset, $state['target_x']);
+            $this->assertGreaterThanOrEqual($bounds['minZ'] + $inset, $state['target_z']);
+            $this->assertLessThanOrEqual($bounds['maxZ'] - $inset, $state['target_z']);
+
+            // THE BOT #3: the new target is near the only real player.
+            $distance = sqrt(($state['target_x'] - 10.0) ** 2 + ($state['target_z'] - 10.0) ** 2);
+            $this->assertLessThanOrEqual(
+                \Events::BOT_WANDER_RADIUS + 1e-9,
+                $distance,
+                'targets are picked within BOT_WANDER_RADIUS of a real player'
+            );
+        }
+
+        /** Movement is queued for the shared batch flush (BUG-B7), not broadcast directly. */
+        public function testMoveBotQueuesTheBatchAndArmsTheSharedFlush(): void
+        {
+            $global = $this->botFlagOn([
+                'dc_room_bounds:'.self::LOCATION => ['minX' => -100.0, 'maxX' => 100.0, 'minZ' => -100.0, 'maxZ' => 100.0],
+                'dc_bot_timer:'.self::LOCATION => getmypid(),
+                'dc_bot_state:'.self::LOCATION => [
+                    'uid' => self::BOT_ID, 'name' => 'Walker',
+                    'x' => 0.0, 'z' => 0.0, 'yaw' => 0.0,
+                    'target_x' => 50.0, 'target_z' => 0.0,
+                    'ts' => time(), 'client_id' => self::BOT_ID, 'location' => self::LOCATION,
+                ],
+                'dc_presence:client:'.self::BOT_ID => ['uid' => self::BOT_ID, 'client_id' => self::BOT_ID],
+                'dc_presence_clients' => [self::BOT_ID],
+                'dc_active_clients' => [self::BOT_ID],
+            ]);
+            $this->addRealUser($global, $this->userId, 0.0, 0.0);
+
             \Events::moveBot(self::LOCATION);
 
-            // Bot should have moved (or at least state updated)
-            $updatedState = $global->$botStateKey;
-            $this->assertNotNull($updatedState);
+            $queued = json_decode((string) $global->raw('dc_move_batch:'.self::BOT_ID), true);
+            $this->assertIsArray($queued, 'the bot move must be queued at dc_move_batch:bot_<location>');
+            $this->assertArrayHasKey('x', $queued);
+            $this->assertArrayHasKey('yaw', $queued);
+            $this->assertSame(
+                [],
+                \GatewayWorker\Lib\Gateway::$sentToGroup,
+                'moveBot must not broadcast directly — it arms the SHARED 50ms flush'
+            );
 
-            // Position or target should have been updated
-            $moved = ($updatedState['x'] !== $originalX) || ($updatedState['z'] !== $originalZ)
-                || ($updatedState['target_x'] !== $originalState['target_x'])
-                || ($updatedState['target_z'] !== $originalState['target_z']);
-            $this->assertTrue($moved, 'Bot should have updated position or picked new target');
+            $flush = TestTimer::withInterval(0.05);
+            $this->assertCount(1, $flush, 'moveBot arms exactly one shared flush timer');
+
+            TestTimer::run($flush[0]['id']);
+
+            $events = $this->presenceGroupEvents('dc.presence.batch_updated');
+            $this->assertCount(1, $events, 'the flush emits the bot move as a batch event');
+            $this->assertArrayHasKey(self::BOT_ID, $events[0]['data']);
+            $this->assertDeadChannelTransportUnused('bot move flush:');
         }
 
-        // ========================================================================
-        // moveBot: flag control
-        // ========================================================================
-
         /**
-         * VERIFY: moveBot cleans up bot when flag is disabled.
+         * The bot yaw faces the direction of travel: yaw = atan2(-dirX, -dirZ),
+         * i.e. 0 = facing +Z.
          */
-        public function testMoveBotCleansUpWhenFlagDisabled(): void
+        public function testMoveBotFacesItsDirectionOfTravel(): void
+        {
+            $global = $this->botFlagOn([
+                'dc_room_bounds:'.self::LOCATION => ['minX' => -100.0, 'maxX' => 100.0, 'minZ' => -100.0, 'maxZ' => 100.0],
+                'dc_bot_timer:'.self::LOCATION => getmypid(),
+                'dc_bot_state:'.self::LOCATION => [
+                    'uid' => self::BOT_ID, 'name' => 'Walker',
+                    'x' => 0.0, 'z' => 0.0, 'yaw' => 123.0,
+                    'target_x' => -50.0, 'target_z' => 50.0,   // north-west diagonal
+                    'ts' => time(), 'client_id' => self::BOT_ID, 'location' => self::LOCATION,
+                ],
+            ]);
+
+            \Events::moveBot(self::LOCATION);
+            $state = $global->raw('dc_bot_state:'.self::LOCATION);
+
+            // dirX = -1/sqrt(2), dirZ = +1/sqrt(2) => atan2(0.7071, -0.7071) = 3*PI/4.
+            $this->assertEqualsWithDelta(3 * M_PI / 4, $state['yaw'], 1e-9);
+            // Sanity: the heading really points at the movement delta.
+            $this->assertEqualsWithDelta(
+                atan2(-$state['x'], -$state['z']),
+                $state['yaw'],
+                1e-9,
+                'yaw must be derived from the actual displacement'
+            );
+        }
+
+        /** Positions are clamped into the room even if state drifted outside it. */
+        public function testMoveBotClampsPositionIntoTheRoomBounds(): void
+        {
+            $bounds = ['minX' => -10.0, 'maxX' => 10.0, 'minZ' => -10.0, 'maxZ' => 10.0];
+            $global = $this->botFlagOn([
+                'dc_room_bounds:'.self::LOCATION => $bounds,
+                'dc_bot_timer:'.self::LOCATION => getmypid(),
+                'dc_bot_state:'.self::LOCATION => [
+                    'uid' => self::BOT_ID, 'name' => 'Walker',
+                    'x' => 7.0, 'z' => 0.0, 'yaw' => 0.0,
+                    'target_x' => 1000.0, 'target_z' => 0.0,   // far outside the room
+                    'ts' => time(), 'client_id' => self::BOT_ID, 'location' => self::LOCATION,
+                ],
+            ]);
+
+            \Events::moveBot(self::LOCATION);
+            $state = $global->raw('dc_bot_state:'.self::LOCATION);
+
+            $inset = min(\Events::BOT_BOUNDS_INSET, 20.0 / 4, 20.0 / 4);
+            $this->assertLessThanOrEqual($bounds['maxX'] - $inset, $state['x'], 'must never clip through a wall');
+            $this->assertGreaterThanOrEqual($bounds['minX'] + $inset, $state['x']);
+        }
+
+        // ====================================================================
+        // moveBot — ownership + flag control
+        // ====================================================================
+
+        public function testMoveBotCleansUpWhenFlagCGoesOff(): void
         {
             $global = $this->botFlagOn();
-
-            // Spawn bot with flag ON
             \Events::spawnBotForLocation(self::LOCATION);
-            $this->assertNotNull($global->{'dc_bot_state:' . self::LOCATION});
+            $this->assertIsArray($global->raw('dc_bot_state:'.self::LOCATION));
+            $timerId = $this->botMoveTimers()[0]['id'];
 
-            // Now disable flag
             $global->store[FeatureFlags::VAR_DC_BOT_PRESENCE] = 0;
-
-            // Add real user so moveBot doesn't just skip
-            $clientList = $global->dc_presence_clients;
-            $clientList[] = 999;
-            $global->dc_presence_clients = $clientList;
-            $global->{'dc_presence:client:999'} = [
-                'uid' => 'admin1', 'name' => 'Admin', 'x' => 0, 'z' => 0, 'yaw' => 0, 'client_id' => 999,
-            ];
-
-            // Call moveBot - should trigger cleanup
             \Events::moveBot(self::LOCATION);
 
-            // Bot should be cleaned up
-            $this->assertNull($global->{'dc_bot_state:' . self::LOCATION}, 'Bot state should be removed when flag disabled');
+            $this->assertNull($global->raw('dc_bot_state:'.self::LOCATION), 'state removed');
+            $this->assertNull($global->raw('dc_presence:client:'.self::BOT_ID), 'avatar removed');
+            $this->assertContains($timerId, TestTimer::deleted(), 'the move timer must be deleted');
         }
 
-        // ========================================================================
-        // moveBot: movement mechanics
-        // ========================================================================
-
-        /**
-         * VERIFY: moveBot writes to dc_move_batch:bot_main when moving.
-         */
-        public function testMoveBotWritesToMoveBatch(): void
+        public function testMoveBotCleansUpWhenBotStateVanishes(): void
         {
             $global = $this->botFlagOn();
-
-            // Spawn bot
             \Events::spawnBotForLocation(self::LOCATION);
+            $timerId = $this->botMoveTimers()[0]['id'];
+            unset($global->store['dc_bot_state:'.self::LOCATION]);
 
-            // Add real user so move actually proceeds
-            $clientList = $global->dc_presence_clients;
-            $clientList[] = 999;
-            $global->dc_presence_clients = $clientList;
-            $global->{'dc_presence:client:999'} = [
-                'uid' => 'admin1', 'name' => 'Admin', 'x' => 0, 'z' => 0, 'yaw' => 0, 'client_id' => 999,
-            ];
-
-            // Call moveBot
             \Events::moveBot(self::LOCATION);
 
-            // Check batch entry was written
-            $batchKey = 'dc_move_batch:' . self::BOT_ID;
-            $batchEntry = $global->$batchKey;
-            $this->assertNotNull($batchEntry, 'Move batch entry should be written');
-
-            $decoded = json_decode($batchEntry, true);
-            $this->assertIsArray($decoded);
-            $this->assertArrayHasKey('x', $decoded);
-            $this->assertArrayHasKey('z', $decoded);
-            $this->assertArrayHasKey('yaw', $decoded);
+            $this->assertContains($timerId, TestTimer::deleted());
+            $this->assertNotContains(self::BOT_ID, $global->raw('dc_presence_clients'));
         }
 
         /**
-         * VERIFY: moveBot picks new random target when arrived at current position.
+         * THE BOT #4: if another worker owns the marker, this process retires ITS
+         * OWN timer instead of double-driving the shared state — and it must
+         * delete only the id it created itself.
          */
-        public function testMoveBotPicksNewTargetWhenArrived(): void
+        public function testMoveBotRetiresItsOwnTimerWhenAnotherWorkerOwnsTheBot(): void
         {
             $global = $this->botFlagOn();
-
-            // Spawn bot
             \Events::spawnBotForLocation(self::LOCATION);
+            $ourTimerId = $this->botMoveTimers()[0]['id'];
+            $stateBefore = $global->raw('dc_bot_state:'.self::LOCATION);
 
-            // Add real user
-            $clientList = $global->dc_presence_clients;
-            $clientList[] = 999;
-            $global->dc_presence_clients = $clientList;
-            $global->{'dc_presence:client:999'} = [
-                'uid' => 'admin1', 'name' => 'Admin', 'x' => 0, 'z' => 0, 'yaw' => 0, 'client_id' => 999,
-            ];
+            // Another BusinessWorker has taken ownership.
+            $global->store['dc_bot_timer:'.self::LOCATION] = 4194303;
 
-            // Set bot's target to be very close to current position (within threshold)
-            $botStateKey = 'dc_bot_state:' . self::LOCATION;
-            $botState = $global->$botStateKey;
-            $botState['target_x'] = $botState['x'] + 0.1; // Within BOT_TARGET_THRESHOLD
-            $botState['target_z'] = $botState['z'] + 0.1;
-            $global->$botStateKey = $botState;
-
-            $originalTargetX = $botState['target_x'];
-            $originalTargetZ = $botState['target_z'];
-
-            // Call moveBot
             \Events::moveBot(self::LOCATION);
 
-            // Should have picked a new target (far from original)
-            $updatedState = $global->$botStateKey;
-
-            // The new target should be different, and likely far from original
-            // (using lcg_value so exact prediction not possible, but should change)
-            $this->assertNotEquals($originalTargetX, $updatedState['target_x'], 'Target X should change when arrived');
-            $this->assertNotEquals($originalTargetZ, $updatedState['target_z'], 'Target Z should change when arrived');
+            $this->assertContains($ourTimerId, TestTimer::deleted(), 'we retire OUR timer');
+            $this->assertSame(
+                $stateBefore,
+                $global->raw('dc_bot_state:'.self::LOCATION),
+                'the shared state must not be touched by the retiring process'
+            );
+            $this->assertSame(
+                4194303,
+                $global->raw('dc_bot_timer:'.self::LOCATION),
+                'the other worker keeps ownership'
+            );
         }
 
-        // ========================================================================
-        // cleanupBotForLocation: basic cleanup
-        // ========================================================================
+        // ====================================================================
+        // cleanupBotForLocation
+        // ====================================================================
 
-        /**
-         * VERIFY: cleanupBotForLocation removes bot from dc_presence_clients.
-         */
-        public function testCleanupRemovesBotFromClientsIndex(): void
+        public function testCleanupRemovesEverythingAboutTheBot(): void
         {
             $global = $this->botFlagOn();
-
-            // Spawn bot
             \Events::spawnBotForLocation(self::LOCATION);
-            $this->assertContains(self::BOT_ID, $global->dc_presence_clients);
+            $timerId = $this->botMoveTimers()[0]['id'];
+            $global->store['dc_move_batch:'.self::BOT_ID] = json_encode(['x' => 1]);
 
-            // Clean up
             \Events::cleanupBotForLocation(self::LOCATION);
 
-            // Bot should be removed
-            $this->assertNotContains(self::BOT_ID, $global->dc_presence_clients, 'Bot must be removed from clients index');
+            $this->assertNull($global->raw('dc_bot_state:'.self::LOCATION));
+            $this->assertNull($global->raw('dc_bot_timer:'.self::LOCATION));
+            $this->assertNull($global->raw('dc_presence:client:'.self::BOT_ID));
+            $this->assertNull($global->raw('dc_move_batch:'.self::BOT_ID));
+            $this->assertNotContains(self::BOT_ID, $global->raw('dc_presence_clients'));
+            $this->assertNotContains(self::BOT_ID, $global->raw('dc_active_clients'));
+            $this->assertContains($timerId, TestTimer::deleted());
         }
 
         /**
-         * VERIFY: cleanupBotForLocation removes bot from dc_active_clients.
+         * Despawn must announce dc.presence.left. spawn announces joined, so
+         * without the matching left the cleaned-up bot lingers as a ghost avatar
+         * until the page reloads — visible now that presence broadcasts actually
+         * reach clients (BUG-A3).
          */
-        public function testCleanupRemovesBotFromActiveClients(): void
+        public function testCleanupAnnouncesLeftOverGatewayGroup(): void
         {
-            $global = $this->botFlagOn();
-
-            // Spawn bot
+            $this->botFlagOn();
             \Events::spawnBotForLocation(self::LOCATION);
-            $this->assertContains(self::BOT_ID, $global->dc_active_clients);
+            \GatewayWorker\Lib\Gateway::reset();
 
-            // Clean up
             \Events::cleanupBotForLocation(self::LOCATION);
 
-            // Bot should be removed
-            $this->assertNotContains(self::BOT_ID, $global->dc_active_clients, 'Bot must be removed from active clients');
+            $events = $this->presenceGroupEvents('dc.presence.left');
+            $this->assertCount(1, $events, 'a despawned bot must be announced or it ghosts');
+            $this->assertIsV1Event($events[0], 'dc.presence.left');
+            $this->assertSame(self::BOT_ID, $events[0]['data']['uid']);
+            $this->assertSame(self::BOT_ID, $events[0]['data']['clientId']);
+            $this->assertDeadChannelTransportUnused('cleanup:');
         }
 
-        /**
-         * VERIFY: cleanupBotForLocation deletes dc_bot_state key.
-         */
-        public function testCleanupDeletesBotState(): void
+        public function testCleanupLeavesRealUsersAlone(): void
         {
             $global = $this->botFlagOn();
-
-            // Spawn bot
             \Events::spawnBotForLocation(self::LOCATION);
-            $this->assertNotNull($global->{'dc_bot_state:' . self::LOCATION});
+            $this->addRealUser($global, $this->userId, 5.0, 5.0);
 
-            // Clean up
             \Events::cleanupBotForLocation(self::LOCATION);
 
-            // State should be deleted
-            $this->assertNull($global->{'dc_bot_state:' . self::LOCATION}, 'Bot state must be deleted');
+            $this->assertIsArray($global->raw('dc_presence:client:'.$this->userId));
+            $this->assertContains($this->userId, $global->raw('dc_presence_clients'));
+            $this->assertContains($this->userId, $global->raw('dc_active_clients'));
         }
 
         /**
-         * VERIFY: cleanupBotForLocation deletes dc_bot_timer key.
+         * A process that does not own the timer must NOT delete a timer id it did
+         * not create; it clears the shared state and leaves the marker for the
+         * owner's next tick to reap.
          */
-        public function testCleanupDeletesBotTimer(): void
+        public function testCleanupFromANonOwningProcessDoesNotDeleteForeignTimers(): void
         {
-            $global = $this->botFlagOn();
+            $global = $this->botFlagOn([
+                'dc_bot_timer:'.self::LOCATION => 4194303,
+                'dc_bot_state:'.self::LOCATION => [
+                    'uid' => self::BOT_ID, 'name' => 'Walker', 'x' => 0.0, 'z' => 0.0, 'yaw' => 0.0,
+                    'target_x' => 0.0, 'target_z' => 0.0, 'client_id' => self::BOT_ID,
+                    'location' => self::LOCATION,
+                ],
+                'dc_presence_clients' => [self::BOT_ID],
+                'dc_active_clients' => [self::BOT_ID],
+                'dc_presence:client:'.self::BOT_ID => ['uid' => self::BOT_ID, 'client_id' => self::BOT_ID],
+            ]);
 
-            // Spawn bot
-            \Events::spawnBotForLocation(self::LOCATION);
-            $this->assertNotNull($global->{'dc_bot_timer:' . self::LOCATION});
-
-            // Clean up
             \Events::cleanupBotForLocation(self::LOCATION);
 
-            // Timer should be deleted
-            $this->assertNull($global->{'dc_bot_timer:' . self::LOCATION}, 'Bot timer must be deleted');
+            $this->assertSame(
+                [],
+                TestTimer::deleted(),
+                'a Workerman timer id is only valid in its creating process — never Timer::del() a foreign id'
+            );
+            $this->assertSame(
+                4194303,
+                $global->raw('dc_bot_timer:'.self::LOCATION),
+                'the marker is left for the owner to reap on its next tick'
+            );
+            $this->assertNull(
+                $global->raw('dc_bot_state:'.self::LOCATION),
+                'clearing the state is what makes the owner stop next tick'
+            );
         }
 
-        /**
-         * VERIFY: cleanupBotForLocation deletes bot presence entry.
-         */
-        public function testCleanupDeletesBotPresenceEntry(): void
+        // ====================================================================
+        // hasRealUsersAtLocation
+        // ====================================================================
+
+        private function hasRealUsers(): bool
         {
-            $global = $this->botFlagOn();
-
-            // Spawn bot
-            \Events::spawnBotForLocation(self::LOCATION);
-            $this->assertNotNull($global->{'dc_presence:client:' . self::BOT_ID});
-
-            // Clean up
-            \Events::cleanupBotForLocation(self::LOCATION);
-
-            // Presence entry should be deleted
-            $this->assertNull($global->{'dc_presence:client:' . self::BOT_ID}, 'Bot presence entry must be deleted');
-        }
-
-        // ========================================================================
-        // cleanupBotForLocation: real users safety
-        // ========================================================================
-
-        /**
-         * VERIFY: cleanupBotForLocation only cleans up bot entries, not real users.
-         */
-        public function testCleanupDoesNotAffectRealUsers(): void
-        {
-            $global = $this->botFlagOn();
-
-            // Spawn bot
-            \Events::spawnBotForLocation(self::LOCATION);
-
-            // Add a real user
-            $global->{'dc_presence:client:999'} = [
-                'uid' => 'admin1',
-                'name' => 'Admin One',
-                'x' => 5.0,
-                'z' => 5.0,
-                'yaw' => 0.0,
-                'client_id' => 999,
-            ];
-            $clientList = $global->dc_presence_clients;
-            $clientList[] = 999;
-            $global->dc_presence_clients = $clientList;
-
-            $activeClients = $global->dc_active_clients;
-            $activeClients[] = 999;
-            $global->dc_active_clients = $activeClients;
-
-            // Clean up bot
-            \Events::cleanupBotForLocation(self::LOCATION);
-
-            // Real user's entries must still exist
-            $this->assertNotNull($global->{'dc_presence:client:999'}, 'Real user presence must NOT be removed');
-            $this->assertContains(999, $global->dc_presence_clients, 'Real user must remain in clients index');
-            $this->assertContains(999, $global->dc_active_clients, 'Real user must remain in active clients');
-        }
-
-        // ========================================================================
-        // hasRealUsersAtLocation: helper method
-        // ========================================================================
-
-        /**
-         * VERIFY: hasRealUsersAtLocation returns false when only bots present.
-         * (Uses reflection to test private method)
-         */
-        public function testHasRealUsersReturnsFalseWhenOnlyBots(): void
-        {
-            $global = $this->botFlagOn();
-
-            // Spawn bot (only bot in list)
-            \Events::spawnBotForLocation(self::LOCATION);
-
-            // Use reflection to test private method
             $method = new ReflectionMethod(\Events::class, 'hasRealUsersAtLocation');
             $method->setAccessible(true);
+            return $method->invoke(null, self::LOCATION);
+        }
 
-            $result = $method->invoke(null, self::LOCATION);
+        public function testHasRealUsersIsFalseWithOnlyBots(): void
+        {
+            $this->botFlagOn();
+            \Events::spawnBotForLocation(self::LOCATION);
 
-            $this->assertFalse($result, 'hasRealUsersAtLocation should return false when only bots present');
+            $this->assertFalse($this->hasRealUsers());
+        }
+
+        public function testHasRealUsersIsTrueWithAHexClientIdPresent(): void
+        {
+            $global = $this->botFlagOn();
+            \Events::spawnBotForLocation(self::LOCATION);
+            $this->addRealUser($global, $this->userId);
+
+            $this->assertTrue($this->hasRealUsers(), 'a 20-char hex client_id is a real user, not a bot');
+        }
+
+        public function testHasRealUsersIsFalseOnAnEmptyScene(): void
+        {
+            $this->botFlagOn();
+
+            $this->assertFalse($this->hasRealUsers());
         }
 
         /**
-         * VERIFY: hasRealUsersAtLocation returns true when real users present.
+         * The bot/real split is a 'bot_' PREFIX test, so an id that merely
+         * CONTAINS "bot" is still a real user. Hex ids can never start with
+         * 'bot_' (b, o and t are not all hex), which is why the sentinel is safe.
          */
-        public function testHasRealUsersReturnsTrueWhenRealUsersPresent(): void
+        public function testOnlyThePrefixMakesAClientIdABot(): void
         {
             $global = $this->botFlagOn();
+            $lookalike = 'abbot_main';
+            $global->store['dc_presence:client:'.$lookalike] = ['uid' => 1, 'client_id' => $lookalike];
+            $global->store['dc_presence_clients'] = [$lookalike];
 
-            // Spawn bot
-            \Events::spawnBotForLocation(self::LOCATION);
+            $this->assertTrue($this->hasRealUsers(), 'only a leading "bot_" marks a bot');
+        }
 
-            // Add a real user
-            $clientList = $global->dc_presence_clients;
-            $clientList[] = 999;
-            $global->dc_presence_clients = $clientList;
-            $global->{'dc_presence:client:999'} = [
-                'uid' => 'admin1', 'name' => 'Admin', 'x' => 0, 'z' => 0, 'yaw' => 0, 'client_id' => 999,
+        // ====================================================================
+        // Integration: join spawns, last leave despawns
+        // ====================================================================
+
+        public function testRealUserJoinSpawnsTheBotNearThem(): void
+        {
+            $global = $this->botFlagOn();
+            $_SESSION = [
+                'v1_authed' => true, 'uid' => 4242, 'name' => 'admin',
+                'ima' => 'admin', 'login' => true,
             ];
 
-            // Use reflection to test private method
-            $method = new ReflectionMethod(\Events::class, 'hasRealUsersAtLocation');
-            $method->setAccessible(true);
+            \Events::dispatchV1($this->userId, [
+                'v' => 1, 'id' => 'join-1', 'op' => 'dc.presence.join', 'ts' => time(),
+                'data' => [
+                    'x' => 40.0, 'z' => -40.0, 'yaw' => 0.0,
+                    'bounds' => ['minX' => -200.0, 'maxX' => 200.0, 'minZ' => -200.0, 'maxZ' => 200.0],
+                ],
+            ]);
 
-            $result = $method->invoke(null, self::LOCATION);
+            $state = $global->raw('dc_bot_state:'.self::LOCATION);
+            $this->assertIsArray($state, 'a real user joining must spawn the bot');
+            $distance = sqrt(($state['x'] - 40.0) ** 2 + ($state['z'] + 40.0) ** 2);
+            $this->assertLessThanOrEqual(
+                \Events::BOT_SPAWN_RADIUS + 1e-9,
+                $distance,
+                'the bot spawns near the joining player, not at the world origin'
+            );
 
-            $this->assertTrue($result, 'hasRealUsersAtLocation should return true when real users present');
+            // Both the user's join and the bot's join reach clients over the group.
+            $joined = $this->presenceGroupEvents('dc.presence.joined');
+            $this->assertCount(2, $joined, 'the user and the bot are both announced');
+            $ids = array_map(static fn(array $e) => $e['data']['clientId'], $joined);
+            $this->assertContains($this->userId, $ids);
+            $this->assertContains(self::BOT_ID, $ids);
+            $this->assertDeadChannelTransportUnused('join+spawn:');
         }
 
-        /**
-         * VERIFY: hasRealUsersAtLocation returns false when no users at all.
-         */
-        public function testHasRealUsersReturnsFalseWhenEmpty(): void
+        public function testLastRealUserLeavingDespawnsTheBot(): void
         {
             $global = $this->botFlagOn();
+            $_SESSION = [
+                'v1_authed' => true, 'uid' => 4242, 'name' => 'admin',
+                'ima' => 'admin', 'login' => true,
+            ];
 
-            // No bots, no users - empty scene
-            $global->dc_presence_clients = [];
-            $global->dc_active_clients = [];
-
-            // Use reflection to test private method
-            $method = new ReflectionMethod(\Events::class, 'hasRealUsersAtLocation');
-            $method->setAccessible(true);
-
-            $result = $method->invoke(null, self::LOCATION);
-
-            $this->assertFalse($result, 'hasRealUsersAtLocation should return false when no users');
-        }
-
-        // ========================================================================
-        // Integration: user join/leave flow
-        // ========================================================================
-
-        /**
-         * VERIFY: Real user join triggers bot spawn (via handleDcPresenceJoin calling spawnBotForLocation).
-         * This is an integration test that verifies the flow from join to bot spawn.
-         */
-        public function testUserJoinTriggersBotSpawn(): void
-        {
-            $global = $this->botFlagOn();
-
-            // Set up authenticated session
-            $_SESSION['v1_authed'] = true;
-            $_SESSION['uid'] = 'admin77';
-            $_SESSION['name'] = 'Admin';
-            $_SESSION['ima'] = 'admin';
-            $_SESSION['login'] = true;
-
-            // Dispatch dc.presence.join for a real user
-            $clientId = 500;
-            \Events::dispatchV1($clientId, [
-                'v' => 1,
-                'id' => 'test-join',
-                'op' => 'dc.presence.join',
-                'ts' => time(),
+            \Events::dispatchV1($this->userId, [
+                'v' => 1, 'id' => 'join-1', 'op' => 'dc.presence.join', 'ts' => time(),
                 'data' => ['x' => 0.0, 'z' => 0.0, 'yaw' => 0.0],
             ]);
+            $this->assertIsArray($global->raw('dc_bot_state:'.self::LOCATION));
+            $timerId = $this->botMoveTimers()[0]['id'];
 
-            // Bot should have been spawned
-            $this->assertNotNull($global->{'dc_presence:client:' . self::BOT_ID}, 'Bot should be spawned when real user joins');
-            $this->assertNotNull($global->{'dc_bot_state:' . self::LOCATION}, 'Bot state should exist');
+            \Events::dispatchV1($this->userId, [
+                'v' => 1, 'id' => 'leave-1', 'op' => 'dc.presence.leave', 'ts' => time(), 'data' => [],
+            ]);
+
+            $this->assertNull($global->raw('dc_bot_state:'.self::LOCATION), 'the bot leaves with the last human');
+            $this->assertNull($global->raw('dc_presence:client:'.self::BOT_ID));
+            $this->assertContains($timerId, TestTimer::deleted());
+
+            $left = $this->presenceGroupEvents('dc.presence.left');
+            $ids = array_map(static fn(array $e) => $e['data']['clientId'], $left);
+            $this->assertContains($this->userId, $ids, 'the user is announced as gone');
+            $this->assertContains(self::BOT_ID, $ids, 'the bot avatar is announced as gone (no ghost)');
         }
 
-        /**
-         * VERIFY: Last real user leave triggers bot cleanup (via handleDcPresenceLeave).
-         * This test verifies that when the last real user leaves, the bot is cleaned up.
-         */
-        public function testLastUserLeaveTriggersBotCleanup(): void
+        /** A second human leaving while one remains must NOT despawn the bot. */
+        public function testBotSurvivesWhileAnotherRealUserRemains(): void
         {
             $global = $this->botFlagOn();
+            $other = dc_client_id(2002);
+            $_SESSION = [
+                'v1_authed' => true, 'uid' => 4242, 'name' => 'admin',
+                'ima' => 'admin', 'login' => true,
+            ];
 
-            // Set up authenticated session
-            $_SESSION['v1_authed'] = true;
-            $_SESSION['uid'] = 'admin77';
-            $_SESSION['name'] = 'Admin';
-            $_SESSION['ima'] = 'admin';
-            $_SESSION['login'] = true;
-
-            // First, have user join (which spawns bot)
-            $clientId = 500;
-            \Events::dispatchV1($clientId, [
-                'v' => 1,
-                'id' => 'test-join',
-                'op' => 'dc.presence.join',
-                'ts' => time(),
+            \Events::dispatchV1($this->userId, [
+                'v' => 1, 'id' => 'join-1', 'op' => 'dc.presence.join', 'ts' => time(),
                 'data' => ['x' => 0.0, 'z' => 0.0, 'yaw' => 0.0],
             ]);
-
-            // Verify bot exists
-            $this->assertNotNull($global->{'dc_bot_state:' . self::LOCATION}, 'Bot should exist after user join');
-
-            // Now have user leave
-            \Events::dispatchV1($clientId, [
-                'v' => 1,
-                'id' => 'test-leave',
-                'op' => 'dc.presence.leave',
-                'ts' => time(),
-                'data' => [],
+            \Events::dispatchV1($other, [
+                'v' => 1, 'id' => 'join-2', 'op' => 'dc.presence.join', 'ts' => time(),
+                'data' => ['x' => 1.0, 'z' => 1.0, 'yaw' => 0.0],
             ]);
 
-            // Bot should be cleaned up
-            $this->assertNull($global->{'dc_bot_state:' . self::LOCATION}, 'Bot should be cleaned up when last user leaves');
+            \Events::dispatchV1($other, [
+                'v' => 1, 'id' => 'leave-2', 'op' => 'dc.presence.leave', 'ts' => time(), 'data' => [],
+            ]);
+
+            $this->assertIsArray(
+                $global->raw('dc_bot_state:'.self::LOCATION),
+                'the bot must stay while a human is still in the scene'
+            );
         }
 
-        // ========================================================================
-        // Constants verification
-        // ========================================================================
+        // ====================================================================
+        // Constants
+        // ====================================================================
 
-        /**
-         * VERIFY: Bot movement constants are correct.
-         */
         public function testBotConstants(): void
         {
             $this->assertSame(0.5, \Events::BOT_MOVE_INTERVAL, 'BOT_MOVE_INTERVAL should be 0.5s');
-            $this->assertSame(1.2, \Events::BOT_WALK_SPEED, 'BOT_WALK_SPEED should be 1.2 units/sec');
+            // 11.7 u/s, NOT 1.2. The scene's unit is UNITS_PER_INCH = 15/70 (1 unit ~= 0.12 m),
+            // so 1.2 u/s was ~0.14 m/s — a crawl, which is why the bot looked frozen/absent.
+            // A 1.4 m/s human walk is ~11.7 u/s; the client player walks at WALK = 14 u/s
+            // (public_html/js/dc-multi.js). This assertion previously froze the bug in place.
+            $this->assertSame(11.7, \Events::BOT_WALK_SPEED, 'BOT_WALK_SPEED should be ~1.4 m/s in scene units');
             $this->assertSame(1.0, \Events::BOT_TARGET_THRESHOLD, 'BOT_TARGET_THRESHOLD should be 1.0 units');
+            // One tick moves BOT_WALK_SPEED * BOT_MOVE_INTERVAL = 5.85 units, which EXCEEDS
+            // BOT_TARGET_THRESHOLD (1.0). moveBot() must therefore clamp the step to the
+            // remaining distance or the bot oscillates around its target and never arrives
+            // (proved behaviourally in testMoveBotClampsTheStepToTheRemainingDistance).
+            $this->assertGreaterThan(
+                \Events::BOT_TARGET_THRESHOLD,
+                \Events::BOT_WALK_SPEED * \Events::BOT_MOVE_INTERVAL,
+                'per-tick step exceeds the arrival threshold, so the step MUST be clamped in moveBot()'
+            );
+            // Retained as the FALLBACK bounds only — dcRoomBounds() now prefers the
+            // browser-reported dc_room_bounds:<location> when one has been recorded.
             $this->assertSame(-50.0, \Events::BOT_BOUNDS_X_MIN);
             $this->assertSame(50.0, \Events::BOT_BOUNDS_X_MAX);
             $this->assertSame(-50.0, \Events::BOT_BOUNDS_Z_MIN);
             $this->assertSame(50.0, \Events::BOT_BOUNDS_Z_MAX);
             $this->assertSame('main', \Events::BOT_DEFAULT_LOCATION);
+            $this->assertSame(2.0, \Events::BOT_BOUNDS_INSET);
+            $this->assertSame(25.0, \Events::BOT_SPAWN_RADIUS);
+            $this->assertSame(30.0, \Events::BOT_WANDER_RADIUS);
+            $this->assertSame('dc_room_bounds:', \Events::DC_ROOM_BOUNDS_KEY_PREFIX);
         }
     }
 }

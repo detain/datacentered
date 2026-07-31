@@ -117,7 +117,25 @@ content:...}` then `closeClient`.)*
 
 #### `ping` / `pong` (`any`, ops `ping` and `pong`)
 
-`data: {}` both ways. `pong` is the reply (`re` set) to a `ping`.
+`data: {}` both ways (the sender's `data` is echoed back verbatim).
+
+`pong` is an **event-shaped** frame — `op:"pong"` with the request's `id` echoed —
+NOT a `re`-correlated reply:
+
+```json
+{"v":1,"op":"pong","id":"<the ping's id>","ts":1730000000,"data":{}}
+```
+
+*Corrected 2026-07-31.* This section previously specified `pong` as "the reply
+(`re` set) to a `ping`", which never matched the implementation
+(`Events::dispatchV1()`, `case 'ping'`). The event shape is authoritative because
+it is what shipped and what clients were written against: `public_html/js/dc-ws.js`
+in the myadmin repo clears its keepalive watchdog only on `op === 'pong'`, so
+switching the hub to a `re`-correlated reply would leave every browser's watchdog
+unarmed, fire its "no pong" timeout every 2 x keepalive interval, and turn a
+healthy connection into a permanent reconnect loop. Documented rather than
+"fixed" deliberately — the shape on the wire is unchanged.
+
 *Diff note:* identical to today (`{type:"ping"}`/`{type:"pong"}`); the hub's
 legacy behavior of disconnecting unauthenticated clients on `pong`
 (`msgPong`) is replaced by a hard rule: any op other than `auth.hello` before
@@ -825,8 +843,10 @@ Flag A (`WS_NEW_HANDLING`, see `docs/FEATURE_FLAGS.md`):
 - `Events::dispatchV1($client_id, $envelope)` — the router. With **Flag A OFF
   (the default) it is fully dormant**: the frame is parsed but no logic runs and
   no reply is sent, so deploying it is a runtime no-op (State 1, per B8). With
-  **Flag A ON**, only `ping` is functional end-to-end — it replies with the frozen
-  pong `{"v":1,"re":"<id>","ok":true,"data":{}}` (§2.1). **Every other op replies
+  **Flag A ON**, only `ping` is functional end-to-end — it answers with the frozen
+  event-shaped pong `{"v":1,"op":"pong","id":"<the ping's id>","ts":<unix>,"data":{}}`
+  (§2.1, corrected 2026-07-31: this line also used to describe a `re`-correlated
+  reply, which the implementation never sent). **Every other op replies
   `{ok:false,error:{code:"not_implemented"}}`** so the dispatch skeleton
   round-trips without touching any legacy state.
 - `onMessage()` routes a detected v1 envelope to `dispatchV1()` and returns

@@ -313,8 +313,11 @@ namespace {
          * A message that looks like /status but is not exactly "/status" must still
          * flow through the normal path.
          *
-         * @dataProvider notStatusMessagesProvider
+         * NOTE: PHPUnit 12 removed support for the @dataProvider ANNOTATION —
+         * the provider was silently ignored and this test errored with
+         * "Too few arguments". It must be the #[DataProvider] attribute.
          */
+        #[\PHPUnit\Framework\Attributes\DataProvider('notStatusMessagesProvider')]
         public function testNotStatusMessagesFlowNormally(string $body): void
         {
             $this->flagAOn();
@@ -336,14 +339,55 @@ namespace {
         public static function notStatusMessagesProvider(): array
         {
             return [
-                '/status' . "\n" => ['/status' . "\n"],
-                '/status ' => ['/status '],
-                ' /status' => [' /status'],
                 '/status二三' => ['/status二三'],
                 '/statusquery' => ['/statusquery'],
                 '/STATUS' => ['/STATUS'],
                 '/status/' => ['/status/'],
                 'hello /status world' => ['hello /status world'],
+                '/ status' => ['/ status'],
+                'status' => ['status'],
+            ];
+        }
+
+        /**
+         * The command match is whitespace-TOLERANT: handleChannelPublish() does
+         * `$body = trim($body)` before comparing with '/status', so surrounding
+         * whitespace and a trailing newline still invoke the command.
+         *
+         * These three inputs used to sit in notStatusMessagesProvider() asserting
+         * the opposite. They never ran: the provider was wired with the
+         * @dataProvider ANNOTATION, which PHPUnit 12 ignores, so the test errored
+         * with "Too few arguments" instead of executing a single case — the drift
+         * from the trim() being added was completely invisible.
+         */
+        #[\PHPUnit\Framework\Attributes\DataProvider('whitespacePaddedStatusProvider')]
+        public function testStatusCommandMatchIsWhitespaceTolerant(string $body): void
+        {
+            $this->flagAOn();
+            $this->asAdmin();
+            $this->installTaskCapture();
+
+            $this->dispatch('channel.publish', ['channel' => 'chat:noc', 'body' => $body]);
+
+            $this->assertCount(
+                0,
+                $this->dispatched,
+                json_encode($body).' is the /status command, so it must NOT be published as chat'
+            );
+            $this->assertCount(
+                0,
+                $this->sentToGroup(),
+                '/status replies to the caller only and is never fanned out to the channel'
+            );
+            $this->assertNotEmpty($this->sent(), '/status must reply to the requesting client');
+        }
+
+        public static function whitespacePaddedStatusProvider(): array
+        {
+            return [
+                'trailing newline' => ['/status'."\n"],
+                'trailing space' => ['/status '],
+                'leading space' => [' /status'],
             ];
         }
 

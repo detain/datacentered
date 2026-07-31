@@ -37,12 +37,17 @@ class Events
     public static $running = [];
 
     /**
-     * Optional test seam for Channel\Client::publish(). Null in production
-     * (real Channel\Client::publish() runs unchanged). When set to a callable
-     * by a test, it is invoked as ($channel, $message) INSTEAD of the real
-     * Channel publish, enabling unit tests to capture broadcast calls without
-     * a running Channel server/event-loop. Guarded by a strict null check so
-     * it never affects the deployed runtime.
+     * Optional test seam for hub-originated broadcasts. Null in production, in
+     * which case broadcastDcPresence() sends via Gateway::sendToGroup(). When
+     * set to a callable by a test it is invoked as ($group, $message) INSTEAD,
+     * enabling unit tests to capture broadcasts without a running
+     * Gateway/event-loop. Guarded by a strict null check so it never affects
+     * the deployed runtime.
+     *
+     * NOTE (BUG-A3): the production branch used to be
+     * \Channel\Client::publish() which was dead — no subscriber, wrong port,
+     * and the `channel` service only starts on myadmin1. The seam signature is
+     * unchanged so existing tests keep working.
      *
      * @var callable|null
      */
@@ -81,6 +86,50 @@ class Events
     // If long-running workers become a memory concern, add Timer::del($moveBatchTimer) on worker shutdown.
 
     // ====================================================================
+    // DC presence liveness keys (BUG-B3/B4)
+    //
+    // ONE unambiguous representation, used identically by the `pong` dispatch
+    // handler, trackSessionClient()'s duplicate-session prune and
+    // setupSessionHealthTimer():
+    //
+    //   dc_ping:<client_id>      unix ts of the last pong RECEIVED from the
+    //                            client. 0/absent == never ponged.
+    //   dc_ping_sent:<client_id> unix ts of the last ping the hub SENT to the
+    //                            client. 0/absent == never pinged.
+    //
+    // Staleness is ALWAYS measured from the last pong received; a client that
+    // has been pinged but has not yet had time to answer is never dropped
+    // (see dcPresenceIsStale()).
+    // ====================================================================
+
+    /** GlobalData key prefix: unix ts of the last pong received from a client. */
+    const DC_PONG_KEY_PREFIX = 'dc_ping:';
+
+    /** GlobalData key prefix: unix ts of the last ping the hub sent to a client. */
+    const DC_PING_SENT_KEY_PREFIX = 'dc_ping_sent:';
+
+    /** Gateway group every dc_presence client is joined to at auth (auth.hello). */
+    const DC_PRESENCE_GROUP = 'dc_presence';
+
+    /** Seconds after which a reported dc_viewport entry is treated as absent (BUG-B5). */
+    const DC_VIEWPORT_MAX_AGE = 30;
+
+    /**
+     * Retry ceiling for a contended shared-index CAS. Generous enough that genuine
+     * contention (5 workers x 3 hosts) always wins, low enough that a CAS which can
+     * never succeed fails loudly instead of wedging the worker. See casShouldRetry().
+     */
+    const CAS_MAX_ATTEMPTS = 50;
+
+    /**
+     * Seconds of dc_bot_state:<location> heartbeat silence after which a bot owned by
+     * ANOTHER datacentered instance is presumed dead and may be taken over. moveBot()
+     * refreshes that ts every BOT_MOVE_INTERVAL (0.5s), so this is ~20 missed ticks —
+     * long enough that a busy or briefly-stalled peer is never robbed of its bot.
+     */
+    const BOT_OWNER_HEARTBEAT_MAX_AGE = 10;
+
+    // ====================================================================
     // Bot Presence System (DataCenter 3D)
     // When a real user joins the DC presence session, spawn a simulated bot
     // avatar that walks around the datacenter building.
@@ -92,19 +141,82 @@ class Events
     /** Bot movement interval in seconds (500ms). */
     const BOT_MOVE_INTERVAL = 0.5;
 
-    /** Bot walking speed in units per second (realistic human walking pace ~1.2 units/sec). */
-    const BOT_WALK_SPEED = 1.2;
+    /**
+     * Bot walking speed in SCENE units per second.
+     *
+     * dc.js uses UNITS_PER_INCH = 15/70, i.e. 1 scene unit ~= 0.1196 m, so a
+     * realistic 1.4 m/s human walk is ~11.7 scene units/sec. The old value of
+     * 1.2 was "units/sec" read as metres and made the bot creep at ~0.14 m/s
+     * (the client's own walk speed is 14 u/s).
+     */
+    const BOT_WALK_SPEED = 11.7;
 
-    /** Default datacenter bounds (X axis). */
+    /**
+     * FALLBACK datacenter bounds, used ONLY until the browser reports the real
+     * room extents via dc.presence.join `bounds` (contract BOT-BOUNDS). dc.js
+     * lays racks out from offsetX/offsetZ = -100 and spawns the player at
+     * roomSpawn = {x: cx, z: maxZ - ROOM_MARGIN*0.5}, so the room is nowhere
+     * near the world origin and these numbers are only a last resort.
+     */
     const BOT_BOUNDS_X_MIN = -50.0;
     const BOT_BOUNDS_X_MAX = 50.0;
-
-    /** Default datacenter bounds (Z axis). */
     const BOT_BOUNDS_Z_MIN = -50.0;
     const BOT_BOUNDS_Z_MAX = 50.0;
 
     /** Distance threshold to consider bot has reached its target (units). */
     const BOT_TARGET_THRESHOLD = 1.0;
+
+    /** GlobalData key prefix holding the browser-reported room bounds per location. */
+    const DC_ROOM_BOUNDS_KEY_PREFIX = 'dc_room_bounds:';
+
+    /** Spawn the bot within this many scene units of the joining player. */
+    const BOT_SPAWN_RADIUS = 25.0;
+
+    /** Pick wander targets within this many scene units of a real player. */
+    const BOT_WANDER_RADIUS = 30.0;
+
+    /** Keep the bot this far inside the reported walls so it never clips them. */
+    const BOT_BOUNDS_INSET = 2.0;
+
+    /** Reported-bounds sanity limits (contract BOT-BOUNDS validation). */
+    const BOT_BOUNDS_MIN_SPAN = 4.0;
+    const BOT_BOUNDS_MAX_SPAN = 5000.0;
+    const BOT_BOUNDS_MAX_COORD = 100000.0;
+
+    /**
+     * Process-local map of location => Workerman timer id for the bot move
+     * timer (THE BOT #4). Workerman timer ids are per-PROCESS and there are 5
+     * BusinessWorkers, so the id must NEVER be shared through GlobalData —
+     * Timer::del() from another process would delete an unrelated timer (e.g.
+     * one of the onWorkerStart queue timers). GlobalData only carries the
+     * OWNER pid (dc_bot_timer:<location>) so other processes can tell that a
+     * bot exists without being able to (mis)delete its timer.
+     *
+     * @var array<string,int>
+     */
+    private static $botTimers = [];
+
+    /**
+     * Process-local map of session id => Workerman timer id for the 15s
+     * duplicate-session prune one-shot armed by trackSessionClient().
+     *
+     * REVIEW-FIX: exactly the same per-process constraint as self::$botTimers —
+     * dc_timer:<sessionId> used to hold the raw timer id and was Timer::del()'d
+     * from whichever BusinessWorker happened to receive the next connection for
+     * that session, silently destroying an unrelated timer in that process.
+     * GlobalData now carries only the owning pid.
+     *
+     * @var array<string,int>
+     */
+    private static $sessionPruneTimers = [];
+
+    /**
+     * Cached gethostname(), identifying which of the three datacentered instances
+     * this process belongs to. See processMarker() / botOwnerAlive().
+     *
+     * @var string|null
+     */
+    private static $localHostName = null;
 
     /**
      * Bot names - randomly selected for variety.
@@ -394,7 +506,7 @@ class Events
     /**
      * when a client connects
      *
-     * @param int $client_id
+     * @param string $client_id
      */
     public static function onConnect($client_id)
     {
@@ -403,7 +515,7 @@ class Events
 
     /**
      * When there is news
-     * @param int $client_id
+     * @param string $client_id
      * @param string $message
      */
     public static function onMessage($client_id, $message)
@@ -547,11 +659,24 @@ class Events
      * session as $_SESSION['v1_authed'] (set only by handleAuthHello() on
      * success — the same session storage legacy auth uses for 'login').
      *
-     * @param int $client_id gateway client id
+     * @param string $client_id gateway client id
      * @param array $envelope validated v1 request envelope (see isV1Envelope())
      */
     public static function dispatchV1($client_id, $envelope)
     {
+        /**
+         * REVIEW-FIX (critical): this declaration was MISSING while the `pong`
+         * case below writes $global->{dc_ping:<client_id>}. Without it $global
+         * is an undefined local, and on PHP 8 "assign property on null" is a
+         * fatal Error — so every pong a dc client sent killed the
+         * BusinessWorker (Workerman catches the Throwable in the read handler
+         * and stopAll()s the process), i.e. a restart per keepalive round.
+         * `global` is function-scoped: onMessage()'s declaration does NOT carry
+         * into this function.
+         *
+         * @var \GlobalData\Client
+         */
+        global $global;
         if (!FeatureFlags::useNewHandling()) {
             // Flag A OFF: new handling is dormant — parse but do not act (plan B8 state 1).
             return;
@@ -703,9 +828,18 @@ class Events
             case 'dc.viewport.update':
                 self::handleDcViewportUpdate($client_id, $envelope);
                 return;
-            // pong: client responded to a server-initiated health ping
+            // pong: client responded to a server-initiated health ping.
+            // BUG-B3: record the RECEIPT time. The old `= 0` made a correctly
+            // answering client look infinitely stale to every prune/watchdog
+            // that compares dc_ping against (now - threshold), so answering the
+            // health ping was what got you disconnected.
             case 'pong':
-                $global->{'dc_ping:' . $client_id} = 0;
+                // REVIEW-FIX: guard the null case too — onWorkerStart() sets
+                // $global = null when the GlobalData client fails to init, and
+                // a dropped pong must never be able to take the worker down.
+                if ($global !== null) {
+                    $global->{self::DC_PONG_KEY_PREFIX . $client_id} = time();
+                }
                 return;
             // ping: server responding to a client-initiated ping
             case 'ping':
@@ -737,7 +871,7 @@ class Events
      * it is exactly this general {v,re,ok:false,error:{code,message}} reply to
      * an auth.hello request.
      *
-     * @param int $client_id gateway client id
+     * @param string $client_id gateway client id
      * @param string $re the request envelope id being answered
      * @param string $code stable machine-readable error code
      * @param string $message human-readable detail
@@ -797,7 +931,7 @@ class Events
      * tests/EventsV1AuthHelloTest.php::testAuthHelloMalformedGzipRepliesBadRequestButDoesNotClose;
      * unifying the close behavior is a future-cleanup consideration only.
      *
-     * @param int $client_id gateway client id
+     * @param string $client_id gateway client id
      * @param array $envelope validated v1 request envelope
      */
     public static function handleAuthHello($client_id, $envelope)
@@ -1103,6 +1237,72 @@ class Events
     }
 
     /**
+     * Broadcast a dc.presence.* event to every client in the `dc_presence`
+     * Gateway group.
+     *
+     * BUG-A3: this used to go out via \Channel\Client::publish('dc_presence',…),
+     * which was dead three ways — nothing ever registered a
+     * Channel\Client::on('dc_presence') subscriber, publish() auto-connects to
+     * the default 127.0.0.1:2206 while start_channel.php binds 0.0.0.0:3333,
+     * and start.php only starts the `channel` service on
+     * myadmin1.interserver.net. Because AsyncTcpConnection is non-blocking the
+     * surrounding try/catch caught nothing and it failed silently forever.
+     * Clients are already joined to the `dc_presence` group at auth.hello, and
+     * Gateway::sendToGroup() is the mechanism that demonstrably works (chat
+     * uses it), so presence uses it too.
+     *
+     * BUG-B6: the payload is now a full v1 envelope (v/id/op/ts/data) instead
+     * of a bare {op,data}. v1Envelope() deliberately does NOT set `ok`, so the
+     * browser's `ok === false && error` error short-circuit cannot mistake a
+     * presence event for an error reply.
+     *
+     * The self::$channelClient test seam is still honoured when non-null so
+     * unit tests can capture broadcasts without a Gateway/event loop.
+     *
+     * @param string $op      v1 op name (e.g. "dc.presence.joined")
+     * @param array  $data    event payload
+     * @param string $context short label used in the failure log line
+     */
+    private static function broadcastDcPresence($op, array $data, $context = 'dc.presence')
+    {
+        $payload = json_encode(self::v1Envelope($op, $data));
+        if (self::$channelClient !== null) {
+            (self::$channelClient)(self::DC_PRESENCE_GROUP, $payload);
+            return;
+        }
+        try {
+            Gateway::sendToGroup(self::DC_PRESENCE_GROUP, $payload);
+        } catch (\Throwable $e) {
+            Worker::safeEcho("{$context}: dc_presence group send failed: {$e->getMessage()}\n");
+        }
+    }
+
+    /**
+     * Decide whether a dc_presence client has stopped answering health pings.
+     *
+     * Pure function (no globals) so the caller can pass a snapshot taken
+     * BEFORE it sends this round's pings — see setupSessionHealthTimer()'s
+     * three-phase sweep, whose Phase 2 previously overwrote the very value
+     * Phase 3 was about to test (BUG-B4: the 90s watchdog could never fire
+     * because the value was never more than 30s old).
+     *
+     * @param int $lastPong     unix ts of the last pong RECEIVED (0 = never)
+     * @param int $lastPingSent unix ts of the last ping SENT (0 = never)
+     * @param int $now          current unix ts
+     * @param int $threshold    seconds of silence tolerated
+     * @return bool true when the client should be dropped
+     */
+    private static function dcPresenceIsStale(int $lastPong, int $lastPingSent, int $now, int $threshold): bool
+    {
+        if ($lastPong > 0) {
+            return $lastPong < ($now - $threshold);
+        }
+        // Never ponged: only stale once a ping has been outstanding for longer
+        // than the threshold. A client we have never pinged is never stale.
+        return $lastPingSent > 0 && $lastPingSent < ($now - $threshold);
+    }
+
+    /**
      * v1 `cmd.exec` handler (docs/PROTOCOL_V1.md §2.2; plan step 2.3) —
      * admin-originated C→H, relayed H→A. The v1 counterpart of legacy
      * msgRun/run_command (which are NOT modified and keep serving legacy
@@ -1149,7 +1349,7 @@ class Events
      * Replies {ok:true,data:{run_id}} on dispatch; error not_online when the
      * host uid is not connected.
      *
-     * @param int $client_id gateway client id
+     * @param string $client_id gateway client id
      * @param array $envelope validated v1 request envelope
      */
     public static function handleCmdExec($client_id, $envelope)
@@ -1252,7 +1452,7 @@ class Events
      * msgRunning (role-only) and PROTOCOL_V1 §3 (per-op role auth); it is a
      * deliberate, documented revisit-later item, not an oversight.
      *
-     * @param int $client_id gateway client id
+     * @param string $client_id gateway client id
      * @param array $envelope validated v1 request envelope
      */
     public static function handleCmdStdin($client_id, $envelope)
@@ -1296,7 +1496,7 @@ class Events
      * prefix convention msgRunning uses. Unknown run_id is silently ignored
      * (output racing exit cleanup).
      *
-     * @param int $client_id gateway client id
+     * @param string $client_id gateway client id
      * @param array $envelope validated v1 request envelope
      */
     public static function handleCmdOutput($client_id, $envelope)
@@ -1361,7 +1561,7 @@ class Events
      * clobbered — the v1 equivalent of msgRan's unset + write-back, made
      * CAS-safe. A forbidden/unknown-run_id path removes nothing.
      *
-     * @param int $client_id gateway client id
+     * @param string $client_id gateway client id
      * @param array $envelope validated v1 request envelope
      */
     public static function handleCmdExit($client_id, $envelope)
@@ -1432,7 +1632,7 @@ class Events
      * (role-only) and PROTOCOL_V1 §3 (per-op role auth); it is a deliberate,
      * documented revisit-later item, not an oversight.
      *
-     * @param int $client_id gateway client id
+     * @param string $client_id gateway client id
      * @param array $envelope validated v1 request envelope
      */
     public static function handleCmdKill($client_id, $envelope)
@@ -1491,13 +1691,28 @@ class Events
      * connection is detected and schedules a timer to prune non-responsive clients.
      * Used by both admin and host/bot auth paths (MINOR-6 code deduplication).
      *
-     * @param int    $client_id  gateway client id
+     * @param string $client_id  gateway client id (20-char hex string — see
+     *                           Lib/Context.php, NEVER an int; do not add an
+     *                           `int` type hint here, PHP 8 refuses the
+     *                           coercion and the BusinessWorker dies)
      * @param string $sessionId  the session identifier
      */
-    private static function trackSessionClient(int $client_id, string $sessionId): void
+    private static function trackSessionClient($client_id, string $sessionId): void
     {
         global $global;
         if ($sessionId === '') {
+            return;
+        }
+        // REVIEW-FIX (unvalidated client input reaching GlobalData KEYS):
+        // $sessionId is auth.hello's data['session'] with nothing but an
+        // is_string() check on it, and it is concatenated into the
+        // dc_session_clients:<id> / dc_timer:<id> key names. A client could
+        // therefore create arbitrarily long (megabyte) or arbitrary-byte keys in
+        // the shared store and grow it without bound. Real clients send
+        // window.DC_SESSION_ID, a 32-char PHP session id, so constrain the key
+        // component to that shape and ignore anything else.
+        if (!preg_match('/^[A-Za-z0-9,_.:-]{1,128}$/', $sessionId)) {
+            Worker::safeEcho("[dc_presence] rejecting malformed session id from {$client_id}\n");
             return;
         }
         $global->{'dc_client_session:' . $client_id} = $sessionId;
@@ -1517,23 +1732,62 @@ class Events
         if (count($activeClients) >= 1) {
             // New connection for an existing session — ping all existing clients.
             // Non-responders (no pong within 15s) will be dropped, keeping only responsive clients.
+            // REVIEW-FIX: one timestamp for the whole round, so the prune closure
+            // below can judge responsiveness against the ping IT sent.
+            $pingedAt = time();
+            $pingedClients = $activeClients;
             foreach ($activeClients as $cid) {
                 Gateway::sendToClient($cid, json_encode([
-                    'v' => 1, 'op' => 'ping', 'id' => 'session_check', 'ts' => time(),
+                    'v' => 1, 'op' => 'ping', 'id' => 'session_check', 'ts' => $pingedAt,
                     'data' => ['reason' => 'session_duplicate', 'count' => count($activeClients) + 1]
                 ]));
-                $global->{'dc_ping:' . $cid} = time();
+                // BUG-B3: record when the ping was SENT under its own key.
+                // dc_ping: is reserved for the last pong RECEIVED (see
+                // self::DC_PONG_KEY_PREFIX docs) — writing the send time there
+                // made answering the ping look identical to never answering it.
+                $global->{self::DC_PING_SENT_KEY_PREFIX . $cid} = $pingedAt;
             }
-            // Cancel any existing timer for this session to prevent duplicates (MAJOR-5)
-            $existingTimer = $global->{"dc_timer:".$sessionId} ?? null;
-            if ($existingTimer !== null) {
-                \Workerman\Timer::del($existingTimer);
+            // Cancel any existing timer for this session to prevent duplicates (MAJOR-5).
+            //
+            // REVIEW-FIX (same cross-process hazard THE BOT #4 fixed for
+            // dc_bot_timer, still live here): dc_timer:<sessionId> used to hold a
+            // raw Workerman timer id. Timer ids are PER-PROCESS and a duplicate
+            // session connection lands on whichever of the 5 BusinessWorkers the
+            // Gateway picked, so Timer::del($idFromAnotherProcess) deleted an
+            // unrelated timer in THIS process — including, realistically, this
+            // process's bot move timer (which would freeze the bot permanently,
+            // since botOwnerAlive() would still report its owner alive) or a
+            // pending presence flush. The marker is now the OWNING PID and the
+            // real id stays process-local, so a process only ever deletes a timer
+            // it created itself.
+            $timerOwner = $global->{"dc_timer:".$sessionId} ?? null;
+            if (isset(self::$sessionPruneTimers[$sessionId])) {
+                \Workerman\Timer::del(self::$sessionPruneTimers[$sessionId]);
+                unset(self::$sessionPruneTimers[$sessionId]);
+            } elseif ($timerOwner !== null && $timerOwner !== getmypid()) {
+                // Another worker's one-shot is still pending; it will re-evaluate
+                // the same shared state 15s from ITS arming, so letting it run is
+                // harmless — and deleting its id from here is not.
+                Worker::safeEcho("[dc_presence] session prune timer for {$sessionId} owned by pid {$timerOwner}; not deleting it from pid ".getmypid()."\n");
             }
-            $global->{"dc_timer:".$sessionId} = \Workerman\Timer::add(15, function () use ($sessionId, $global) {
+            // BUG-B2: Timer::add(float, callable, ?array $args, bool $persistent).
+            // The old call passed `false` as $args (a TypeError: bool is never
+            // ?array) and left $persistent at its default TRUE, which would have
+            // leaked a repeating 15s timer per session. $args must be [].
+            self::$sessionPruneTimers[$sessionId] = \Workerman\Timer::add(15, function () use ($sessionId, $global, $pingedAt, $pingedClients) {
+                // REVIEW-FIX: the one-shot has fired, so drop both the local id
+                // and the shared marker (the latter only if it is still ours).
+                // dc_timer:<sessionId> previously survived forever — one permanent
+                // GlobalData key per distinct session the hub ever saw twice.
+                unset(self::$sessionPruneTimers[$sessionId]);
+                if (($global->{"dc_timer:".$sessionId} ?? null) === getmypid()) {
+                    unset($global->{"dc_timer:".$sessionId});
+                }
                 $listKey = 'dc_session_clients:' . $sessionId;
                 $clients = $global->$listKey ?? [];
-                $now = time();
-                $cutoff = $now - 15;
+                if (!is_array($clients)) {
+                    $clients = [];
+                }
                 $stillActive = [];
                 $toDrop = [];
                 foreach ($clients as $cid) {
@@ -1541,30 +1795,41 @@ class Events
                     if (($global->$ck ?? null) !== $sessionId) {
                         continue;
                     }
-                    $pk = 'dc_ping:' . $cid;
-                    $lastPing = $global->$pk ?? 0;
-                    if ($lastPing >= $cutoff) {
-                        $stillActive[] = ['cid' => $cid, 'ping' => $lastPing];
+                    // BUG-B3: responsive == a pong arrived at or after the
+                    // session_check ping we sent 15s ago.
+                    //
+                    // REVIEW-FIX: compare against $pingedAt (the ping THIS closure
+                    // sent), not the shared dc_ping_sent: key. The 30s health
+                    // timer rewrites dc_ping_sent for every client, so a client
+                    // that had answered our session_check could still be seen as
+                    // "pong older than last ping sent" purely because the health
+                    // timer had pinged it 1s ago — and got closed for it. Clients
+                    // we did not ping in this round are never candidates.
+                    $lastPong = (int) ($global->{self::DC_PONG_KEY_PREFIX . $cid} ?? 0);
+                    if (!in_array($cid, $pingedClients, true) || $lastPong >= $pingedAt) {
+                        $stillActive[] = ['cid' => $cid, 'pong' => $lastPong];
                     } else {
                         $toDrop[] = $cid;
                     }
                 }
-                usort($stillActive, fn($a, $b) => $b['ping'] <=> $a['ping']);
+                // Keep at most the 2 most-recently-responsive connections per session.
+                usort($stillActive, fn($a, $b) => $b['pong'] <=> $a['pong']);
                 foreach (array_slice($stillActive, 2) as $k) {
                     $toDrop[] = $k['cid'];
                 }
                 foreach ($toDrop as $cid) {
                     $ck = 'dc_client_session:' . $cid;
                     unset($global->$ck);
-                    $pk = 'dc_ping:' . $cid;
-                    unset($global->$pk);
+                    unset($global->{self::DC_PONG_KEY_PREFIX . $cid});
+                    unset($global->{self::DC_PING_SENT_KEY_PREFIX . $cid});
                     $clients = $global->$listKey ?? [];
                     $clients = array_values(array_filter($clients, fn($c) => $c !== $cid));
                     $global->$listKey = $clients;
                     Gateway::closeClient($cid, 'session_pruned');
                     Worker::safeEcho("[dc_presence] pruned non-responsive client {$cid} from session {$sessionId}\n");
                 }
-            }, false);
+            }, [], false);
+            $global->{"dc_timer:".$sessionId} = getmypid();
         }
         $clients[] = $client_id;
         $global->$listKey = $clients;
@@ -1618,7 +1883,7 @@ class Events
      * until Phase 3 — deferring the reply to an agent alloc-ack is a Phase 3
      * refinement. Errors: forbidden / bad_request / not_online per §1.
      *
-     * @param int $client_id gateway client id
+     * @param string $client_id gateway client id
      * @param array $envelope validated v1 request envelope
      */
     public static function handlePtyOpen($client_id, $envelope)
@@ -1750,7 +2015,7 @@ class Events
      * An unknown pty_id is silently dropped (data racing a close), matching
      * the cmd.output convention.
      *
-     * @param int $client_id gateway client id
+     * @param string $client_id gateway client id
      * @param array $envelope validated v1 request envelope
      */
     public static function handlePtyData($client_id, $envelope)
@@ -1797,7 +2062,7 @@ class Events
      * entry's cols/rows so later introspection reflects the live geometry.
      * Unknown pty_id is silently dropped (resize racing a close).
      *
-     * @param int $client_id gateway client id
+     * @param string $client_id gateway client id
      * @param array $envelope validated v1 request envelope
      */
     public static function handlePtyResize($client_id, $envelope)
@@ -1856,7 +2121,7 @@ class Events
      * audit line records pty_id / who closed / code / timestamp. Unknown
      * pty_id is silently dropped (duplicate close / restart race).
      *
-     * @param int $client_id gateway client id
+     * @param string $client_id gateway client id
      * @param array $envelope validated v1 request envelope
      */
     public static function handlePtyClose($client_id, $envelope)
@@ -1931,7 +2196,7 @@ class Events
      * On failure the appropriate v1 error reply has already been sent and
      * null is returned; on success returns ['module' => str, 'host_id' => int].
      *
-     * @param int $client_id gateway client id
+     * @param string $client_id gateway client id
      * @param string $re request envelope id being answered
      * @param array $data envelope data payload
      * @return array|null ['module','host_id'] or null after an error reply
@@ -1982,7 +2247,7 @@ class Events
      * Tasks/queue_action.php. $onOk receives the raw handler render() output
      * (string, unmodified) and must send the op-specific reply.
      *
-     * @param int $client_id gateway client id
+     * @param string $client_id gateway client id
      * @param string $re request envelope id being answered
      * @param string $module "vps" | "quickservers" (validated, session-matched)
      * @param string $action ServiceQueueHandler action (snake_case as HTTP)
@@ -2041,7 +2306,7 @@ class Events
      *
      * Reply: {ok:true,data:{result:<raw render() output, unmodified>}}.
      *
-     * @param int $client_id gateway client id
+     * @param string $client_id gateway client id
      * @param array $envelope validated v1 request envelope
      */
     public static function handleQueueAction($client_id, $envelope)
@@ -2094,7 +2359,7 @@ class Events
      * output is empty. Per-job decomposition is a later refactor once GetQueue
      * itself exposes per-row rendering.
      *
-     * @param int $client_id gateway client id
+     * @param string $client_id gateway client id
      * @param array $envelope validated v1 request envelope
      */
     public static function handleQueuePull($client_id, $envelope)
@@ -2134,7 +2399,7 @@ class Events
      * Reply data: {script: str} — the raw provisioning script text (may be
      * ""), byte-identical to the HTTP response for the same host (§2.4).
      *
-     * @param int $client_id gateway client id
+     * @param string $client_id gateway client id
      * @param array $envelope validated v1 request envelope
      */
     public static function handleQueueProvision($client_id, $envelope)
@@ -2180,7 +2445,7 @@ class Events
      * to keep billingd.log sane; agents keep output delivery on the existing
      * channels. Reply: {ok:true} (empty data object).
      *
-     * @param int $client_id gateway client id
+     * @param string $client_id gateway client id
      * @param array $envelope validated v1 request envelope
      */
     public static function handleQueueAck($client_id, $envelope)
@@ -2246,7 +2511,7 @@ class Events
      * (parity with legacy, NOT a regression; qs hosts keep the HTTP transport
      * and the queue.action bridge, which handle qs_masters natively).
      *
-     * @param int $client_id gateway client id
+     * @param string $client_id gateway client id
      * @param string $re request envelope id being answered
      * @param bool $requireVpsModule reject quickservers sessions (vps-only Tasks)
      * @return array|null ['module','host_id'] or null after an error reply
@@ -2294,7 +2559,7 @@ class Events
      * only (telemetryBindIdentity), exactly like legacy msgVpsInfo derives it
      * from $_SESSION['uid'].
      *
-     * @param int $client_id gateway client id
+     * @param string $client_id gateway client id
      * @param array $envelope validated v1 request envelope
      */
     public static function handleTelemetryHost($client_id, $envelope)
@@ -2337,7 +2602,7 @@ class Events
      * Frozen §2.5 fields: cpu_flags (str, required), speed (num, required —
      * NIC link speed, NOT cpu_speed; frozen from ServerInfoExtra.php).
      *
-     * @param int $client_id gateway client id
+     * @param string $client_id gateway client id
      * @param array $envelope validated v1 request envelope
      */
     public static function handleTelemetryHostExtra($client_id, $envelope)
@@ -2389,7 +2654,7 @@ class Events
      * Routed via the queue_action $_REQUEST-injection path (no cpu_usage Task
      * exists and CpuUsage.php has no queueData branch). Both modules supported.
      *
-     * @param int $client_id gateway client id
+     * @param string $client_id gateway client id
      * @param array $envelope validated v1 request envelope
      */
     public static function handleTelemetryCpu($client_id, $envelope)
@@ -2433,7 +2698,7 @@ class Events
      * msgBandwidth's dispatch; the Task is vps-table-only, hence the
      * vps-module gate (legacy-WS parity).
      *
-     * @param int $client_id gateway client id
+     * @param string $client_id gateway client id
      * @param array $envelope validated v1 request envelope
      */
     public static function handleTelemetryBandwidth($client_id, $envelope)
@@ -2480,7 +2745,7 @@ class Events
      * session only (vps-module gate = legacy-WS parity; the Task is
      * vps_masters-only).
      *
-     * @param int $client_id gateway client id
+     * @param string $client_id gateway client id
      * @param array $envelope validated v1 request envelope
      */
     public static function handleTelemetryInventory($client_id, $envelope)
@@ -2538,7 +2803,7 @@ class Events
      * relay was addressed to (registry `host`). Unknown/expired relay ids on
      * the reply leg are silently dropped (response racing a restart).
      *
-     * @param int $client_id gateway client id
+     * @param string $client_id gateway client id
      * @param array $envelope validated v1 request envelope
      */
     public static function handleTelemetrySysinfo($client_id, $envelope)
@@ -2659,7 +2924,7 @@ class Events
      * Identity from the authed session only (vps-module gate: Tasks/get_map.php
      * resolves vps_masters — legacy-WS parity).
      *
-     * @param int $client_id gateway client id
+     * @param string $client_id gateway client id
      * @param array $envelope validated v1 request envelope
      */
     public static function handleConfigMaps($client_id, $envelope)
@@ -2708,7 +2973,7 @@ class Events
      * Routed via the queue_action $_REQUEST-injection path to the unchanged
      * ResponseHandlers/Lock.php (reads (int)$_REQUEST['id']).
      *
-     * @param int $client_id gateway client id
+     * @param string $client_id gateway client id
      * @param array $envelope validated v1 request envelope
      */
     public static function handleVpsLock($client_id, $envelope)
@@ -2739,7 +3004,7 @@ class Events
      * against the authed session (queueBindIdentity). Only reachable via
      * dispatchV1 (Flag A on + v1-authed).
      *
-     * @param int $client_id gateway client id
+     * @param string $client_id gateway client id
      * @param array $envelope validated v1 request envelope
      */
     public static function handleVpsUnlock($client_id, $envelope)
@@ -2773,7 +3038,7 @@ class Events
      * bridge maps vps_id→service), command (str; the completed command).
      * Finished.php reads (int)$_REQUEST['service'] and $_REQUEST['command'].
      *
-     * @param int $client_id gateway client id
+     * @param string $client_id gateway client id
      * @param array $envelope validated v1 request envelope
      */
     public static function handleVpsFinished($client_id, $envelope)
@@ -2811,7 +3076,7 @@ class Events
      * progress (str; free-form status written to <prefix>_server_status).
      * InstallProgress.php reads $_REQUEST['server'] and $_REQUEST['progress'].
      *
-     * @param int $client_id gateway client id
+     * @param string $client_id gateway client id
      * @param array $envelope validated v1 request envelope
      */
     public static function handleVpsProgress($client_id, $envelope)
@@ -3049,7 +3314,7 @@ class Events
      * ack plus the persisted chat_messages.id (0 when the DB write was
      * skipped/failed) so the sender can correlate scrollback immediately.
      *
-     * @param int $client_id publishing client (gets the ack)
+     * @param string $client_id publishing client (gets the ack)
      * @param string $re request envelope id being answered
      * @param array $message completed §2.10 message object
      * @param array|null $recipients null = broadcast to the channel group;
@@ -3103,7 +3368,7 @@ class Events
      * task's async callback, two near-simultaneous publishes can fan out in
      * either order — DB ids remain strictly ordered (known minor caveat).
      *
-     * @param int $client_id publishing client
+     * @param string $client_id publishing client
      * @param string $re request envelope id being answered
      * @param string $channel validated + ACL-checked channel id
      * @param string $body raw message text
@@ -3173,7 +3438,7 @@ class Events
      *
      * Reply: {channels:[{id,type,topic,members}]} per the frozen §2.10 list.
      *
-     * @param int $client_id gateway client id
+     * @param string $client_id gateway client id
      * @param array $envelope validated v1 request envelope
      */
     public static function handleChannelList($client_id, $envelope)
@@ -3228,7 +3493,7 @@ class Events
      * scrollback via msg_id pagination against chat_messages is a later
      * client-driven step). A best-effort channel.presence broadcast follows.
      *
-     * @param int $client_id gateway client id
+     * @param string $client_id gateway client id
      * @param array $envelope validated v1 request envelope
      */
     public static function handleChannelJoin($client_id, $envelope)
@@ -3269,7 +3534,7 @@ class Events
      * Reply: {} per the frozen §2.10 list. A best-effort channel.presence
      * broadcast (which the leaver no longer receives) follows.
      *
-     * @param int $client_id gateway client id
+     * @param string $client_id gateway client id
      * @param array $envelope validated v1 request envelope
      */
     public static function handleChannelLeave($client_id, $envelope)
@@ -3310,7 +3575,7 @@ class Events
      * tests/EventsV1ChatTest.php::testChannelCreateDuplicateRejectedBadRequest.
      * Reply: {channel:<full "chat:<name>" id>}.
      *
-     * @param int $client_id gateway client id
+     * @param string $client_id gateway client id
      * @param array $envelope validated v1 request envelope
      */
     public static function handleChannelCreate($client_id, $envelope)
@@ -3390,7 +3655,7 @@ class Events
      * {ok:true,data:{msg_id}} (documented reply-shape choice — §2.10 leaves
      * channel.publish's reply unspecified; see chatFinishPublish()).
      *
-     * @param int $client_id gateway client id
+     * @param string $client_id gateway client id
      * @param array $envelope validated v1 request envelope
      */
     public static function handleChannelPublish($client_id, $envelope)
@@ -3436,7 +3701,7 @@ class Events
      * Gathers: connected WebSocket client count, current timestamp,
      * and number of active channels from the channel_meta registry.
      *
-     * @param int $client_id gateway client id
+     * @param string $client_id gateway client id
      * @param mixed $re request envelope id being answered
      * @param string $channel the channel the command was received on
      * @param string $level message level (hardcoded to 'chat' for status responses so the name prefix renders)
@@ -3477,11 +3742,16 @@ class Events
      * Handles the ping command — returns "pong" with bot coordinates to the
      * requesting client only (not broadcast to the channel).
      *
-     * Reads bot position from GlobalData dc_presence:bot_main entry.
+     * Reads the bot position from GlobalData dc_bot_state:<location> (falling
+     * back to the bot's presence entry dc_presence:client:bot_<location>).
      * If no bot state exists, returns "pong - no bot present".
+     *
+     * THE BOT #5: this used to read 'dc_presence:bot_main', a key nothing ever
+     * writes (spawnBotForLocation writes dc_bot_state:main and
+     * dc_presence:client:bot_main), so /ping always said "no bot present".
      * This is a pure response with no side effects and no DB persistence.
      *
-     * @param int $client_id gateway client id
+     * @param string $client_id gateway client id
      * @param mixed $re request envelope id being answered
      * @param string $channel the channel the command was received on
      * @param string $level message level (hardcoded to 'chat' for response rendering)
@@ -3493,7 +3763,11 @@ class Events
          */
         global $global;
 
-        $botState = $global->{'dc_presence:bot_main'} ?? null;
+        $location = self::BOT_DEFAULT_LOCATION;
+        $botState = $global->{'dc_bot_state:' . $location} ?? null;
+        if (!is_array($botState)) {
+            $botState = $global->{'dc_presence:client:bot_' . $location} ?? null;
+        }
         if (!$botState || !is_array($botState)) {
             $body = 'pong - no bot present';
         } else {
@@ -3547,7 +3821,7 @@ class Events
      * KNOWN SCALABILITY FOLLOW-UP. Low severity (a client can only spam its own
      * dm threads), fixed together with the per-channel-key rework.
      *
-     * @param int $client_id gateway client id
+     * @param string $client_id gateway client id
      * @param array $envelope validated v1 request envelope
      */
     public static function handleChatSend($client_id, $envelope)
@@ -3624,7 +3898,7 @@ class Events
      *
      * Reply: {ok:true,data:{hosts:arr,admins:arr}}.
      *
-     * @param int $client_id gateway client id
+     * @param string $client_id gateway client id
      * @param array $envelope validated v1 request envelope
      */
     public static function handleAdminHosts($client_id, $envelope)
@@ -3738,7 +4012,7 @@ class Events
      * Reply: {ok:true,data:{timers:map<str,obj>}} ({} when the registry is
      * absent, e.g. on a server that hosts no timers).
      *
-     * @param int $client_id gateway client id
+     * @param string $client_id gateway client id
      * @param array $envelope validated v1 request envelope
      */
     public static function handleAdminTimers($client_id, $envelope)
@@ -3810,7 +4084,7 @@ class Events
      *
      * Reply: {ok:true,data:{running:arr<obj>}} ([] when nothing is in flight).
      *
-     * @param int $client_id gateway client id
+     * @param string $client_id gateway client id
      * @param array $envelope validated v1 request envelope
      */
     public static function handleAdminRunning($client_id, $envelope)
@@ -3878,10 +4152,22 @@ class Events
             return true; // fail-open: no viewport data = broadcast
         }
 
-        $peerX = $peerViewport['x'];
-        $peerZ = $peerViewport['z'];
+        $peerX = (float) $peerViewport['x'];
+        $peerZ = (float) $peerViewport['z'];
         $viewDist = (float)($peerViewport['viewDist'] ?? 50);
         $halfFov = deg2rad(60 / 2); // 60-degree horizontal FOV (configurable)
+
+        // REVIEW-FIX: fail open on any non-finite / nonsensical input rather than
+        // silently filtering everything out. handleDcViewportUpdate() writes ALL
+        // of x/z/dirX/dirZ/viewDist with (float) defaults of 0, so the isset()
+        // fail-open above can never trigger for a stored viewport — every
+        // degenerate case has to be caught HERE or the peer goes blind.
+        if (!is_finite($moverX) || !is_finite($moverZ) || !is_finite($peerX) || !is_finite($peerZ)) {
+            return true;
+        }
+        if (!is_finite($viewDist) || $viewDist <= 0) {
+            $viewDist = 50.0; // treat a missing/garbage radius as the default
+        }
 
         // Vector from peer to mover
         $toMoverX = $moverX - $peerX;
@@ -3894,26 +4180,90 @@ class Events
             return false;
         }
 
-        // Check 2: in front of peer (positive dot product of forward vector and peer→mover vector)
+        // REVIEW-FIX: normalise the look direction IN THE XZ PLANE before using
+        // it as a cosine. dc.js sends camera.getWorldDirection(), a unit vector
+        // in 3D, so its horizontal part is only unit-length when the camera is
+        // perfectly level: looking down 45 deg leaves |(dirX,dirZ)| ~= 0.707 and
+        // the raw dot product could then never reach cos(30 deg) = 0.866, so
+        // EVERY peer was filtered out — tilt the camera down and remote avatars
+        // froze for up to DC_VIEWPORT_MAX_AGE. Looking straight up/down makes
+        // the horizontal part (0,0), which also made $dot 0 and failed the
+        // "behind peer" test for everyone.
         $dirX = (float)$peerViewport['dirX'];
         $dirZ = (float)$peerViewport['dirZ'];
-        if ($dist > 0) {
-            $dot = ($toMoverX * $dirX + $toMoverZ * $dirZ) / $dist;
-            if ($dot <= 0) {
-                return false; // behind peer
-            }
+        $dirLen = sqrt($dirX * $dirX + $dirZ * $dirZ);
+        if (!is_finite($dirLen) || $dirLen < 1.0e-6) {
+            return true; // no usable horizontal facing — fail open, do not blind the peer
         }
+        $dirX /= $dirLen;
+        $dirZ /= $dirLen;
 
-        // Check 3: within horizontal FOV cone
+        // Checks 2+3: in front of the peer AND inside the horizontal FOV cone.
+        // cos(halfFov) > 0, so the "behind peer" case (cos <= 0) is subsumed.
         if ($dist > 0) {
             $cosAngle = ($toMoverX * $dirX + $toMoverZ * $dirZ) / $dist;
-            $cosFov = cos($halfFov);
-            if ($cosAngle < $cosFov) {
-                return false; // outside FOV cone
+            if ($cosAngle < cos($halfFov)) {
+                return false; // behind the peer or outside the FOV cone
             }
         }
 
         return true;
+    }
+
+    /**
+     * Guarantee a shared list index EXISTS before anyone CAS-updates it.
+     *
+     * GlobalData's server reports an absent key as NULL and compares
+     * md5(serialize($old)) (vendor/workerman/globaldata/src/Server.php, case 'cas').
+     * Every index CAS here passes [] as the expected old value, and
+     * md5(serialize(null)) !== md5(serialize([])) — so while the key does not exist
+     * the CAS can NEVER succeed. Combined with a `while (true)` retry that had no
+     * ceiling, the first dc.presence.join after a GlobalData cold start spun a
+     * BusinessWorker forever at 100% CPU. onWorkerStart() seeds dc_active_clients in
+     * its cold-start block but NOTHING seeded dc_presence_clients, so that key was
+     * the live trigger.
+     *
+     * add() is the right primitive: it is atomic set-if-absent, so with the THREE
+     * datacentered instances sharing this GlobalData store, whichever host calls it
+     * first creates the key and the others get false and carry on. It never
+     * overwrites an existing list, so it cannot disturb presence state another
+     * instance is maintaining.
+     *
+     * @param string $key shared index key (dc_presence_clients / dc_active_clients)
+     */
+    private static function seedClientIndex(string $key): void
+    {
+        global $global;
+        if ($global === null) {
+            return;
+        }
+        $global->add($key, []);
+    }
+
+    /**
+     * Should a contended index CAS be retried? Bounds every index CAS loop.
+     *
+     * Contention is real (5 BusinessWorkers per host x 3 hosts all mutating the same
+     * lists), so retrying is correct — but unbounded retrying turns any unexpected
+     * CAS mismatch into a wedged worker that also floods GlobalData. Losing one
+     * client from an index degrades that client's broadcasts; spinning takes the
+     * whole worker (and every connection on it) down, so bounded-and-noisy beats
+     * infinite-and-silent.
+     *
+     * @param string $key     index being updated, for the log line
+     * @param int    $attempt attempt number just completed
+     * @return bool true to retry
+     */
+    private static function casShouldRetry(string $key, int $attempt): bool
+    {
+        if ($attempt < self::CAS_MAX_ATTEMPTS) {
+            return true;
+        }
+        Worker::safeEcho(
+            "[dc_presence] CAS on {$key} gave up after {$attempt} attempts; "
+            ."index may be missing an entry (this is a bug — it must not livelock)\n"
+        );
+        return false;
     }
 
     /**
@@ -3923,7 +4273,7 @@ class Events
      * and broadcasts dc.presence.joined to the dc_presence channel so other
      * clients in the scene can render the new avatar.
      *
-     * @param int   $client_id
+     * @param string $client_id
      * @param array $envelope v1 envelope with data{x,z,yaw}
      */
     public static function handleDcPresenceJoin($client_id, $envelope)
@@ -3944,6 +4294,15 @@ class Events
         $yaw = isset($data['yaw']) && is_numeric($data['yaw']) ? (float) $data['yaw'] : 0.0;
         $name = $_SESSION['name'] ?? '';
 
+        // Contract BOT-BOUNDS: the browser MAY report the real room extents
+        // (window.DC.roomBounds) so the bot wanders the actual room instead of
+        // the ±50 box around the world origin. Optional + validated; a bad or
+        // absent value simply leaves the previously-reported bounds in place.
+        $reportedBounds = self::sanitiseRoomBounds($data['bounds'] ?? null);
+        if ($reportedBounds !== null) {
+            $global->{self::DC_ROOM_BOUNDS_KEY_PREFIX . self::BOT_DEFAULT_LOCATION} = $reportedBounds;
+        }
+
         // Per-client_id key so multiple tabs with same session/uid each get their own presence entry
         $key = 'dc_presence:client:' . $client_id;
         $newEntry = [
@@ -3962,8 +4321,15 @@ class Events
         $global->$key = $newEntry;
 
         // Maintain client_id → key mapping for efficient iteration in setupSessionHealthTimer
-        // CAS loop to prevent concurrent joins on different workers losing client_id entries
+        // CAS loop to prevent concurrent joins on different workers losing client_id entries.
+        //
+        // seedClientIndex() FIRST — see its docblock. Without it this loop was an
+        // infinite spin that wedged a BusinessWorker at 100% CPU on the very first
+        // join after a GlobalData cold start (observed live: one worker stuck for
+        // 20+ minutes, hammering GlobalData, while the other four idled).
         $clientIndexKey = 'dc_presence_clients';
+        self::seedClientIndex($clientIndexKey);
+        $attempts = 0;
         do {
             $currentList = $global->$clientIndexKey;
             $clientList = is_array($currentList) ? array_values($currentList) : [];
@@ -3974,10 +4340,12 @@ class Events
             if ($currentList === $clientList || $global->cas($clientIndexKey, $oldForCas, $clientList)) {
                 break;
             }
-        } while (true);
+        } while (self::casShouldRetry($clientIndexKey, ++$attempts));
 
         // CRIT-8 fix: Add to active clients for viewport filtering (CAS loop for atomicity)
         $activeClientsKey = 'dc_active_clients';
+        self::seedClientIndex($activeClientsKey);
+        $attempts = 0;
         do {
             $activeClients = $global->$activeClientsKey ?? [];
             $activeClients = is_array($activeClients) ? $activeClients : [];
@@ -3988,12 +4356,16 @@ class Events
             if ($oldActiveClients === $activeClients) {
                 break;
             }
-        } while (!$global->cas($activeClientsKey, $oldActiveClients ?? [], $activeClients));
+            if ($global->cas($activeClientsKey, $oldActiveClients ?? [], $activeClients)) {
+                break;
+            }
+        } while (self::casShouldRetry($activeClientsKey, ++$attempts));
 
-        // Bot Presence System: spawn a bot avatar for this location if one doesn't exist
-        // The bot walks around the datacenter, simulating other visitors
+        // Bot Presence System: spawn a bot avatar for this location if one doesn't exist.
+        // The bot spawns NEAR the joining player (contract BOT-BOUNDS) so it is
+        // actually visible instead of wandering empty space somewhere else.
         if (FeatureFlags::dcBotPresenceEnabled()) {
-            self::spawnBotForLocation(self::BOT_DEFAULT_LOCATION);
+            self::spawnBotForLocation(self::BOT_DEFAULT_LOCATION, ['x' => $x, 'z' => $z]);
         }
 
         Worker::safeEcho("[{$client_id}] dc.presence.join: {$uid} joined at ({$x}, {$z}, {$yaw})\n");
@@ -4003,26 +4375,13 @@ class Events
             'ok' => true,
             'data' => new \stdClass()
         ]));
-        $channel = 'dc_presence';
         // Use the local entry that was just written — avoids race condition where
         // another worker could have modified $global->$key between write and re-read
         $broadcastEntry = $newEntry;
         // Frontend expects camelCase clientId, not snake_case client_id
         $broadcastEntry['clientId'] = $broadcastEntry['client_id'];
         unset($broadcastEntry['client_id']);
-        $payload = json_encode([
-            'op' => 'dc.presence.joined',
-            'data' => $broadcastEntry
-        ]);
-        if (self::$channelClient !== null) {
-            (self::$channelClient)($channel, $payload);
-        } else {
-            try {
-                \Channel\Client::publish($channel, $payload);
-            } catch (\Throwable $e) {
-                Worker::safeEcho("[{$client_id}] dc.presence.join: Channel publish failed: {$e->getMessage()}\n");
-            }
-        }
+        self::broadcastDcPresence('dc.presence.joined', $broadcastEntry, "[{$client_id}] dc.presence.join");
     }
 
     /**
@@ -4032,8 +4391,16 @@ class Events
      * traffic). If the member has not yet called dc.presence.join (i.e. they
      * have no entry in $global->dc_presence), the update is silently ignored.
      *
-     * @param int   $client_id
-     * @param array $envelope v1 envelope with data{x,z,yaw} (all optional)
+     * Also accepts the SAME optional `bounds` field dc.presence.join accepts
+     * (contract BOT-BOUNDS): the browser only knows the real room extents after
+     * its inventory fetch + geometry build, which lands seconds AFTER join, so
+     * join almost always arrives without them and the bot would wander the ±50
+     * fallback box forever. The client re-reports them once the room exists and
+     * again after a location switch — not on every move.
+     *
+     * @param string $client_id
+     * @param array $envelope v1 envelope with data{x,z,yaw} (all optional) and
+     *                        an optional data{bounds:{minX,maxX,minZ,maxZ}}
      */
     public static function handleDcPresenceMove($client_id, $envelope)
     {
@@ -4041,6 +4408,27 @@ class Events
          * @var \GlobalData\Client
          */
         global $global;
+        $data = is_array($envelope['data']) ? $envelope['data'] : [];
+
+        // Contract BOT-BOUNDS on the move path. Deliberately handled BEFORE the
+        // 150ms throttle: a bounds report is rare and one-shot, so letting the
+        // throttle swallow it would put us straight back to "bounds never
+        // arrive". The common no-bounds move pays ONE isset() and performs no
+        // extra GlobalData read or write.
+        //
+        // The <location> key component is the compile-time BOT_DEFAULT_LOCATION
+        // constant, never anything the client sent — same as the join path — so
+        // there is no key-injection surface here. Validation goes through the
+        // shared sanitiseRoomBounds(), and a rejected value leaves whatever
+        // bounds are already stored untouched rather than overwriting good
+        // bounds with garbage.
+        if (isset($data['bounds']) && $global !== null && !empty($_SESSION['uid'])) {
+            $reportedBounds = self::sanitiseRoomBounds($data['bounds']);
+            if ($reportedBounds !== null) {
+                $global->{self::DC_ROOM_BOUNDS_KEY_PREFIX . self::BOT_DEFAULT_LOCATION} = $reportedBounds;
+            }
+        }
+
         // Per-client move rate limit: 150ms minimum between moves (matching client THROTTLE_MS)
         if ($global !== null) {
             $throttleKey = 'dc_move_throttle:'.$client_id;
@@ -4054,13 +4442,21 @@ class Events
         if (empty($uid)) {
             return;
         }
-        $data = is_array($envelope['data']) ? $envelope['data'] : [];
+        // ($data was decoded above, before the throttle, for the bounds report.)
         $x   = isset($data['x']) && is_numeric($data['x']) ? (float) $data['x'] : null;
         $z   = isset($data['z']) && is_numeric($data['z']) ? (float) $data['z'] : null;
         $yaw = isset($data['yaw']) && is_numeric($data['yaw']) ? (float) $data['yaw'] : null;
 
-        // client_id from the move message identifies which presence entry to update
-        $moveClientId = isset($data['clientId']) ? intval($data['clientId']) : $client_id;
+        // BUG-B1: NEVER trust a client-supplied clientId. The old
+        // `intval($data['clientId'])` both mangled the hex client_id into
+        // garbage AND let any client move ANOTHER client's avatar (no ownership
+        // check). The connection's own $client_id is the only authority; a
+        // supplied clientId is tolerated only when it matches (older clients
+        // echo their own id back), otherwise the move is dropped.
+        if (isset($data['clientId']) && (string) $data['clientId'] !== (string) $client_id) {
+            return;
+        }
+        $moveClientId = $client_id;
         // Per-client key: each browser tab has its own presence entry
         $key = 'dc_presence:client:' . $moveClientId;
         $entry = $global->$key;
@@ -4103,91 +4499,155 @@ class Events
         $global->{$batchKey} = json_encode($newEntry);
 
         // Schedule flush if not already scheduled (one-shot timer, re-armed on next move)
-        if (self::$moveBatchTimer === null) {
-            self::$moveBatchTimer = \Workerman\Timer::add(0.05, function () {
-                global $global;
-                // Read ALL move batch entries from GlobalData (keys are dc_move_batch:{client_id})
-                $batch = [];
-                $clientIndexKey = 'dc_presence_clients';
-                $clientList = $global->$clientIndexKey ?? [];
-                if (is_array($clientList)) {
-                    foreach ($clientList as $cid) {
-                        $bk = 'dc_move_batch:' . $cid;
-                        $encoded = $global->{$bk};
-                        if ($encoded) {
-                            $decoded = json_decode($encoded, true);
-                            if ($decoded) {
-                                $batch[$cid] = $decoded;
-                            }
-                        }
+        self::scheduleDcPresenceFlush();
+    }
+
+    /**
+     * Arm the one-shot 50ms presence-batch flush timer, if not already armed.
+     *
+     * BUG-B7: handleDcPresenceMove() and moveBot() each carried their own copy
+     * of this closure and the copies had drifted (moveBot's skipped viewport
+     * filtering entirely). Both now arm the SAME flushPresenceBatch().
+     *
+     * self::$moveBatchTimer is process-local static across the 5 BusinessWorker
+     * processes; the one-shot + re-arm-on-next-move semantics are unchanged
+     * (flushPresenceBatch() nulls it again as its first side effect).
+     */
+    private static function scheduleDcPresenceFlush(): void
+    {
+        if (self::$moveBatchTimer !== null) {
+            return;
+        }
+        self::$moveBatchTimer = \Workerman\Timer::add(0.05, function () {
+            self::flushPresenceBatch();
+        }, [], false);
+    }
+
+    /**
+     * Flush the pending dc_move_batch:* entries as one dc.presence.batch_updated
+     * event. Shared by handleDcPresenceMove() and moveBot() (BUG-B7).
+     *
+     * Viewport filtering (BUG-B5) is decided PER RECIPIENT, not globally: the
+     * old code set one $hasAnyViewport flag and, as soon as ANY client had a
+     * dc_viewport entry, sent only to clients that had viewport data. dc.js
+     * reports its viewport only on location switch / GPU-context restore, so
+     * every client that had done neither silently received zero movement
+     * updates. Now a client with FRESH viewport data gets the filtered subset
+     * and a client with no/stale viewport data (older than
+     * DC_VIEWPORT_MAX_AGE) gets the unfiltered batch.
+     *
+     * Note recipients are enumerated from the dc_active_clients index (kept in
+     * step with dc_presence_clients by join/leave/onClose); when NOBODY has
+     * fresh viewport data we fall back to a single group broadcast, which also
+     * covers any dc_presence group member missing from that index.
+     */
+    private static function flushPresenceBatch(): void
+    {
+        global $global;
+        // REVIEW-FIX: release the one-shot slot FIRST. The timer that scheduled us
+        // has already fired, so the handle is stale by definition — but it used to
+        // be nulled only after the GlobalData batch read, and
+        // scheduleDcPresenceFlush() early-returns while the field is non-null.
+        // Any Throwable before that assignment (a GlobalData read error is the
+        // obvious one) therefore wedged the field non-null forever and NO further
+        // presence flush could ever be armed in this worker again — all movement
+        // broadcasting for its clients stops permanently, with no bot or player
+        // ever recovering. Clearing it up front also means a move that lands
+        // during this flush correctly arms the next one.
+        self::$moveBatchTimer = null;
+        // Read ALL move batch entries from GlobalData (keys are dc_move_batch:{client_id})
+        $batch = [];
+        $clientIndexKey = 'dc_presence_clients';
+        $clientList = $global->$clientIndexKey ?? [];
+        if (is_array($clientList)) {
+            foreach ($clientList as $cid) {
+                $bk = 'dc_move_batch:' . $cid;
+                $encoded = $global->{$bk};
+                if ($encoded) {
+                    $decoded = json_decode($encoded, true);
+                    // REVIEW-FIX: require an ARRAY. `if ($decoded)` also accepts
+                    // a scalar (json_decode('5') === 5), and a scalar entry then
+                    // reaches isInPeerViewport($entry['x'], ...) below as null,
+                    // which is a TypeError against its float params — a fatal
+                    // inside a 50ms timer callback.
+                    if (is_array($decoded)) {
+                        $batch[$cid] = $decoded;
                     }
                 }
-                if (empty($batch)) {
-                    self::$moveBatchTimer = null;
-                    return;
-                }
-                self::$moveBatchTimer = null;
+            }
+        }
+        if (empty($batch)) {
+            return;
+        }
 
-                // IDEA-3: viewport filtering — send only to clients that have at least one
-                // moved peer in their viewport AABB. Fall back to channel publish if
-                // viewport data is unavailable for all recipients (back-compat).
-                $activeClients = $global->dc_active_clients ?? [];
-                $hasAnyViewport = false;
-                $clientPayloads = [];
+        $vpCutoff = time() - self::DC_VIEWPORT_MAX_AGE;
+        $activeClients = $global->dc_active_clients ?? [];
+        if (!is_array($activeClients)) {
+            $activeClients = [];
+        }
 
-                foreach ($activeClients as $cid) {
-                    $ck = 'dc_client_session:' . $cid;
-                    $sessionId = $global->$ck ?? null;
-                    if (!$sessionId) continue;
-                    $vpKey = 'dc_viewport:' . $cid;
-                    $peerVp = $global->$vpKey ?? null;
-                    if ($peerVp !== null) {
-                        $hasAnyViewport = true;
-                        $visibleEntries = [];
-                        foreach ($batch as $moverCid => $moverEntry) {
-                            if (self::isInPeerViewport($moverEntry['x'], $moverEntry['z'], $peerVp)) {
-                                $visibleEntries[$moverCid] = $moverEntry;
-                            }
-                        }
-                        if (!empty($visibleEntries)) {
-                            $clientPayloads[$cid] = json_encode([
-                                'op' => 'dc.presence.batch_updated',
-                                'data' => $visibleEntries
-                            ]);
-                        }
-                    }
+        // Pass 1: split recipients into "has fresh viewport" and "does not".
+        $filtered = [];   // cid => visible subset of $batch
+        $unfiltered = []; // cids that must receive the whole batch
+        foreach ($activeClients as $cid) {
+            // Bots are presence entries, not sockets — never a send target.
+            if (is_string($cid) && strpos($cid, 'bot_') === 0) {
+                continue;
+            }
+            $ck = 'dc_client_session:' . $cid;
+            if (!($global->$ck ?? null)) {
+                continue;
+            }
+            $peerVp = $global->{'dc_viewport:' . $cid} ?? null;
+            $vpFresh = is_array($peerVp) && (int) ($peerVp['ts'] ?? 0) >= $vpCutoff;
+            if (!$vpFresh) {
+                $unfiltered[] = $cid;
+                continue;
+            }
+            $visibleEntries = [];
+            foreach ($batch as $moverCid => $moverEntry) {
+                // REVIEW-FIX: a batch entry with no/non-numeric x|z used to be
+                // passed straight into isInPeerViewport()'s `float` params —
+                // null there is a TypeError (fatal in the timer callback), and a
+                // numeric string would silently coerce. Missing coordinates now
+                // FAIL OPEN (entry is kept), matching isInPeerViewport()'s own
+                // documented "no data = broadcast" contract; better a redundant
+                // update than a dead flush timer.
+                if (!isset($moverEntry['x'], $moverEntry['z'])
+                    || !is_numeric($moverEntry['x']) || !is_numeric($moverEntry['z'])) {
+                    $visibleEntries[$moverCid] = $moverEntry;
+                    continue;
                 }
+                if (self::isInPeerViewport((float) $moverEntry['x'], (float) $moverEntry['z'], $peerVp)) {
+                    $visibleEntries[$moverCid] = $moverEntry;
+                }
+            }
+            $filtered[$cid] = $visibleEntries;
+        }
 
-                if ($hasAnyViewport && count($clientPayloads) > 0) {
-                    // Per-client sends with viewport filtering
-                    foreach ($clientPayloads as $cid => $payload) {
-                        Gateway::sendToClient($cid, $payload);
-                    }
-                } elseif (!$hasAnyViewport) {
-                    // No viewport data at all — fall back to channel publish (back-compat)
-                    $payload = json_encode([
-                        'op' => 'dc.presence.batch_updated',
-                        'data' => $batch
-                    ]);
-                    if (self::$channelClient !== null) {
-                        (self::$channelClient)('dc_presence', $payload);
-                    } else {
-                        try {
-                            \Channel\Client::publish('dc_presence', $payload);
-                        } catch (\Throwable $e) {
-                            Worker::safeEcho("dc.presence batch publish failed: {$e->getMessage()}\n");
-                        }
-                    }
+        if (empty($filtered)) {
+            // Nobody has usable viewport data — one group broadcast (this is the
+            // path that used to be a dead Channel\Client::publish, see BUG-A3).
+            self::broadcastDcPresence('dc.presence.batch_updated', $batch, 'dc.presence.batch');
+        } else {
+            foreach ($filtered as $cid => $visibleEntries) {
+                if (empty($visibleEntries)) {
+                    continue; // every mover is outside this client's viewport
                 }
-                // If $hasAnyViewport is true but $clientPayloads is empty, all moved peers
-                // are out of every client's viewport — drop the batch silently.
+                Gateway::sendToClient($cid, json_encode(self::v1Envelope('dc.presence.batch_updated', $visibleEntries)));
+            }
+            if (!empty($unfiltered)) {
+                $payload = json_encode(self::v1Envelope('dc.presence.batch_updated', $batch));
+                foreach ($unfiltered as $cid) {
+                    Gateway::sendToClient($cid, $payload);
+                }
+            }
+        }
 
-                // CRIT-7 fix: Clear batch entries from GlobalData after flush
-                foreach ($batch as $moverCid => $moverEntry) {
-                    $bk = 'dc_move_batch:' . $moverCid;
-                    unset($global->{$bk});
-                }
-            }, [], false);
+        // CRIT-7 fix: Clear batch entries from GlobalData after flush
+        foreach ($batch as $moverCid => $moverEntry) {
+            $bk = 'dc_move_batch:' . $moverCid;
+            unset($global->{$bk});
         }
     }
 
@@ -4198,7 +4658,7 @@ class Events
      * broadcasts dc.presence.left to the dc_presence channel (using client_id
      * so each browser tab is tracked independently), and replies with {ok: true}.
      *
-     * @param int   $client_id
+     * @param string $client_id
      * @param array $envelope v1 envelope
      */
     public static function handleDcPresenceLeave($client_id, $envelope)
@@ -4254,6 +4714,31 @@ class Events
             $oldList = $clientList;
         } while (!$global->cas($clientIndexKey, $oldList, $newList));
 
+        // REVIEW-FIX (index drift): dc.presence.leave used to remove the client
+        // from dc_presence_clients ONLY, leaving it in dc_active_clients. The two
+        // indexes then disagreed until the socket happened to close, and
+        // flushPresenceBatch() enumerates RECIPIENTS from dc_active_clients — so a
+        // client that had left the scene kept being sent batch_updated events and
+        // kept rendering avatars for a scene it was no longer in. Unlike the
+        // health-timer drop path this one never calls closeClient(), so onClose()
+        // does not clean up behind it.
+        $activeClientsKey = 'dc_active_clients';
+        do {
+            $activeClients = $global->$activeClientsKey ?? [];
+            $activeClients = is_array($activeClients) ? $activeClients : [];
+            $filteredActive = array_values(array_filter($activeClients, fn($c) => $c !== $client_id));
+            $oldActiveClients = $global->$activeClientsKey ?? null;
+            if ($oldActiveClients === $filteredActive) {
+                break;
+            }
+        } while (!$global->cas($activeClientsKey, $oldActiveClients ?? [], $filteredActive));
+
+        // REVIEW-FIX: same orphaning as onClose() — once the client is out of
+        // dc_presence_clients nothing will ever read or delete a pending batch
+        // entry for it. The viewport entry is likewise scene-scoped.
+        unset($global->{'dc_move_batch:' . $client_id});
+        unset($global->{'dc_viewport:' . $client_id});
+
         // If this was the last real user, clean up the bot for this location
         if ($wasLastRealUser && FeatureFlags::dcBotPresenceEnabled()) {
             self::cleanupBotForLocation(self::BOT_DEFAULT_LOCATION);
@@ -4266,27 +4751,18 @@ class Events
             'ok' => true,
             'data' => new \stdClass()
         ]));
-        $channel = 'dc_presence';
-        $payload = json_encode([
-            'op' => 'dc.presence.left',
-            'data' => ['uid' => $uid, 'clientId' => $client_id]
-        ]);
-        if (self::$channelClient !== null) {
-            (self::$channelClient)($channel, $payload);
-        } else {
-            try {
-                \Channel\Client::publish($channel, $payload);
-            } catch (\Throwable $e) {
-                Worker::safeEcho("[{$client_id}] dc.presence.leave: Channel publish failed: {$e->getMessage()}\n");
-            }
-        }
+        self::broadcastDcPresence(
+            'dc.presence.left',
+            ['uid' => $uid, 'clientId' => $client_id],
+            "[{$client_id}] dc.presence.leave"
+        );
     }
 
     /**
      * IDEA-3: Handle dc.viewport.update — client reports its camera position + look direction.
      * Stores viewport data in $global keyed by client_id for use in presence move filtering.
      *
-     * @param int   $client_id
+     * @param string $client_id
      * @param array $envelope v1 envelope
      */
     public static function handleDcViewportUpdate($client_id, $envelope)
@@ -4331,40 +4807,78 @@ class Events
             }
 
             // CRIT-9 fix: Three-phase approach to avoid reading newly-written ping timestamps.
-            // Phase 1: Collect all client entries and their OLD ping timestamps BEFORE sending pings.
-            // Phase 2: Send pings to all clients (updates timestamps AFTER reading old ones).
-            // Phase 3: Check staleness using OLD timestamps, then drop stale clients.
-            $cutoff = $now - 90;  // 3 × 30s missed = stale
+            // Phase 1: Snapshot every client's last pong + last ping-sent BEFORE pinging.
+            // Phase 2: Send this round's pings (writes dc_ping_sent AFTER the snapshot).
+            // Phase 3: Judge staleness from the Phase 1 snapshot, then drop.
+            //
+            // BUG-B4: Phase 2 used to overwrite dc_ping (the value Phase 3 tests)
+            // for EVERY client on EVERY sweep, so the 90s check could never be
+            // true and this watchdog was dead. Ping-send times now live in
+            // dc_ping_sent: and staleness is measured only from the last pong
+            // RECEIVED (dc_ping:) — see dcPresenceIsStale().
+            $threshold = 90;  // 3 × 30s missed = stale
 
-            $toDrop = [];  // collect {uid, clientId} pairs to drop after ping phase
-            $clientEntries = [];  // uid => [entry, clientId, lastPing]
+            $toDrop = [];  // collect {clientId} entries to drop after the ping phase
+            $clientEntries = [];  // clientId => [entry, clientId, lastPong, lastPingSent]
 
-            // Phase 1: Read all entries and their OLD ping timestamps
+            // Phase 1: Read all entries and their OLD liveness timestamps
             foreach ($clientList as $clientId) {
+                // Bots have a presence entry but no socket — never ping or drop
+                // them.
+                // REVIEW-FIX: this check has to come BEFORE the stale-entry check
+                // below. A bot whose presence entry has gone missing (the window
+                // inside cleanupBotForLocation() between nulling the entry and
+                // removing the index entry, or an early `break` out of that CAS
+                // loop) otherwise fell into the socket-drop path: closeClient() on
+                // a non-hex "bot_main" id, and the index/presence cleanup ran
+                // WITHOUT cleanupBotForLocation(), leaving dc_bot_state +
+                // dc_bot_timer alive. The owning worker then kept walking a bot
+                // that no longer appears in dc_presence_clients, so
+                // flushPresenceBatch() could never pick its moves up again — a
+                // permanently invisible bot with no path back.
+                if (is_string($clientId) && strpos($clientId, 'bot_') === 0) {
+                    continue;
+                }
                 $key = 'dc_presence:client:' . $clientId;
                 $entry = $global->$key;
                 if (!$entry || !is_array($entry)) {
                     $toDrop[] = ['clientId' => $clientId];  // stale entry, mark for cleanup
                     continue;
                 }
-                $pk = 'dc_ping:' . $clientId;
-                $lastPing = $global->$pk ?? 0;
-                $clientEntries[$clientId] = ['entry' => $entry, 'clientId' => $clientId, 'lastPing' => $lastPing];
+                $clientEntries[$clientId] = [
+                    'entry' => $entry,
+                    'clientId' => $clientId,
+                    'lastPong' => (int) ($global->{self::DC_PONG_KEY_PREFIX . $clientId} ?? 0),
+                    'lastPingSent' => (int) ($global->{self::DC_PING_SENT_KEY_PREFIX . $clientId} ?? 0)
+                ];
             }
 
-            // Phase 2: Send pings to all active clients (updates timestamps)
+            // Phase 2: Send pings to all active clients (records the SEND time only)
             foreach ($clientEntries as $clientId => $data) {
                 Gateway::sendToClient($clientId, json_encode([
                     'v' => 1, 'op' => 'ping', 'id' => 'keepalive', 'ts' => $now,
                     'data' => new \stdClass()
                 ]));
-                $global->{'dc_ping:' . $clientId} = $now;
+                // REVIEW-FIX: BUG-B4 was only half fixed. Rewriting dc_ping_sent
+                // on EVERY sweep reproduced the original defect for the
+                // never-ponged branch of dcPresenceIsStale(): Phase 1 always read
+                // a value ~30s old, so `lastPingSent < now - 90` could never be
+                // true and a client that never pongs at all was immune to the
+                // watchdog forever. dc_ping_sent must mark the START of the
+                // current UNANSWERED streak, so only re-arm it once the previous
+                // ping has been answered (or none was ever sent). A client that
+                // has an outstanding ping keeps its original send time and is
+                // therefore dropped after ~120s of total silence — still well
+                // past the 90s threshold, so "pinged but not yet ponged" is never
+                // dropped prematurely.
+                if ($data['lastPingSent'] === 0 || $data['lastPong'] >= $data['lastPingSent']) {
+                    $global->{self::DC_PING_SENT_KEY_PREFIX . $clientId} = $now;
+                }
             }
 
-            // Phase 3: Check staleness using OLD timestamps (from Phase 1) and drop stale clients
+            // Phase 3: Check staleness using the Phase 1 snapshot and drop stale clients
             foreach ($clientEntries as $clientId => $data) {
-                $lastPing = $data['lastPing'];
-                if ($lastPing > 0 && $lastPing < $cutoff) {
+                if (self::dcPresenceIsStale($data['lastPong'], $data['lastPingSent'], $now, $threshold)) {
                     $toDrop[] = ['clientId' => $clientId];
                 }
             }
@@ -4387,6 +4901,13 @@ class Events
                 // Only skip if sentinel is set AND key is already null (onClose completed cleanup)
                 // If sentinel set but key is not null, timer should still proceed (onClose in progress)
                 if ($global->{'dc_cleanup:' . $clientId} && $global->$presenceKey === null) {
+                    // REVIEW-FIX (leak): this `continue` used to jump over the
+                    // unset() further down, so every already-cleaned client left
+                    // a dc_cleanup:<client_id> sentinel behind permanently — and
+                    // this is the branch taken by EVERY stale index entry that
+                    // Phase 1 queued (those have a null presence key by
+                    // definition). Drop our own marker before bailing out.
+                    unset($global->{'dc_cleanup:' . $clientId});
                     continue;
                 }
 
@@ -4403,7 +4924,8 @@ class Events
                     $global->$listKey = $clients;
                     unset($global->$ck);
                 }
-                unset($global->{'dc_ping:' . $clientId});
+                unset($global->{self::DC_PONG_KEY_PREFIX . $clientId});
+                unset($global->{self::DC_PING_SENT_KEY_PREFIX . $clientId});
                 unset($global->{'dc_cleanup:' . $clientId});
                 Gateway::closeClient($clientId, 'missed_keepalive');
 
@@ -4427,13 +4949,255 @@ class Events
     // ====================================================================
 
     /**
+     * Validate + normalise browser-reported room bounds (contract BOT-BOUNDS).
+     *
+     * The browser MAY send `bounds: {minX,maxX,minZ,maxZ}` (window.DC.roomBounds)
+     * on dc.presence.join. All four must be numeric + finite, minX < maxX,
+     * minZ < maxZ, and the spans must be neither degenerate nor absurd —
+     * anything else is rejected outright (returns null) so a hostile or buggy
+     * client cannot teleport the bot to (1e300, 1e300).
+     *
+     * @param mixed $raw the untrusted `bounds` value
+     * @return array{minX:float,maxX:float,minZ:float,maxZ:float}|null
+     */
+    private static function sanitiseRoomBounds($raw): ?array
+    {
+        if (!is_array($raw)) {
+            return null;
+        }
+        foreach (['minX', 'maxX', 'minZ', 'maxZ'] as $field) {
+            if (!isset($raw[$field]) || !is_numeric($raw[$field])) {
+                return null;
+            }
+        }
+        $minX = (float) $raw['minX'];
+        $maxX = (float) $raw['maxX'];
+        $minZ = (float) $raw['minZ'];
+        $maxZ = (float) $raw['maxZ'];
+        foreach ([$minX, $maxX, $minZ, $maxZ] as $value) {
+            if (!is_finite($value) || abs($value) > self::BOT_BOUNDS_MAX_COORD) {
+                return null;
+            }
+        }
+        if ($minX >= $maxX || $minZ >= $maxZ) {
+            return null;
+        }
+        $spanX = $maxX - $minX;
+        $spanZ = $maxZ - $minZ;
+        if ($spanX < self::BOT_BOUNDS_MIN_SPAN || $spanZ < self::BOT_BOUNDS_MIN_SPAN) {
+            return null;
+        }
+        if ($spanX > self::BOT_BOUNDS_MAX_SPAN || $spanZ > self::BOT_BOUNDS_MAX_SPAN) {
+            return null;
+        }
+        return ['minX' => $minX, 'maxX' => $maxX, 'minZ' => $minZ, 'maxZ' => $maxZ];
+    }
+
+    /**
+     * Resolve the walkable box for a location, inset slightly so the bot never
+     * clips the walls.
+     *
+     * Uses the browser-reported bounds when a valid set has been recorded
+     * (contract BOT-BOUNDS), otherwise falls back to the legacy ±50 constants —
+     * which are around the WORLD ORIGIN and therefore nowhere near the room
+     * dc.js actually builds (racks start at offsetX/offsetZ = -100).
+     *
+     * @param string $location Datacenter location name
+     * @return array{minX:float,maxX:float,minZ:float,maxZ:float}
+     */
+    private static function dcRoomBounds(string $location): array
+    {
+        global $global;
+        $bounds = null;
+        if ($global !== null) {
+            $bounds = self::sanitiseRoomBounds($global->{self::DC_ROOM_BOUNDS_KEY_PREFIX . $location} ?? null);
+        }
+        if ($bounds === null) {
+            $bounds = [
+                'minX' => self::BOT_BOUNDS_X_MIN,
+                'maxX' => self::BOT_BOUNDS_X_MAX,
+                'minZ' => self::BOT_BOUNDS_Z_MIN,
+                'maxZ' => self::BOT_BOUNDS_Z_MAX
+            ];
+        }
+        $inset = min(
+            self::BOT_BOUNDS_INSET,
+            ($bounds['maxX'] - $bounds['minX']) / 4,
+            ($bounds['maxZ'] - $bounds['minZ']) / 4
+        );
+        return [
+            'minX' => $bounds['minX'] + $inset,
+            'maxX' => $bounds['maxX'] - $inset,
+            'minZ' => $bounds['minZ'] + $inset,
+            'maxZ' => $bounds['maxZ'] - $inset
+        ];
+    }
+
+    /**
+     * Pick a point inside $bounds, within $radius scene units of $near when a
+     * reference position is available (uniform over the disc), otherwise
+     * uniformly anywhere in $bounds.
+     *
+     * @param array{x:float,z:float}|null                     $near
+     * @param array{minX:float,maxX:float,minZ:float,maxZ:float} $bounds
+     * @param float                                           $radius
+     * @return array{0:float,1:float} [x, z]
+     */
+    private static function randomPointNear(?array $near, array $bounds, float $radius): array
+    {
+        if ($near === null) {
+            return [
+                $bounds['minX'] + lcg_value() * ($bounds['maxX'] - $bounds['minX']),
+                $bounds['minZ'] + lcg_value() * ($bounds['maxZ'] - $bounds['minZ'])
+            ];
+        }
+        $angle = lcg_value() * 2 * M_PI;
+        $dist = sqrt(lcg_value()) * $radius;  // sqrt => uniform over the disc
+        return [
+            max($bounds['minX'], min($bounds['maxX'], $near['x'] + cos($angle) * $dist)),
+            max($bounds['minZ'], min($bounds['maxZ'], $near['z'] + sin($angle) * $dist))
+        ];
+    }
+
+    /**
+     * Last known position of a randomly chosen REAL (non-bot) client, so the
+     * bot wanders where the humans are instead of picking uniformly random
+     * points across the whole box (THE BOT #3 — the actual user request).
+     *
+     * @return array{x:float,z:float}|null null when no real player position is known
+     */
+    private static function randomRealClientPosition(): ?array
+    {
+        global $global;
+        if ($global === null) {
+            return null;
+        }
+        $clientList = $global->dc_presence_clients ?? [];
+        if (!is_array($clientList) || empty($clientList)) {
+            return null;
+        }
+        $positions = [];
+        foreach ($clientList as $cid) {
+            if (is_string($cid) && strpos($cid, 'bot_') === 0) {
+                continue;  // not a real player
+            }
+            $entry = $global->{'dc_presence:client:' . $cid};
+            if (!is_array($entry) || !isset($entry['x'], $entry['z'])
+                || !is_numeric($entry['x']) || !is_numeric($entry['z'])) {
+                continue;
+            }
+            $positions[] = ['x' => (float) $entry['x'], 'z' => (float) $entry['z']];
+        }
+        if (empty($positions)) {
+            return null;
+        }
+        return $positions[array_rand($positions)];
+    }
+
+    /**
+     * Is the BusinessWorker process that owns a location's bot timer still alive?
+     *
+     * The owner marker (dc_bot_timer:<location>) is a pid. When that process is
+     * gone its timers died with it, so the bot must be respawned elsewhere
+     * instead of sitting frozen. Non-numeric markers (legacy/test values) are
+     * treated as alive so existing behaviour is preserved.
+     *
+     * THREE-HOST CORRECTNESS. datacentered runs on three systems that share ONE
+     * GlobalData store, so a marker may name a process on a different machine —
+     * and pids are not unique across machines. A bare `is_dir('/proc/<pid>')` is a
+     * purely LOCAL check, so it was wrong in both directions:
+     *   - foreign pid that happens to exist locally  -> "alive" -> a bot whose real
+     *     owner died is never respawned; it just sits frozen (indistinguishable from
+     *     "the bot is broken");
+     *   - foreign pid that does not exist locally    -> "gone"  -> this host spawns a
+     *     second bot over one another host is still driving.
+     * Markers are therefore host-qualified ("<host>:<pid>", see processMarker()). For
+     * a marker owned by ANOTHER host we cannot inspect the process, so liveness comes
+     * from the bot's own heartbeat: moveBot() rewrites dc_bot_state:<location>.ts every
+     * BOT_MOVE_INTERVAL (0.5s), so a fresh ts proves the remote driver is running. We
+     * only take over once that heartbeat has gone stale, which means we never steal a
+     * bot another instance is actively walking.
+     *
+     * @param mixed      $owner value stored in dc_bot_timer:<location>
+     * @param array|null $state current dc_bot_state:<location>, for the heartbeat check
+     * @return bool
+     */
+    private static function botOwnerAlive($owner, ?array $state = null): bool
+    {
+        // Legacy/test marker: a bare pid, always same-host by definition.
+        if (is_int($owner) || (is_string($owner) && ctype_digit($owner))) {
+            $pid = (int) $owner;
+            return $pid === getmypid() ? true : is_dir('/proc/' . $pid);
+        }
+        if (!is_string($owner) || strpos($owner, ':') === false) {
+            return true;  // unrecognised marker — nothing we can assert
+        }
+        [$host, $pidPart] = explode(':', $owner, 2);
+        if (!ctype_digit($pidPart)) {
+            return true;
+        }
+        $pid = (int) $pidPart;
+        if ($host === self::localHostName()) {
+            return $pid === getmypid() ? true : is_dir('/proc/' . $pid);
+        }
+        // Owned by another instance: trust the heartbeat, not our /proc.
+        $ts = is_array($state) && isset($state['ts']) && is_numeric($state['ts'])
+            ? (int) $state['ts']
+            : 0;
+        return $ts >= time() - self::BOT_OWNER_HEARTBEAT_MAX_AGE;
+    }
+
+    /**
+     * Cached hostname. Identifies which of the three datacentered instances a
+     * shared-GlobalData marker belongs to.
+     */
+    private static function localHostName(): string
+    {
+        if (self::$localHostName === null) {
+            $host = gethostname();
+            self::$localHostName = ($host === false || $host === '') ? 'unknown-host' : $host;
+        }
+        return self::$localHostName;
+    }
+
+    /**
+     * Ownership marker for a process-local resource recorded in shared GlobalData:
+     * "<host>:<pid>". Host-qualified because pids collide across the three instances.
+     */
+    private static function processMarker(): string
+    {
+        return self::localHostName() . ':' . getmypid();
+    }
+
+    /**
+     * Does an ownership marker name THIS process? Tolerates the legacy bare-pid form
+     * so a marker written by an instance that has not been reloaded yet is still
+     * recognised during a rolling restart across the three hosts — otherwise the
+     * owning process would fail to match its own marker and retire its own timer,
+     * killing the bot on its first tick.
+     *
+     * @param mixed $marker value stored in dc_bot_timer:<location>
+     */
+    private static function markerIsSelf($marker): bool
+    {
+        if (is_int($marker) || (is_string($marker) && ctype_digit((string) $marker))) {
+            return (int) $marker === getmypid();   // legacy bare pid
+        }
+        return is_string($marker) && $marker === self::processMarker();
+    }
+
+    /**
      * Spawn a bot avatar for a given datacenter location if one doesn't exist.
      * The bot walks around the datacenter building, simulating a real user.
      * Uses GlobalData to store bot state so multiple BusinessWorkers can access it.
      *
-     * @param string $location Datacenter location name (default: 'main')
+     * @param string                          $location Datacenter location name (default: 'main')
+     * @param array{x:float,z:float}|null     $near     joining player's position; the bot spawns
+     *                                                  within BOT_SPAWN_RADIUS of it (BOT-BOUNDS)
+     * @param array|null                      $bounds   raw browser-reported room bounds to record
+     *                                                  before spawning (validated here)
      */
-    public static function spawnBotForLocation(string $location = self::BOT_DEFAULT_LOCATION): void
+    public static function spawnBotForLocation(string $location = self::BOT_DEFAULT_LOCATION, ?array $near = null, ?array $bounds = null): void
     {
         if (!FeatureFlags::dcBotPresenceEnabled()) {
             return;
@@ -4445,25 +5209,53 @@ class Events
         $botTimerKey = 'dc_bot_timer:' . $location;
         $botStateKey = 'dc_bot_state:' . $location;
 
-        // Check for stale timer from lost state
-        $existingTimer = $global->{$botTimerKey} ?? null;
+        // Contract BOT-BOUNDS: record any freshly reported room bounds first so
+        // the spawn position below is computed inside the REAL room.
+        $reportedBounds = self::sanitiseRoomBounds($bounds);
+        if ($reportedBounds !== null) {
+            $global->{self::DC_ROOM_BOUNDS_KEY_PREFIX . $location} = $reportedBounds;
+        }
+
+        // Check for a stale owner marker from lost state.
+        // THE BOT #4: dc_bot_timer:<location> holds the OWNING PID, never a
+        // timer id — Workerman timer ids are per-process and Timer::del() from
+        // another BusinessWorker would kill an unrelated timer. The real id
+        // lives in the process-local self::$botTimers.
+        $existingOwner = $global->{$botTimerKey} ?? null;
         $existingState = $global->{$botStateKey} ?? null;
-        if ($existingTimer !== null) {
-            if ($existingState === null) {
-                // Stale timer from lost state - clean it up
-                Timer::del($existingTimer);
-                unset($global->{$botTimerKey});
-            } else {
-                return; // Bot already exists for this location
+        if ($existingOwner !== null) {
+            if ($existingState !== null && self::botOwnerAlive($existingOwner, $existingState)) {
+                return; // Bot already exists for this location and its driver is alive
             }
+            if ($existingState !== null) {
+                // Owner process is gone (worker reload/crash) — its timer died with
+                // it, so the bot would sit frozen forever. Take ownership here.
+                Worker::safeEcho("[dc_bot] bot '{$location}' owner pid {$existingOwner} is gone; respawning in pid ".getmypid()."\n");
+                unset($global->{$botStateKey});
+            }
+            // Stale marker with no state — only the creating process may delete
+            // the timer; from anywhere else just drop the marker and respawn here.
+            if (isset(self::$botTimers[$location])) {
+                Timer::del(self::$botTimers[$location]);
+                unset(self::$botTimers[$location]);
+            } elseif ($existingOwner !== self::processMarker()) {
+                Worker::safeEcho("[dc_bot] stale bot marker for '{$location}' owned by {$existingOwner}; not deleting its timer from ".self::processMarker()."\n");
+            }
+            unset($global->{$botTimerKey});
         }
 
         // Pick a random bot name
         $botName = self::$botNames[array_rand(self::$botNames)] . ' ' . substr(md5(uniqid((string)mt_rand(), true)), 0, 4);
 
-        // Spawn position - random position within bounds
-        $spawnX = self::BOT_BOUNDS_X_MIN + lcg_value() * (self::BOT_BOUNDS_X_MAX - self::BOT_BOUNDS_X_MIN);
-        $spawnZ = self::BOT_BOUNDS_Z_MIN + lcg_value() * (self::BOT_BOUNDS_Z_MAX - self::BOT_BOUNDS_Z_MIN);
+        // Spawn near the joining player (THE BOT #1/#3), clamped inside the room.
+        $roomBounds = self::dcRoomBounds($location);
+        $anchor = null;
+        if (is_array($near) && isset($near['x'], $near['z']) && is_numeric($near['x']) && is_numeric($near['z'])) {
+            $anchor = ['x' => (float) $near['x'], 'z' => (float) $near['z']];
+        } else {
+            $anchor = self::randomRealClientPosition();
+        }
+        list($spawnX, $spawnZ) = self::randomPointNear($anchor, $roomBounds, self::BOT_SPAWN_RADIUS);
         $spawnYaw = lcg_value() * 2 * M_PI;  // Random initial facing direction
 
         // Initialize bot state
@@ -4478,6 +5270,7 @@ class Events
             'ts' => time(),
             'client_id' => $botId,
             'location' => $location,
+            'bounds' => $roomBounds,
         ];
         Worker::safeEcho('[dc_bot] spawn x=' . $botState['x'] . ' z=' . $botState['z'] . "\n");
         $global->$botStateKey = $botState;
@@ -4486,8 +5279,14 @@ class Events
         $presenceKey = 'dc_presence:client:' . $botId;
         $global->$presenceKey = $botState;
 
-        // Add bot to active clients list (CRIT-8 pattern for atomicity)
+        // Add bot to active clients list (CRIT-8 pattern for atomicity).
+        // seedClientIndex() + bounded retry for the same reason as the join path:
+        // an absent key makes cas([], …) unsatisfiable forever. Reachable here only
+        // via a join (which now seeds first), but this loop must not be the one that
+        // wedges a worker if that ever stops being true.
         $activeClientsKey = 'dc_active_clients';
+        self::seedClientIndex($activeClientsKey);
+        $attempts = 0;
         do {
             $activeClients = $global->$activeClientsKey ?? [];
             $activeClients = is_array($activeClients) ? $activeClients : [];
@@ -4498,10 +5297,15 @@ class Events
             if ($oldActiveClients === $activeClients) {
                 break;
             }
-        } while (!$global->cas($activeClientsKey, $oldActiveClients ?? [], $activeClients));
+            if ($global->cas($activeClientsKey, $oldActiveClients ?? [], $activeClients)) {
+                break;
+            }
+        } while (self::casShouldRetry($activeClientsKey, ++$attempts));
 
         // Add bot to client index so it's included in batch broadcasts
         $clientIndexKey = 'dc_presence_clients';
+        self::seedClientIndex($clientIndexKey);
+        $attempts = 0;
         do {
             $currentList = $global->$clientIndexKey;
             $clientList = is_array($currentList) ? array_values($currentList) : [];
@@ -4512,27 +5316,14 @@ class Events
             if ($currentList === $clientList || $global->cas($clientIndexKey, $oldForCas, $clientList)) {
                 break;
             }
-        } while (true);
+        } while (self::casShouldRetry($clientIndexKey, ++$attempts));
 
-        // Broadcast bot presence to dc_presence channel so frontend creates avatar entries
-        $channel = 'dc_presence';
+        // Broadcast bot presence to the dc_presence group so frontends create avatars
         // Frontend expects camelCase clientId, not snake_case client_id
         $botBroadcastEntry = $botState;
         $botBroadcastEntry['clientId'] = $botBroadcastEntry['client_id'];
         unset($botBroadcastEntry['client_id']);
-        $payload = json_encode([
-            'op' => 'dc.presence.joined',
-            'data' => $botBroadcastEntry
-        ]);
-        if (self::$channelClient !== null) {
-            (self::$channelClient)($channel, $payload);
-        } else {
-            try {
-                \Channel\Client::publish($channel, $payload);
-            } catch (\Throwable $e) {
-                Worker::safeEcho("[dc_bot] {$botId} presence broadcast failed: {$e->getMessage()}\n");
-            }
-        }
+        self::broadcastDcPresence('dc.presence.joined', $botBroadcastEntry, "[dc_bot] {$botId}");
 
         // Start the bot movement timer
         // Using repeating timer that calls moveBot every BOT_MOVE_INTERVAL seconds
@@ -4542,7 +5333,12 @@ class Events
             [$location],
             true  // repeating
         );
-        $global->{$botTimerKey} = $timerId;
+        // THE BOT #4: keep the (process-local) timer id process-local, and publish
+        // only the owning pid so other workers can see a bot exists.
+        self::$botTimers[$location] = $timerId;
+        // Host-qualified: three instances share this GlobalData store and pids are not
+        // unique across them. See processMarker() / botOwnerAlive().
+        $global->{$botTimerKey} = self::processMarker();
 
         Worker::safeEcho("[dc_bot] spawned bot '{$botName}' ({$botId}) at location '{$location}' at ({$spawnX}, {$spawnZ})\n");
     }
@@ -4564,6 +5360,20 @@ class Events
 
         $botId = 'bot_' . $location;
         $botStateKey = 'dc_bot_state:' . $location;
+        $botTimerKey = 'dc_bot_timer:' . $location;
+
+        // THE BOT #4: only the marker-owning process drives the bot. If another
+        // BusinessWorker has taken ownership (e.g. it respawned the bot after our
+        // state was lost), retire OUR timer rather than double-driving the shared
+        // state. A process only ever deletes a timer it created itself.
+        $owner = $global->{$botTimerKey} ?? null;
+        if (isset(self::$botTimers[$location]) && $owner !== null && !self::markerIsSelf($owner)) {
+            Timer::del(self::$botTimers[$location]);
+            unset(self::$botTimers[$location]);
+            Worker::safeEcho("[dc_bot] retiring duplicate bot timer for '{$location}' in ".self::processMarker()." (owner is {$owner})\n");
+            return;
+        }
+
         $botState = $global->{$botStateKey};
 
         if (!$botState || !is_array($botState)) {
@@ -4582,11 +5392,16 @@ class Events
         $dz = $targetZ - $currentZ;
         $distance = sqrt($dx * $dx + $dz * $dz);
 
-        // If close to target or no target, pick a new random target
+        // Room bounds for this location (browser-reported when available).
+        $roomBounds = self::dcRoomBounds($location);
+        $botState['bounds'] = $roomBounds;
+
+        // If close to target or no target, pick a new one NEAR a real player
+        // (THE BOT #3) inside the room bounds (THE BOT #1); fall back to a
+        // random point in bounds when no real player position is known.
         if ($distance < self::BOT_TARGET_THRESHOLD) {
-            $randomSeed = lcg_value();
-            $targetX = self::BOT_BOUNDS_X_MIN + $randomSeed * (self::BOT_BOUNDS_X_MAX - self::BOT_BOUNDS_X_MIN);
-            $targetZ = self::BOT_BOUNDS_Z_MIN + (1 - $randomSeed) * (self::BOT_BOUNDS_Z_MAX - self::BOT_BOUNDS_Z_MIN);
+            $anchor = self::randomRealClientPosition();
+            list($targetX, $targetZ) = self::randomPointNear($anchor, $roomBounds, self::BOT_WANDER_RADIUS);
             $botState['target_x'] = $targetX;
             $botState['target_z'] = $targetZ;
 
@@ -4601,14 +5416,18 @@ class Events
             $dirX = $dx / $distance;
             $dirZ = $dz / $distance;
 
-            // Move toward target (speed * interval = distance per tick)
-            $moveDistance = self::BOT_WALK_SPEED * self::BOT_MOVE_INTERVAL;
+            // Move toward target (speed * interval = distance per tick), never
+            // PAST it: one tick is BOT_WALK_SPEED * BOT_MOVE_INTERVAL = 5.85
+            // units, well over BOT_TARGET_THRESHOLD (1.0), so an unclamped step
+            // would overshoot and the bot would oscillate around its target
+            // forever instead of ever "arriving" and picking a new one.
+            $moveDistance = min(self::BOT_WALK_SPEED * self::BOT_MOVE_INTERVAL, $distance);
             $newX = $currentX + $dirX * $moveDistance;
             $newZ = $currentZ + $dirZ * $moveDistance;
 
-            // Clamp to bounds (should already be within bounds, but safety check)
-            $newX = max(self::BOT_BOUNDS_X_MIN, min(self::BOT_BOUNDS_X_MAX, $newX));
-            $newZ = max(self::BOT_BOUNDS_Z_MIN, min(self::BOT_BOUNDS_Z_MAX, $newZ));
+            // Clamp to the room bounds (should already be inside, but safety check)
+            $newX = max($roomBounds['minX'], min($roomBounds['maxX'], $newX));
+            $newZ = max($roomBounds['minZ'], min($roomBounds['maxZ'], $newZ));
 
             // Calculate yaw to face movement direction
             $yaw = atan2(-$dirX, -$dirZ);  // Yaw in radians, 0 = facing +Z
@@ -4627,55 +5446,10 @@ class Events
             $batchKey = 'dc_move_batch:' . $botId;
             $global->{$batchKey} = json_encode($botState);
 
-            // Schedule batch flush if not already scheduled (same pattern as handleDcPresenceMove)
-            if (self::$moveBatchTimer === null) {
-                self::$moveBatchTimer = Timer::add(0.05, function () use ($location) {
-                    global $global;
-                    $batch = [];
-                    $clientIndexKey = 'dc_presence_clients';
-                    $clientList = $global->$clientIndexKey ?? [];
-                    if (is_array($clientList)) {
-                        foreach ($clientList as $cid) {
-                            $bk = 'dc_move_batch:' . $cid;
-                            $encoded = $global->{$bk};
-                            if ($encoded) {
-                                $decoded = json_decode($encoded, true);
-                                if ($decoded) {
-                                    $batch[$cid] = $decoded;
-                                }
-                            }
-                        }
-                    }
-                    if (empty($batch)) {
-                        self::$moveBatchTimer = null;
-                        return;
-                    }
-                    self::$moveBatchTimer = null;
-
-                    // Broadcast the batch
-                    $payload = json_encode([
-                        'op' => 'dc.presence.batch_updated',
-                        'data' => $batch
-                    ]);
-                    if (self::$channelClient !== null) {
-                        (self::$channelClient)('dc_presence', $payload);
-                    } else {
-                        try {
-                            \Channel\Client::publish('dc_presence', $payload);
-                        } catch (\Throwable $e) {
-                            Worker::safeEcho("dc_bot batch publish failed: {$e->getMessage()}\n");
-                        }
-                    }
-
-                    Worker::safeEcho('[dc_bot] batch_updated for location=' . $location . ' count=' . count($batch) . "\n");
-
-                    // Clear batch entries
-                    foreach ($batch as $moverCid => $moverEntry) {
-                        $bk = 'dc_move_batch:' . $moverCid;
-                        unset($global->{$bk});
-                    }
-                }, [], false);
-            }
+            // BUG-B7: schedule the ONE shared flush (this used to be a second,
+            // drifted copy of handleDcPresenceMove()'s closure that skipped
+            // viewport filtering entirely).
+            self::scheduleDcPresenceFlush();
         }
     }
 
@@ -4693,14 +5467,22 @@ class Events
         $botTimerKey = 'dc_bot_timer:' . $location;
         $botStateKey = 'dc_bot_state:' . $location;
 
-        // Stop and remove the timer
-        $timerId = $global->{$botTimerKey} ?? null;
-        if ($timerId !== null) {
-            Timer::del($timerId);
+        // Stop and remove the timer.
+        // THE BOT #4: a Workerman timer id is only valid in the process that
+        // created it, so only that process may Timer::del() it. Everywhere else
+        // we clear the shared state and let the owner's next moveBot() tick find
+        // dc_bot_state gone, re-enter this function in ITS process and delete
+        // its own timer.
+        $owner = $global->{$botTimerKey} ?? null;
+        if (isset(self::$botTimers[$location])) {
+            Timer::del(self::$botTimers[$location]);
+            unset(self::$botTimers[$location]);
             unset($global->{$botTimerKey});
+        } elseif ($owner !== null) {
+            Worker::safeEcho("[dc_bot] cleanup for '{$location}' requested in ".self::processMarker().", timer owned by {$owner} — leaving marker for the owner to reap\n");
         }
 
-        // Remove bot state
+        // Remove bot state (this is what makes the owning process stop next tick)
         unset($global->{$botStateKey});
 
         // Remove bot presence entry
@@ -4731,6 +5513,17 @@ class Events
 
         // Clean up any pending batch entries
         unset($global->{'dc_move_batch:' . $botId});
+
+        // Tell the frontends to drop the bot avatar. spawnBotForLocation()
+        // announces dc.presence.joined, so despawn must announce the matching
+        // dc.presence.left — otherwise (now that presence broadcasts actually
+        // reach clients, BUG-A3) a cleaned-up bot would linger as a ghost avatar
+        // until the page reloads.
+        self::broadcastDcPresence(
+            'dc.presence.left',
+            ['uid' => $botId, 'clientId' => $botId],
+            "[dc_bot] {$botId}"
+        );
 
         Worker::safeEcho("[dc_bot] cleaned up bot for location '{$location}'\n");
     }
@@ -4770,7 +5563,7 @@ class Events
     /**
      * When the client is disconnected
      *
-     * @param integer $client_id client id
+     * @param string $client_id client id
      */
     public static function onClose($client_id)
     {
@@ -4789,20 +5582,11 @@ class Events
             $presenceKey = 'dc_presence:client:' . $client_id;
             $presenceEntry = $global->$presenceKey;
             if ($presenceEntry && is_array($presenceEntry)) {
-                $channel = 'dc_presence';
-                $payload = json_encode([
-                    'op' => 'dc.presence.left',
-                    'data' => ['uid' => $uid, 'clientId' => $client_id]
-                ]);
-                if (self::$channelClient !== null) {
-                    (self::$channelClient)($channel, $payload);
-                } else {
-                    try {
-                        \Channel\Client::publish($channel, $payload);
-                    } catch (\Throwable $e) {
-                        self::logStructured('client.close.error', ['client_id' => $client_id, 'msg' => $e->getMessage()]);
-                    }
-                }
+                self::broadcastDcPresence(
+                    'dc.presence.left',
+                    ['uid' => $uid, 'clientId' => $client_id],
+                    "[{$client_id}] client.close"
+                );
                 // CRIT-9 fix: Two-phase cleanup — mark before CAS removal to prevent race with health timer
                 // Phase 1: Mark client as being cleaned up (so health timer can detect and skip)
                 $global->{'dc_cleanup:' . $client_id} = time();
@@ -4839,7 +5623,7 @@ class Events
             }
         } while (!$global->cas($activeClientsKey, $oldActiveClients ?? [], $filtered));
 
-        // Clean up dc_client_session and dc_ping keys for this client
+        // Clean up dc_client_session and the liveness keys for this client
         $sessionKey = 'dc_client_session:' . $client_id;
         $sessionId = $global->$sessionKey ?? null;
         if ($sessionId) {
@@ -4850,12 +5634,23 @@ class Events
                 $global->$listKey = array_values($clients);
             }
             unset($global->$sessionKey);
-            unset($global->{'dc_ping:' . $client_id});
         }
+        // Unconditional: these are written by the health timer even for clients
+        // whose session mapping has already gone away.
+        unset($global->{self::DC_PONG_KEY_PREFIX . $client_id});
+        unset($global->{self::DC_PING_SENT_KEY_PREFIX . $client_id});
         // IDEA-3: clean up viewport data for this client
         unset($global->{'dc_viewport:' . $client_id});
         // MAJOR-13: clean up move throttle key for this client
         unset($global->{'dc_move_throttle:' . $client_id});
+        // REVIEW-FIX (unbounded growth): dc_move_batch:<client_id> had NO deletion
+        // path outside flushPresenceBatch(), and that flush only enumerates
+        // dc_presence_clients. A client that disconnects in the <=50ms between
+        // writing its move batch and the flush is removed from that index first,
+        // so its batch key was orphaned in GlobalData forever. With a 150ms move
+        // throttle against a 50ms flush the window is hit routinely, so the store
+        // grew by one permanent key per unlucky disconnect.
+        unset($global->{'dc_move_batch:' . $client_id});
 
         if (isset($_SESSION['uid'])) {
             $clientIds = Gateway::getClientIdByUid($_SESSION['uid']);
@@ -5446,7 +6241,7 @@ class Events
     /**
      * handler for when receiving a self-update message.
      *
-     * @param int $client_id
+     * @param string $client_id
      * @param array $message_data
      */
     public static function msgSelfUpdate($client_id, $message_data)
@@ -5462,7 +6257,7 @@ class Events
     /**
      * handler for when receiving a vps details lsit message
      *
-     * @param int $client_id
+     * @param string $client_id
      * @param array $message_data
      */
     public static function msgVpsList($client_id, $message_data)
@@ -5481,7 +6276,7 @@ class Events
     /**
      * handler for when receiving a vps details lsit message
      *
-     * @param int $client_id
+     * @param string $client_id
      * @param array $message_data
      */
     public static function msgVpsInfo($client_id, $message_data)
@@ -5500,7 +6295,7 @@ class Events
     /**
      * handler for when receiving a get map message
      *
-     * @param int $client_id
+     * @param string $client_id
      * @param array $message_data
      */
     public static function msgGetMap($client_id, $message_data)
@@ -5520,7 +6315,7 @@ class Events
     /**
      * handler for when receiving a bandwidth message.
      *
-     * @param int $client_id
+     * @param string $client_id
      * @param array $message_data
      */
     public static function msgBandwidth($client_id, $message_data)
@@ -5539,7 +6334,7 @@ class Events
     /**
      * handler for when receiving a clients message.
      *
-     * @param int $client_id
+     * @param string $client_id
      * @param array $message_data
      */
     public static function msgClients($client_id, $message_data)
@@ -5593,7 +6388,7 @@ class Events
     /**
      * list timers
      *
-     * @param int $client_id
+     * @param string $client_id
      * @param array $message_data
      */
     public static function msgTimers($client_id, $message_data)
@@ -5651,7 +6446,7 @@ class Events
     /**
      * handler for when receiving a say message.
      *
-     * @param int $client_id
+     * @param string $client_id
      * @param array $message_data
      */
     public static function msgSay($client_id, $message_data)
@@ -5687,7 +6482,7 @@ class Events
     /**
      * handler for when receiving a pong message.
      *
-     * @param int $client_id
+     * @param string $client_id
      * @param array $message_data
      */
     public static function msgPing($client_id, $message_data)
@@ -5698,7 +6493,7 @@ class Events
     /**
      * handler for when receiving a pong message.
      *
-     * @param int $client_id
+     * @param string $client_id
      * @param array $message_data
      */
     public static function msgPong($client_id, $message_data)
@@ -5719,7 +6514,7 @@ class Events
     /**
      * handler for when receiving a run message.
      *
-     * @param int $client_id
+     * @param string $client_id
      * @param array $message_data
      */
     public static function msgRunLocal($client_id, $message_data)
@@ -5740,7 +6535,7 @@ class Events
     /**
      * handler for when receiving a run message.
      *
-     * @param int $client_id
+     * @param string $client_id
      * @param array $message_data
      */
     public static function msgRun($client_id, $message_data)
@@ -5761,7 +6556,7 @@ class Events
     /**
      * handler for when receiving a running message.
      *
-     * @param int $client_id
+     * @param string $client_id
      * @param array $message_data
      */
     public static function msgRunning($client_id, $message_data)
@@ -5797,7 +6592,7 @@ class Events
     /**
      * handler for when receiving a payment process message.
      *
-     * @param int $client_id
+     * @param string $client_id
      * @param array $message_data
      */
     public static function msgPaymentprocess($client_id, $message_data)
@@ -5909,7 +6704,7 @@ class Events
     /**
      * handler for when receiving a ran message.
      *
-     * @param int $client_id
+     * @param string $client_id
      * @param array $message_data
      */
     public static function msgRan($client_id, $message_data)
@@ -5951,7 +6746,7 @@ class Events
     /**
      * handler for phpsysinfo proxying betweeen the client and host
      *
-     * @param int $client_id
+     * @param string $client_id
      * @param array $message_data
      */
     public static function msgPhpsysinfo($client_id, $message_data)
@@ -5975,7 +6770,7 @@ class Events
     /**
      * handler for when receiving a login message.
      *
-     * @param int $client_id
+     * @param string $client_id
      * @param array $message_data
      */
     public static function msgLogin($client_id, $message_data)

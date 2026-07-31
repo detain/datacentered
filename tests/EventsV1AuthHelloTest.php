@@ -305,6 +305,14 @@ namespace {
          * The auth gate lets an AUTHENTICATED client through: after a successful
          * host auth.hello, a subsequent ping on the same connection ($_SESSION
          * persists in-process) gets the frozen pong, not auth_required.
+         *
+         * The pong is EVENT-shaped (`op:"pong"` + the ping's `id` echoed), not a
+         * `re`-correlated reply. docs/PROTOCOL_V1.md §2.1 used to describe a reply,
+         * which the implementation never sent; the doc was corrected on 2026-07-31
+         * to match, because the event shape is what clients were written against —
+         * dc-ws.js clears its keepalive watchdog only on `op === 'pong'`, so moving
+         * the hub to a reply would turn every healthy browser connection into a
+         * permanent "no pong" reconnect loop. Owner decision: code is authoritative.
          */
         public function testAuthedHostPingGetsPong(): void
         {
@@ -322,11 +330,18 @@ namespace {
             \Events::dispatchV1(1, ['v' => 1, 'id' => 'p1', 'op' => 'ping', 'ts' => 1, 'data' => []]);
 
             $this->assertCount(1, $this->sent());
-            $this->assertSame(
-                '{"v":1,"re":"p1","ok":true,"data":{}}',
-                $this->sent()[0]['message'],
-                'authed client ping must get the frozen pong'
-            );
+            $pong = json_decode($this->sent()[0]['message'], true);
+            $this->assertIsArray($pong, 'the pong must be valid JSON');
+            $this->assertSame(1, $pong['v']);
+            $this->assertSame('pong', $pong['op'], 'the pong is event-shaped, carrying op');
+            $this->assertSame('p1', $pong['id'], "the ping's id is echoed back on id, not re");
+            $this->assertArrayHasKey('ts', $pong);
+            $this->assertIsInt($pong['ts']);
+            $this->assertSame([], $pong['data'], "the sender's data is echoed verbatim");
+            // Guard the shape both ways: a reply carries re+ok and NO op, so if anyone
+            // "corrects" this to the reply form, dc-ws.js's watchdog stops being armed.
+            $this->assertArrayNotHasKey('re', $pong);
+            $this->assertArrayNotHasKey('ok', $pong);
             $this->assertSame([], $this->closed());
         }
 
@@ -600,8 +615,18 @@ namespace {
          */
         public function testAuthHelloDormantWhenFlagAOff(): void
         {
-            // Flag A OFF: inject a client WITHOUT ws_new_handling set.
+            // Flag A must be set to 0 EXPLICITLY. An UNSET ws_new_handling reads
+            // ON — useNewHandling() ends `isset($var) ? (bool) $var : true`, the
+            // v1 handler having been enabled by default in commit 9eabb50 — so
+            // simply omitting the variable (what this test used to do) ran the
+            // handler. That also had a nasty side effect: the handler hit the
+            // FakeAuthDb's throwOnFetch, and handleAuthHello's DB-error recovery
+            // path calls createDbConnection(), which opened a REAL socket to the
+            // production `my` MySQL cluster from the unit-test suite. Verified
+            // with `strace -e trace=connect` before/after: 1 connect to
+            // 174.138.179.252:3306 -> 0.
             $client = new AuthFakeGlobalDataClient();
+            $client->store[FeatureFlags::VAR_NEW_HANDLING] = 0;
             $GLOBALS['global'] = $client;
             $db = $this->injectDb(['vps_masters' => ['vps_id' => ['13' => [
                 'vps_id' => 13, 'vps_name' => 'h13', 'vps_ip' => self::REMOTE,

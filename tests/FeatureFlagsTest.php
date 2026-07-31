@@ -2,49 +2,25 @@
 
 use PHPUnit\Framework\TestCase;
 
+// Declares the OFFLINE \GlobalData\Client (so FeatureFlags' lazy fallback can
+// never open a socket to GLOBALDATA_IP:2207) and predefines GLOBALDATA_IP so it
+// never requires the production config.settings.php either. Must come before
+// anything can autoload the real \GlobalData\Client.
+require_once __DIR__.'/TestBootstrap.php';
 require_once __DIR__.'/../Applications/Chat/FeatureFlags.php';
 
 /**
  * In-memory stand-in for \GlobalData\Client.
  *
- * The real client opens a TCP socket to GLOBALDATA_IP:2207 and (under the CLI
- * SAPI) registers a Workerman timer on first property access — neither of which
- * is available in a PHPUnit run. This fake extends the real class so it passes
- * FeatureFlags' `instanceof \GlobalData\Client` gate, but backs every variable
- * with a plain array so get/set/isset/unset behave deterministically and never
- * touch the network. It lets us prove the toggle/override *logic* without a
- * live GlobalData server, complementary to the fail-safe tests below which
- * exercise the genuine "no client / unreachable" path.
+ * Thin alias over the suite-wide InMemoryGlobalData double (tests/TestBootstrap.php)
+ * so the flag logic is exercised against the SAME faithful get/set/isset/unset
+ * and md5-based cas() semantics every other test uses. It extends
+ * \GlobalData\Client (transitively) so FeatureFlags' `instanceof` gate passes,
+ * and it never touches the network — complementary to the fail-safe tests
+ * below, which exercise the genuine "no client / unreachable" path.
  */
-class InMemoryGlobalDataClient extends \GlobalData\Client
+class InMemoryGlobalDataClient extends InMemoryGlobalData
 {
-    /** @var array<string,mixed> */
-    public $store = [];
-
-    public function __construct()
-    {
-        // Intentionally do NOT call parent::__construct — no servers, no socket.
-    }
-
-    public function __get($key)
-    {
-        return $this->store[$key] ?? null;
-    }
-
-    public function __set($key, $value)
-    {
-        $this->store[$key] = $value;
-    }
-
-    public function __isset($key)
-    {
-        return isset($this->store[$key]);
-    }
-
-    public function __unset($key)
-    {
-        unset($this->store[$key]);
-    }
 }
 
 /**
@@ -212,11 +188,39 @@ class FeatureFlagsTest extends TestCase
         $this->assertFalse(FeatureFlags::useNewHandling());
     }
 
-    public function testPerHostOverridePrecedence(): void
+    /**
+     * With a usable client and NO ws_new_handling variable set, Flag A reads ON.
+     *
+     * This is the shipped contract — useNewHandling() ends with
+     * `isset($global->$var) ? (bool) $global->$var : true`, and its own
+     * @return tag says "true when unset (new handling is the default)" (the v1
+     * handler was enabled by default in commit 9eabb50). NOTE: FeatureFlags.php's
+     * CLASS-level docblock still claims "ws_new_handling … missing = 0 (OFF)" and
+     * describes State 1 "Dormant (A=OFF, B=ON)" as the default — that header is
+     * STALE and contradicts both the code and the method docblock. Pinned here so
+     * the drift cannot be mistaken for a regression.
+     */
+    public function testUnsetFlagAReadsOnWhenGlobalDataIsUsable(): void
     {
         $this->injectClient();
 
-        // Global stays OFF; set a per-host override ON.
+        $this->assertTrue(
+            FeatureFlags::useNewHandling(),
+            'unset ws_new_handling + usable GlobalData => Flag A ON (new handling is the default)'
+        );
+        $this->assertTrue(
+            FeatureFlags::useNewHandling('host_without_override'),
+            'a host with no override inherits the unset-global default, i.e. ON'
+        );
+    }
+
+    public function testPerHostOverridePrecedence(): void
+    {
+        $global = $this->injectClient();
+
+        // Global explicitly OFF (unset would mean ON — see
+        // testUnsetFlagAReadsOnWhenGlobalDataIsUsable), plus a per-host override ON.
+        $this->assertTrue(FeatureFlags::setNewHandling(null, false));
         $this->assertTrue(FeatureFlags::setNewHandling('host123', true));
 
         $this->assertTrue(
@@ -225,12 +229,13 @@ class FeatureFlagsTest extends TestCase
         );
         $this->assertFalse(
             FeatureFlags::useNewHandling('otherhost'),
-            'Non-overridden host must inherit global OFF'
+            'Non-overridden host must inherit the explicit global OFF'
         );
         $this->assertFalse(
             FeatureFlags::useNewHandling(),
             'Null host (global) must remain OFF'
         );
+        $this->assertSame(0, $global->store[FeatureFlags::VAR_NEW_HANDLING]);
     }
 
     public function testPerHostOverrideCanForceOffWhileGlobalOn(): void
@@ -255,7 +260,8 @@ class FeatureFlagsTest extends TestCase
     {
         $this->injectClient();
 
-        // Global OFF, host overridden ON, then cleared -> reverts to global OFF.
+        // Global explicitly OFF, host overridden ON, then cleared -> reverts to global OFF.
+        FeatureFlags::setNewHandling(null, false);
         FeatureFlags::setNewHandling('host123', true);
         $this->assertTrue(FeatureFlags::useNewHandling('host123'));
 
@@ -276,6 +282,7 @@ class FeatureFlagsTest extends TestCase
     public function testClearingNonexistentOverrideIsNoOpAndSucceeds(): void
     {
         $this->injectClient();
+        FeatureFlags::setNewHandling(null, false);
         $this->assertTrue(
             FeatureFlags::clearNewHandlingOverride('never_set_host'),
             'Clearing an absent override must succeed (idempotent)'
@@ -322,10 +329,105 @@ class FeatureFlagsTest extends TestCase
     public function testHostVarCollisionForEquivalentNormalizedIds(): void
     {
         $this->injectClient();
+        // Global explicitly OFF so a true result can ONLY come from the shared
+        // override — without this the unset-global default (ON) would make this
+        // test pass whether or not the collision happens.
+        FeatureFlags::setNewHandling(null, false);
         FeatureFlags::setNewHandling('10.0.0.5', true);
         $this->assertTrue(
             FeatureFlags::useNewHandling('10-0-0-5'),
             'Ids normalizing to the same var name intentionally share an override'
         );
+        $this->assertFalse(
+            FeatureFlags::useNewHandling('10_0_0_6'),
+            'a host that normalizes differently must NOT pick up the override'
+        );
+    }
+
+    // ----------------------------------------------------------------------
+    // Socket hygiene: the flag reader must never touch the network in tests
+    // ----------------------------------------------------------------------
+
+    /**
+     * The lazy-fallback path (no $global injected) must not build a real
+     * \GlobalData\Client. On baseline it did: FeatureFlags::globalData()
+     * required /home/my/include/config/config.settings.php to learn
+     * GLOBALDATA_IP (216.158.226.14) and then constructed a live client, which
+     * opens a TCP socket to :2207 on first property access — one leaked socket
+     * per flag read, against the PRODUCTION GlobalData server.
+     *
+     * tests/TestBootstrap.php closes that off two ways (predefined GLOBALDATA_IP
+     * + an offline \GlobalData\Client stub). This test proves the first one:
+     * with GLOBALDATA_IP already defined, the settings file is never required.
+     */
+    public function testLazyFallbackNeverRequiresProductionSettingsFile(): void
+    {
+        $this->assertTrue(
+            defined('GLOBALDATA_IP'),
+            'TestBootstrap must predefine GLOBALDATA_IP so FeatureFlags skips the config.settings.php require'
+        );
+        $this->assertSame('127.0.0.1', GLOBALDATA_IP, 'tests must never point at the production GlobalData host');
+
+        // Exercise the lazy path with no $global injected.
+        FeatureFlags::useNewHandling();
+        FeatureFlags::legacyCompatEnabled();
+        FeatureFlags::dcBotPresenceEnabled();
+
+        $loaded = get_included_files();
+        $this->assertNotContains(
+            '/home/my/include/config/config.settings.php',
+            $loaded,
+            'the production settings file must never be pulled into the test process'
+        );
+
+        // And the structural guarantee: the REAL GlobalData client — the only
+        // code in the tree that calls stream_socket_client() for :2207 — was
+        // never autoloaded, because tests/TestBootstrap.php declared
+        // \GlobalData\Client first. No test in this process can open that socket.
+        $this->assertSame(
+            [],
+            array_values(array_filter(
+                $loaded,
+                static fn(string $f) => str_contains($f, 'workerman/globaldata/src/Client.php')
+            )),
+            'the real socket-opening \\GlobalData\\Client must never be loaded in tests'
+        );
+        $ref = new ReflectionClass(\GlobalData\Client::class);
+        $this->assertStringEndsWith(
+            'tests/TestBootstrap.php',
+            (string) $ref->getFileName(),
+            '\\GlobalData\\Client must resolve to the offline test stub'
+        );
+        $this->assertFalse(
+            $ref->hasMethod('getConnection'),
+            'the offline stub has no connection machinery at all'
+        );
+    }
+
+    /**
+     * Flag C (DC bot presence) fails SAFE to ON when GlobalData is unreachable,
+     * and reads/writes correctly through an injected client. Flag C gates bot
+     * spawn/move/cleanup in Events.php, so its default is load-bearing.
+     */
+    public function testDcBotPresenceFlag(): void
+    {
+        $this->assertTrue(
+            FeatureFlags::dcBotPresenceEnabled(),
+            'Flag C must default ON when GlobalData is unavailable'
+        );
+        $this->assertFalse(
+            FeatureFlags::setDcBotPresence(false),
+            'writers fail closed (return false) with no usable GlobalData'
+        );
+
+        $global = $this->injectClient();
+        $this->assertTrue(FeatureFlags::dcBotPresenceEnabled(), 'unset dc_bot_presence => ON');
+
+        $this->assertTrue(FeatureFlags::setDcBotPresence(false));
+        $this->assertSame(0, $global->store[FeatureFlags::VAR_DC_BOT_PRESENCE]);
+        $this->assertFalse(FeatureFlags::dcBotPresenceEnabled());
+
+        $this->assertTrue(FeatureFlags::setDcBotPresence(true));
+        $this->assertTrue(FeatureFlags::dcBotPresenceEnabled());
     }
 }
