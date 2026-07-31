@@ -5480,7 +5480,12 @@ class Events
             // Update bot state in GlobalData
             $global->$botStateKey = $botState;
 
-            Worker::safeEcho('[dc_bot] moveBot location=' . $location . ' bot_x:' . $botState['x'] . ' bot_z:' . $botState['z'] . ' target_x:' . $botState['target_x'] . ' target_z:' . $botState['target_z'] . "\n");
+            // NO per-tick position log here. moveBot() runs on a BOT_MOVE_INTERVAL
+            // timer for every location with a bot, so a safeEcho() here is one
+            // fflush()ed line per bot per tick, forever — it was the top line in
+            // billingd.log once the GateWaySSL drain spam was fixed. The bot's
+            // lifecycle is already covered by the spawn / cleanup / ownership logs
+            // above, which fire once per event instead of once per tick.
 
             // Write to batch key so batch timer broadcasts this move
             $batchKey = 'dc_move_batch:' . $botId;
