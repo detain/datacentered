@@ -598,6 +598,104 @@ namespace {
             $this->assertSame(0, $this->replyFor()['data']['msg_id']);
         }
 
+        /**
+         * REGRESSION: the publisher used to receive its own message TWICE, so every
+         * message you sent appeared twice in your own chat log.
+         *
+         * chatFinishPublish() fanned out with Gateway::sendToGroup() — which includes the
+         * sender, since it is in the channel group — and THEN unconditionally
+         * sendToClient()'d the same payload to the publisher "to cover the race where
+         * channel.join is still in-flight". Both delivered, so the sender got two copies.
+         *
+         * It hid for a long time because the sender was never really in the group:
+         * channel.join is sent from dc:auth-success, which did not fire until the client
+         * learned to correlate its auth reply by id, so the direct send was genuinely the
+         * only copy. Fixing auth exposed the double-send.
+         *
+         * The race is real, so the direct send stays as the publisher's SINGLE delivery
+         * and the publisher is excluded from the group blast instead.
+         */
+        public function testPublisherReceivesItsOwnMessageExactlyOnce(): void
+        {
+            $this->flagAOn();
+            $this->asVpsHost(12);
+            $this->installTaskCapture();
+
+            // level:"log" fans out synchronously (no TaskWorker round trip needed).
+            $this->dispatch('channel.publish', ['channel' => 'host:vps12', 'body' => 'once please', 'level' => 'log']);
+
+            $pushes = array_values(array_filter(
+                \GatewayWorker\Lib\Gateway::$sent,
+                static function (array $s): bool {
+                    $decoded = json_decode($s['message'], true);
+                    return is_array($decoded) && ($decoded['op'] ?? null) === 'channel.message';
+                }
+            ));
+            $this->assertCount(
+                1,
+                $pushes,
+                'the publisher must receive its own message exactly once, not once per fan-out path'
+            );
+
+            // And it must be excluded from the group blast, or the direct send duplicates.
+            $this->assertCount(1, \GatewayWorker\Lib\Gateway::$sentToGroup);
+            $this->assertSame(
+                1,   // dispatch()'s default client id
+                \GatewayWorker\Lib\Gateway::$sentToGroup[0]['exclude'],
+                'the publisher must be excluded from sendToGroup'
+            );
+
+            // The ack is a separate frame and must still be there (re+ok, no op).
+            $reply = $this->replyFor();
+            $this->assertTrue($reply['ok']);
+            $this->assertArrayNotHasKey('op', $reply);
+        }
+
+        /**
+         * A DM reaches the sender through sendToUid (which covers every tab it has open),
+         * so the direct send must be SKIPPED there or the sender doubles again.
+         */
+        public function testDmSenderIsNotAlsoSentDirectly(): void
+        {
+            $this->flagAOn();
+            $this->asVpsHost(12);
+            $this->installTaskCapture();
+
+            $senderUid = $_SESSION['uid'];
+            \GatewayWorker\Lib\Gateway::$sent = [];
+
+            // chatFinishPublish() is private; reach it directly rather than adding a
+            // test-only shim to production code. Driving chat.send end to end would need
+            // the TaskWorker round trip, which is not what this test is about.
+            $finish = new ReflectionMethod(\Events::class, 'chatFinishPublish');
+            $finish->setAccessible(true);
+            $finish->invoke(
+                null,
+                1,   // same client id dispatch() uses
+                'req-dm',
+                [
+                    'channel' => 'chat:dm', 'from' => $senderUid, 'from_name' => 'U',
+                    'body' => 'hi', 'level' => 'chat', 'ts' => 1, 'msg_id' => 1,
+                ],
+                [$senderUid, 'other-uid'],
+                'chat.message'
+            );
+
+            $pushes = array_values(array_filter(
+                \GatewayWorker\Lib\Gateway::$sent,
+                static function (array $s): bool {
+                    $decoded = json_decode($s['message'], true);
+                    return is_array($decoded) && ($decoded['op'] ?? null) === 'chat.message';
+                }
+            ));
+            $this->assertCount(
+                0,
+                $pushes,
+                'sendToUid already reached the sender; a direct send would be a second copy'
+            );
+            $this->assertSame([], \GatewayWorker\Lib\Gateway::$sentToGroup, 'a DM does not blast the group');
+        }
+
         public function testChannelPublishInfoLevelStillPersists(): void
         {
             // Only "log" skips; other non-chat levels still persist.

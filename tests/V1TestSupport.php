@@ -91,7 +91,14 @@ namespace GatewayWorker\Lib {
 
         public static function sendToGroup($group, $message, $exclude_client_id = null, $raw = false)
         {
-            self::$sentToGroup[] = ['group' => $group, 'message' => $message];
+            // `exclude` is recorded because it is load-bearing: chatFinishPublish() relies
+            // on it to keep the publisher out of the group blast and deliver to it exactly
+            // once, directly. Discarding it here made the duplicate-message bug invisible.
+            self::$sentToGroup[] = [
+                'group' => $group,
+                'message' => $message,
+                'exclude' => $exclude_client_id,
+            ];
             return true;
         }
 

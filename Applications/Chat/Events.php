@@ -3325,16 +3325,40 @@ class Events
     {
         self::chatCacheAppend($message['channel'], $message);
         $push = json_encode(self::v1Envelope($op, $message));
+
+        // The publishing connection must receive the message EXACTLY ONCE.
+        //
+        // Both fan-out paths below already reach the sender — sendToGroup() includes it
+        // (it joined the channel group) and, for a DM, $recipients always contains the
+        // sender's own uid so sendToUid() reaches every tab it has open. The
+        // unconditional direct send that used to follow was therefore a second copy, and
+        // every message the sender published appeared twice in its own log.
+        //
+        // It looked correct for a long time only because the sender was never actually
+        // in the group: channel.join is sent from dc:auth-success, and that event did not
+        // fire until the client learned to correlate its auth reply by id (replies carry
+        // re+ok and no op). With auth broken the direct send was the sender's ONLY copy,
+        // which is exactly what the "covers the race where channel.join is still
+        // in-flight" comment was papering over. That race is real, so keep the direct
+        // send as the sender's single delivery and take it out of the broadcast instead.
+        $senderAlreadySent = false;
         if (is_array($recipients)) {
+            $senderUid = $_SESSION['uid'] ?? null;
             foreach (array_unique($recipients) as $uid) {
                 Gateway::sendToUid($uid, $push);
+                if ($senderUid !== null && (string) $uid === (string) $senderUid) {
+                    $senderAlreadySent = true;   // delivered to every tab of this uid
+                }
             }
         } else {
-            Gateway::sendToGroup($message['channel'], $push);
+            // Exclude the sender here; the direct send below is its one delivery, and it
+            // works whether or not channel.join has landed yet. The sender's OTHER tabs
+            // are distinct client_ids and still receive it via the group.
+            Gateway::sendToGroup($message['channel'], $push, $client_id);
         }
-        // Also send directly to the publishing client (covers the race where
-        // sendToGroup misses the sender because channel.join is still in-flight)
-        Gateway::sendToClient($client_id, $push);
+        if (!$senderAlreadySent) {
+            Gateway::sendToClient($client_id, $push);
+        }
         Gateway::sendToClient($client_id, json_encode([
             'v' => 1,
             're' => $re,
