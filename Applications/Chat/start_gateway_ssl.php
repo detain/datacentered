@@ -43,11 +43,41 @@ $gateway_ssl->onConnect = function ($connection) { // When the client is connect
         // onWebSocketConnect Inside $_GET $_SERVER is available  var_dump($_GET, $_SERVER);
     //};
 };
+/**
+ * BUFFER LOGGING — why onBufferDrain is conditional here.
+ *
+ * Workerman 5's TcpConnection::send() never attempts a direct fwrite() on an
+ * `ssl` transport: it unconditionally appends to $sendBuffer and arms the
+ * writable watcher (src/Connection/TcpConnection.php, the
+ * `if ($this->transport === 'ssl')` branch inside `if ($this->sendBuffer === '')`).
+ * baseWrite() then empties the buffer on the next event-loop pass and fires
+ * onBufferDrain. So on a wss:// gateway a "drain" fires for EVERY frame sent to
+ * EVERY client — it does not mean backpressure cleared, it means "a frame went
+ * out", which is not worth a log line.
+ *
+ * Echoing it unconditionally (the GatewayWorker demo default this was copied
+ * from) put a Worker::safeEcho() on the hot path of every dc presence batch and
+ * bot-move broadcast. safeEcho is not cheap: four str_replace() passes, a
+ * set_error_handler()/restore_error_handler() pair, an fwrite() AND an
+ * fflush() — an unbuffered syscall — per frame, per connection, synchronously
+ * inside the gateway event loop, with all 5 gateway processes contending on the
+ * same billingd.log fd. It was also the single most common line in that log.
+ *
+ * Only the full -> drain transition carries information, so only that is
+ * logged. onBufferFull remains unconditional: it means maxSendBufferSize
+ * (100MB, set in onConnect above) was exceeded and sends are now failing.
+ */
 $gateway_ssl->onBufferFull = function ($connection) {
-    Worker::safeEcho("GateWaySSL bufferFull and do not send again\n");
+    $connection->dcBufferWasFull = true;
+    Worker::safeEcho('GateWaySSL bufferFull, dropping sends to '.$connection->getRemoteAddress()."\n");
 };
 $gateway_ssl->onBufferDrain = function ($connection) {
-    Worker::safeEcho("GateWaySSL buffer drain and continue send\n");
+    if (empty($connection->dcBufferWasFull)) {
+        // Ordinary per-frame ssl drain (see above) — carries no information.
+        return;
+    }
+    $connection->dcBufferWasFull = false;
+    Worker::safeEcho('GateWaySSL buffer drained, resuming sends to '.$connection->getRemoteAddress()."\n");
 };
 $gateway_ssl->onError = function ($connection, $code, $msg) {
     Worker::safeEcho("GateWaySSL error {$code} {$msg}\n");

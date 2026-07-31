@@ -184,6 +184,23 @@ namespace {
             $_SESSION = ['v1_authed' => true, 'ima' => 'admin', 'uid' => $uid, 'name' => 'Nadia Admin'];
         }
 
+        /**
+         * Admin session with an INT uid — what production actually holds.
+         *
+         * asAdmin() above types the uid as a string, which no real admin session
+         * ever does: handleAuthHello sets $_SESSION['uid'] = $results[0]['account_id'],
+         * and workerman/mysql configures PDO with ATTR_STRINGIFY_FETCHES=false +
+         * ATTR_EMULATE_PREPARES=false, so that INT column arrives as a native PHP
+         * int. Because every admin fixture here was a string, no test could see
+         * that Tasks/chat_message.php's is_string($args['from']) rejected the real
+         * shape — every admin-published message failed to persist in production
+         * while the suite stayed green.
+         */
+        private function asAdminAccount(int $uid = 2773): void
+        {
+            $_SESSION = ['v1_authed' => true, 'ima' => 'admin', 'uid' => $uid, 'name' => 'Nadia Admin'];
+        }
+
         /** vps host session bound to uid "vps<id>". */
         private function asVpsHost(int $id): void
         {
@@ -649,6 +666,85 @@ namespace {
             $reply = $this->replyFor();
             $this->assertTrue($reply['ok']);
             $this->assertArrayNotHasKey('op', $reply);
+        }
+
+        /**
+         * REGRESSION: an admin's int uid must reach the TaskWorker as a STRING.
+         *
+         * Production symptom (seen in billingd.log):
+         *   chat_message persist failed for channel chat:noc:
+         *   chat_message requires channel, from and body
+         * chat_message() rejected `from` because it was an int, so NOTHING an
+         * admin said was ever persisted. Fan-out still worked, which is why this
+         * looked like a cosmetic log line rather than total persistence loss.
+         */
+        public function testAdminIntUidIsStringifiedForThePersistTask(): void
+        {
+            $this->flagAOn();
+            $this->asAdminAccount(2773);
+            $this->installTaskCapture();
+            $this->fakeTaskReturn = $this->taskOk(41);
+
+            $this->dispatch('channel.publish', ['channel' => 'chat:noc', 'body' => 'anybody home']);
+
+            $this->assertCount(1, $this->dispatched, 'chat-level publish must dispatch the persist task');
+            $this->assertSame('chat_message', $this->dispatched[0]['type']);
+            $from = $this->dispatched[0]['args']['from'];
+            $this->assertIsString($from, 'chat_message() rejects a non-string `from`; the hub must cast it');
+            $this->assertSame('2773', $from);
+        }
+
+        /**
+         * The same cast keeps the wire honest: §2.10 declares `from` as a str
+         * ("sender uid — vps<id>, account id, or 'system'") and chat_messages.`from`
+         * is VARCHAR(64). Uncast, admins published a JSON *number* into a field the
+         * frozen protocol says is a string.
+         */
+        public function testAdminIntUidIsStringifiedOnTheFannedOutEvent(): void
+        {
+            $this->flagAOn();
+            $this->asAdminAccount(2773);
+            $this->installTaskCapture();
+            $this->fakeTaskReturn = $this->taskOk(42);
+
+            $this->dispatch('channel.publish', ['channel' => 'chat:noc', 'body' => 'anybody home']);
+
+            $push = null;
+            foreach (\GatewayWorker\Lib\Gateway::$sent as $s) {
+                $decoded = json_decode($s['message'], true);
+                if (is_array($decoded) && ($decoded['op'] ?? null) === 'channel.message') {
+                    $push = $decoded;
+                    break;
+                }
+            }
+            $this->assertNotNull($push, 'the message must still fan out');
+            $this->assertIsString($push['data']['from'], '§2.10: `from` is a str, not a number');
+            $this->assertSame('2773', $push['data']['from']);
+        }
+
+        /**
+         * chat.send derives the dm channel id from $from, so the cast must land
+         * before the SORT_STRING pair sort — and the recipient list handed to
+         * Gateway::sendToUid() must carry the string form too.
+         */
+        public function testAdminIntUidIsStringifiedForDirectMessages(): void
+        {
+            $this->flagAOn();
+            $this->asAdminAccount(2773);
+            $this->installTaskCapture();
+            $this->fakeTaskReturn = $this->taskOk(43);
+
+            $this->dispatch('chat.send', ['to' => 'vps12', 'body' => 'ping']);
+
+            $this->assertCount(1, $this->dispatched);
+            $this->assertSame('dm:2773:vps12', $this->dispatched[0]['args']['channel']);
+            $this->assertIsString($this->dispatched[0]['args']['from']);
+            $this->assertSame('2773', $this->dispatched[0]['args']['from']);
+            $this->assertContains(
+                '2773',
+                array_map('strval', array_column(\GatewayWorker\Lib\Gateway::$sentToUid, 'uid')),
+                'the sender must still be a dm recipient'
+            );
         }
 
         /**

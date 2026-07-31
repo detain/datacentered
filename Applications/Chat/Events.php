@@ -3404,7 +3404,20 @@ class Events
     {
         $message = [
             'channel' => $channel,
-            'from' => $_SESSION['uid'] ?? '',
+            // CAST IS LOAD-BEARING. §2.10 declares `from` as a str ("sender uid
+            // — vps<id>, account id, or 'system'") and chat_messages.`from` is
+            // VARCHAR(64). Host/bot sessions already hold a string uid
+            // ($prefix.$row[$id_col] at auth.hello), but admin/client sessions
+            // hold accounts.account_id, and workerman/mysql sets
+            // PDO::ATTR_STRINGIFY_FETCHES=false + ATTR_EMULATE_PREPARES=false,
+            // so that INT column arrives as a native PHP int. Uncast, it went
+            // out on the wire as a JSON number (violating §2.10) and, worse,
+            // survived json_encode/json_decode into Tasks/chat_message.php as an
+            // int, where `is_string($args['from'])` rejected it — every message
+            // an admin published failed to persist with "chat_message requires
+            // channel, from and body". Also see chatChannelAllowed(), which
+            // casts for the same reason.
+            'from' => isset($_SESSION['uid']) && is_scalar($_SESSION['uid']) ? (string) $_SESSION['uid'] : '',
             'from_name' => $_SESSION['name'] ?? '',
             'body' => $body,
             'level' => $level,
@@ -3873,7 +3886,10 @@ class Events
             self::sendV1Error($client_id, $re, 'bad_request', 'chat.send data.level must be "chat", "log", "info", "warn" or "error"');
             return;
         }
-        $from = $_SESSION['uid'] ?? '';
+        // Cast for the same reason as chatPublishMessage(): admin/client uids are
+        // native ints out of PDO, and $from is about to be sorted with SORT_STRING,
+        // concatenated into the dm channel id and handed to Gateway::sendToUid().
+        $from = isset($_SESSION['uid']) && is_scalar($_SESSION['uid']) ? (string) $_SESSION['uid'] : '';
         if ($from === '') {
             self::sendV1Error($client_id, $re, 'internal', 'authenticated session has no uid');
             return;

@@ -40,7 +40,13 @@ function chat_message($args)
 {
     global $worker_db;
     $channel = isset($args['channel']) && is_string($args['channel']) ? $args['channel'] : '';
-    $from = isset($args['from']) && is_string($args['from']) ? $args['from'] : '';
+    // `from` accepts int as well as string: admin/client uids are accounts.account_id,
+    // which workerman/mysql returns as a native PHP int (ATTR_STRINGIFY_FETCHES=false),
+    // and json_encode/json_decode across the TaskWorker hop preserves that int. A bare
+    // is_string() check rejected every admin-published message with "requires channel,
+    // from and body". Events.php now casts at the source; this stays permissive so a
+    // rolling deploy with an older hub still persists instead of silently dropping.
+    $from = isset($args['from']) && (is_string($args['from']) || is_int($args['from'])) ? (string) $args['from'] : '';
     $body = isset($args['body']) && is_string($args['body']) ? $args['body'] : '';
     $level = isset($args['level']) && is_string($args['level']) && $args['level'] !== '' ? $args['level'] : 'chat';
     $ts = isset($args['ts']) && is_numeric($args['ts']) ? intval($args['ts']) : time();
