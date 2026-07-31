@@ -55,6 +55,23 @@ namespace GatewayWorker\Lib {
         public static $onlineUids = [];
 
         /**
+         * BusinessWorker::onWorkerStart() calls Gateway::setBusinessWorker($this)
+         * and writes Gateway::$secretKey before invoking any user callback, so
+         * both must exist for BusinessWorkerBootstrapTest to drive that method.
+         *
+         * @var \GatewayWorker\BusinessWorker|null
+         */
+        public static $businessWorker = null;
+
+        /** @var string */
+        public static $secretKey = '';
+
+        public static function setBusinessWorker($businessWorker)
+        {
+            self::$businessWorker = $businessWorker;
+        }
+
+        /**
          * Per-group fake membership state for presence/list assertions.
          * $groupSessions[$group] = array<int,array session> — the sessions
          * getClientSessionsByGroup() returns; $groupCounts[$group] = int the
