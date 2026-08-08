@@ -304,8 +304,18 @@ class Events
             (self::$taskDispatcher)($type, $args, $onResult, $onError, $address);
             return;
         }
+        // send(false) makes Workerman stopAll() this whole process, so bail on a
+        // failed encode rather than letting bad args kill the BusinessWorker.
+        $payload = json_encode(['type' => $type, 'args' => $args]);
+        if ($payload === false) {
+            self::logStructured('task.error', ['type' => $type, 'msg' => 'payload encode failed: '.json_last_error_msg()]);
+            if ($onError) {
+                $onError();
+            }
+            return;
+        }
         $task_connection = new AsyncTcpConnection($address);
-        $task_connection->send(json_encode(['type' => $type, 'args' => $args]));
+        $task_connection->send($payload);
         $responded = false;
         $task_connection->onMessage = function ($connection, $task_result) use ($task_connection, $onResult, &$responded) {
             $responded = true;

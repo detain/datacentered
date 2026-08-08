@@ -121,7 +121,14 @@ $task_worker->onMessage = function ($connection, $task_data) {
             $return = '';
         }
     }
-    $connection->send(json_encode(['return' => $return]));
+    // send(false) makes Workerman stopAll() this whole process, taking every other
+    // in-flight task with it, so never hand a failed encode to the protocol layer.
+    $response = json_encode(['return' => $return]);
+    if ($response === false) {
+        Worker::safeEcho("TaskWorker task {$type} result encode failed: ".json_last_error_msg()."\n");
+        $response = json_encode(['return' => '']);
+    }
+    $connection->send($response);
 };
 
 // Dedicated payment-processing pool on 2209, isolated from the shared 2208 pool
