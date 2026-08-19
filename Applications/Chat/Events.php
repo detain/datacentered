@@ -6100,6 +6100,16 @@ class Events
              * firing on a loop. Raw SQL rather than the builder because the anti-join
              * needs a second aliased reference to queue_log; query() still hands back
              * the same array of assoc rows the builder did.
+             *
+             * The vps_id predicate is the loop's own "no vps id in db matching" skip,
+             * moved into SQL so those rows are not fetched every 30 seconds. It is
+             * deliberately not a bare "vps_id is not null": that is only the skip
+             * condition for a numeric history_type. A non-numeric one ("vpsNNN") never
+             * joins to a vps row, so it always has a null vps_id, and the loop's else
+             * branch reads the host id out of the string instead. Nothing writes those
+             * into vpsqueue any more - they only exist under the legacy vpsqueueold
+             * section - but matching the loop exactly costs nothing and keeps the
+             * branch reachable if that ever changes.
              */
             $results = self::$db->query(
                 'select queue_log.*, vps.* from queue_log'
@@ -6107,6 +6117,7 @@ class Events
                 .' left join queue_log done on done.history_type=queue_log.history_id'
                 ." and done.history_section='vpsqueuedone'"
                 ." where queue_log.history_section='vpsqueue' and done.history_id is null"
+                ." and (vps_id is not null or queue_log.history_type not regexp '^[0-9]+\$')"
             );
         } catch (\Exception $e) {
             Worker::safeEcho("vps_queue_timer DB error: {$e->getMessage()}\n");
