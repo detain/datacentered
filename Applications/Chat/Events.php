@@ -6090,7 +6090,24 @@ class Events
          */
         global $global;
         try {
-            $results = self::$db->select('*')->from('queue_log')->leftJoin('vps', 'vps_id=history_type')->where('history_section="vpsqueue"')->query();
+            /*
+             * The vpsqueuedone anti-join is what Tasks/vps_queue_task.php has always
+             * used to decide which queue entries are still outstanding; this timer was
+             * missing it, so it matched every vpsqueue row ever written and re-dispatched
+             * vps_queue_task for those hosts every 30 seconds forever. Each dispatch
+             * makes GetNewVps retry the host's pending-setup services, which is what
+             * kept vps_get_next_ip() - and the invoices description sweep behind it -
+             * firing on a loop. Raw SQL rather than the builder because the anti-join
+             * needs a second aliased reference to queue_log; query() still hands back
+             * the same array of assoc rows the builder did.
+             */
+            $results = self::$db->query(
+                'select queue_log.*, vps.* from queue_log'
+                .' left join vps on vps_id=history_type'
+                .' left join queue_log done on done.history_type=queue_log.history_id'
+                ." and done.history_section='vpsqueuedone'"
+                ." where queue_log.history_section='vpsqueue' and done.history_id is null"
+            );
         } catch (\Exception $e) {
             Worker::safeEcho("vps_queue_timer DB error: {$e->getMessage()}\n");
             self::$db = self::createDbConnection();
