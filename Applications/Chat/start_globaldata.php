@@ -17,7 +17,7 @@ require_once __DIR__.'/../../vendor/workerman/globaldata/src/Server.php';
 // Note: GlobalData\Server wraps a Worker internally (protected $_worker) with count=1.
 // Properties like count/onConnect/onBufferFull/etc. cannot be set on the Server wrapper
 // — they must be set on the Worker itself. The Server class does not expose its Worker.
-$globaldata_server = new GlobalData\Server('0.0.0.0', 2207);
+$globaldata_server = new GlobalData\Server('127.0.0.1', 2207);
 
 if (!defined('GLOBAL_START')) { // If it is not started in the root directory, run the runAll method
     Worker::runAll();
