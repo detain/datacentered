@@ -4,7 +4,7 @@
         "Read more about it at https://getcomposer.org/doc/01-basic-usage.md#installing-dependencies",
         "This file is @generated automatically"
     ],
-    "content-hash": "9c4acf9a2e0a39cc34ba2bac7fb7ed11",
+    "content-hash": "ec73ef81213d8e6af30f4924343a67f4",
     "packages": [
         {
             "name": "cache/adapter-common",
@@ -4790,41 +4790,6 @@
             "time": "2025-01-15T06:35:41+00:00"
         },
         {
-            "name": "workerman/globaldata",
-            "version": "dev-master",
-            "source": {
-                "type": "git",
-                "url": "https://github.com/walkor/GlobalData.git",
-                "reference": "9f5082ad712d98c0deedfbfe244661dce151926f"
-            },
-            "dist": {
-                "type": "zip",
-                "url": "https://api.github.com/repos/walkor/GlobalData/zipball/9f5082ad712d98c0deedfbfe244661dce151926f",
-                "reference": "9f5082ad712d98c0deedfbfe244661dce151926f",
-                "shasum": ""
-            },
-            "require": {
-                "workerman/workerman": ">=3.3.0"
-            },
-            "default-branch": true,
-            "type": "library",
-            "autoload": {
-                "psr-4": {
-                    "GlobalData\\": "./src"
-                }
-            },
-            "notification-url": "https://packagist.org/downloads/",
-            "license": [
-                "MIT"
-            ],
-            "homepage": "http://www.workerman.net",
-            "support": {
-                "issues": "https://github.com/walkor/GlobalData/issues",
-                "source": "https://github.com/walkor/GlobalData/tree/v1.0.6"
-            },
-            "time": "2024-12-27T12:40:16+00:00"
-        },
-        {
             "name": "workerman/mysql",
             "version": "dev-master",
             "source": {
@@ -8336,7 +8301,6 @@
         "workerman/channel": 20,
         "workerman/gateway-worker": 20,
         "workerman/gatewayclient": 20,
-        "workerman/globaldata": 20,
         "workerman/mysql": 20,
         "workerman/workerman": 0
     },

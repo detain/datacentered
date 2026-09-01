@@ -1,3 +1,4 @@
+.logs
 .php-cs-fixer.cache
 stdout.log
 vendor
@@ -7,3 +8,6 @@ vendor
 .phpunit.cache/
 workerman.log
 workerman.start.php.pid
+
+# Tool-local dir (node_modules + agent memory)
+.opencode/

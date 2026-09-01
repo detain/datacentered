@@ -32,7 +32,6 @@
 		"workerman/coroutine": "^1.1.5",
 		"workerman/gatewayclient": "dev-master",
 		"workerman/gateway-worker" : "dev-master",
-		"workerman/globaldata": "dev-master",
 		"workerman/mysql": "dev-master",
 		"workerman/workerman": "^5.2.2@stable"
 	},
