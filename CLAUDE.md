@@ -26,6 +26,8 @@ composer install
 php vendor/bin/phpunit
 ```
 
+**CI** (`.github/workflows/ci.yml`, on push to `master`, PRs, and `workflow_dispatch`): `syntax` runs `php -l` over every tracked `*.php` on PHP 8.2/8.3/8.4 (the only check that verifies the declared `>=8.2` floor); `tests` runs `php vendor/bin/phpunit` on 8.3/8.4 (8.2 excluded — phpunit `^12.5` needs `>=8.3`; the suite is fully offline via the `tests/TestBootstrap.php` doubles, no service containers); `style` runs `php vendor/bin/php-cs-fixer fix --dry-run --diff --using-cache=no`; `composer-health` runs `composer validate --strict --no-check-publish` and `composer audit --locked`.
+
 ## Architecture
 
 **Entry**: `start.php` → loads `Applications/Chat/start_*.php` → `Worker::runAll()`
@@ -133,20 +135,14 @@ Each file exports one `function filename($args)`. Auto-loaded from `Tasks/` on `
 - `cache/memcached-adapter 1.2.0` — Memcached queue/map storage
 - `guzzlehttp/guzzle ^7.13.1` (locked at 7.15.5)
 - `friendsofphp/php-cs-fixer ^3.95` (require-dev) — the style gate documented under Commands was previously NOT a declared dependency, so it could never actually run
-- REMOVED as dead/unused: `corneltek/cliframework` (zero references outside `vendor/`; it pinned `symfony/finder ^2.7` → `symfony/config 3.3.2` → `symfony/filesystem ~2.8|~3.0`, which capped php-cs-fixer at the 2021-era v2.19 and dragged in twig/pimple/doctrine-inflector/symfony-class-loader), plus `satooshi/php-coveralls` and `codacy/coverage` (both abandoned upstream, never wired to any CI — there are no workflows and `phpunit.xml.dist` has no coverage config, so no clover report was ever produced for them to upload)
+- REMOVED as dead/unused: `corneltek/cliframework` (zero references outside `vendor/`; it pinned `symfony/finder ^2.7` → `symfony/config 3.3.2` → `symfony/filesystem ~2.8|~3.0`, which capped php-cs-fixer at the 2021-era v2.19 and dragged in twig/pimple/doctrine-inflector/symfony-class-loader), plus `satooshi/php-coveralls` and `codacy/coverage` (both abandoned upstream, never wired to CI — `.github/workflows/ci.yml` runs with `coverage: none` and `phpunit.xml.dist` has no coverage config, so no clover report was ever produced for them to upload)
 
 ## Code Style
 - PSR-2 + PHP 8.2 migrations (`@PSR2`, `@PHP82Migration`) — see `.php-cs-fixer.dist.php`. The ruleset targeted `@PHP74Migration` long after `composer.json` moved to `php >=8.2`, so 8.0–8.2 modernisations went unchecked; risky fixers stay disabled
-- `experiments/` is EXCLUDED from the fixer: reference-only amphp/Swoole samples, 11 of which are pre-PHP8 syntax that does not lint under 8.3
+- The reference-only `experiments/` tree (amphp/Swoole samples) has been DELETED from the repo; its `exclude` entry in `.php-cs-fixer.dist.php` is now vestigial
 - Cache file: `.php-cs-fixer.cache`
 - No trailing commas in multiline, no heredoc indentation, no method argument space changes
 - All `Worker::safeEcho()` for process-safe output; never `echo` in workers without it
-
-## Experiments (Reference Only)
-- `experiments/amphp/` — amphp/Aerys/Artax/DNS async examples
-- `experiments/swoole/` — Swoole server/client/chat/coroutine examples
-- `experiments/swoole/install.sh` / `install_swoole.sh` — Swoole build scripts
-- `experiments/swoole/chat/demo2/` — full Swoole WebSocket chat (CMD dispatch, Service locator, DB layer)
 
 ## Before Committing
 
@@ -170,4 +166,5 @@ Pin your choice (`/model` in Claude Code, or `CALIBER_MODEL` when using Caliber 
 
 This project uses [Caliber](https://github.com/caliber-ai-org/ai-setup) to keep AI agent configs in sync across Claude Code, Cursor, Copilot, and Codex.
 Configs update automatically before each commit via `/home/my/.nvm/versions/node/v24.15.0/bin/caliber refresh`.
+`.caliberignore` lists large binaries kept out of the doc-sync context window (currently `Web/img/phptty.png`); `.gitignore`d paths are already skipped and need no entry.
 If the pre-commit hook is not set up, run `/setup-caliber` to configure everything automatically.

@@ -1,0 +1,143 @@
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# A newer push to the same branch/PR supersedes an in-flight run.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # composer.json declares no "version"; dev-master deps resolve against the
+  # root package, so pin what the root claims to be.
+  COMPOSER_ROOT_VERSION: dev-master
+  # Raises the github.com API rate limit for the many dev-master dist downloads.
+  COMPOSER_AUTH: '{"github-oauth":{"github.com":"${{ secrets.GITHUB_TOKEN }}"}}'
+
+jobs:
+  # composer.json declares php ">=8.2", but the dev toolchain cannot install
+  # there (phpunit ^12.5 requires >=8.3). Syntax-only linting is how the
+  # declared 8.2 floor actually gets verified.
+  syntax:
+    name: Syntax (PHP ${{ matrix.php }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        php: ['8.2', '8.3', '8.4']
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: ${{ matrix.php }}
+          coverage: none
+          tools: none
+
+      - name: php -l every tracked PHP file
+        run: |
+          status=0
+          while IFS= read -r -d '' file; do
+            if ! out=$(php -l "$file" 2>&1); then
+              echo "::error file=${file}::${out}"
+              status=1
+            fi
+          done < <(git ls-files -z '*.php')
+          exit "$status"
+
+  tests:
+    name: Tests (PHP ${{ matrix.php }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # 8.2 is excluded on purpose: phpunit ^12.5 requires PHP >= 8.3.
+        php: ['8.3', '8.4']
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: ${{ matrix.php }}
+          # ext-curl and ext-redis are hard requires in composer.json; the rest
+          # are platform requires pulled in by the locked dependency tree.
+          extensions: curl, redis, sockets, pcntl, pdo_mysql, mbstring, dom, tokenizer, xmlwriter
+          coverage: none
+          ini-values: memory_limit=512M
+
+      - name: Resolve composer cache directory
+        id: composer-cache
+        run: echo "dir=$(composer config cache-files-dir)" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/cache@v4
+        with:
+          path: ${{ steps.composer-cache.outputs.dir }}
+          key: composer-${{ runner.os }}-php${{ matrix.php }}-${{ hashFiles('composer.lock') }}
+          restore-keys: composer-${{ runner.os }}-php${{ matrix.php }}-
+
+      - name: Install dependencies
+        run: composer install --no-interaction --no-progress --prefer-dist
+
+      # The suite runs fully offline: SharedState/Redis, Channel, the Workerman
+      # timer loop and the DB are all replaced by in-memory doubles installed
+      # from tests/TestBootstrap.php. No service containers needed.
+      - name: PHPUnit
+        run: php vendor/bin/phpunit --colors=always
+
+  style:
+    name: Code style
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: shivammathur/setup-php@v2
+        with:
+          # php-cs-fixer warns that it would rather run on the project floor
+          # (8.2), but the dev toolchain only installs on 8.3+. 8.3 matches the
+          # hub the code actually runs on, and @PHP82Migration governs output.
+          php-version: '8.3'
+          extensions: curl, redis, mbstring, dom, tokenizer, xmlwriter
+          coverage: none
+
+      - name: Resolve composer cache directory
+        id: composer-cache
+        run: echo "dir=$(composer config cache-files-dir)" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/cache@v4
+        with:
+          path: ${{ steps.composer-cache.outputs.dir }}
+          key: composer-${{ runner.os }}-php8.3-${{ hashFiles('composer.lock') }}
+          restore-keys: composer-${{ runner.os }}-php8.3-
+
+      - name: Install dependencies
+        run: composer install --no-interaction --no-progress --prefer-dist
+
+      # Never write the cache file in CI: a stale/absent .php-cs-fixer.cache
+      # must not be able to mask a violation.
+      - name: php-cs-fixer (dry run)
+        run: php vendor/bin/php-cs-fixer fix --dry-run --diff --no-interaction --using-cache=no
+
+  composer-health:
+    name: Composer validate + audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.3'
+          extensions: curl, redis, mbstring
+          coverage: none
+
+      - name: Validate composer.json / composer.lock
+        run: composer validate --strict --no-check-publish
+
+      - name: Audit locked dependencies for advisories
+        run: composer audit --no-interaction --locked
