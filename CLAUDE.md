@@ -26,7 +26,7 @@ composer install
 php vendor/bin/phpunit
 ```
 
-**CI** (`.github/workflows/ci.yml`, on push to `master`, PRs, and `workflow_dispatch`): `syntax` runs `php -l` over every tracked `*.php` on PHP 8.2/8.3/8.4 (the only check that verifies the declared `>=8.2` floor); `tests` runs `php vendor/bin/phpunit --colors=always --display-deprecations` on 8.3/8.4 (`--display-deprecations` because PHP 8.4 raises 5 deprecations in the code under test that 8.3 does not, and PHPUnit otherwise prints only the count; 8.2 excluded — phpunit `^12.5` needs `>=8.3`; the suite is fully offline via the `tests/TestBootstrap.php` doubles, no service containers; `setup-php` installs `ext-redis`, currently phpredis 6.x while dev hosts run 5.3.7 — see `.claude/rules/redis-test-doubles.md`); `style` runs `php vendor/bin/php-cs-fixer fix --dry-run --diff --using-cache=no`; `composer-health` runs `composer validate --strict --no-check-publish` and `composer audit --locked`. All jobs check out with `actions/checkout@v7` and cache Composer with `actions/cache@v6`.
+**CI** (`.github/workflows/ci.yml`, on push to `master`, PRs, and `workflow_dispatch`): `syntax` runs `php -l` over every tracked `*.php` on PHP 8.2/8.3/8.4 (the only check that verifies the declared `>=8.2` floor); `tests` runs `php vendor/bin/phpunit --colors=always --display-deprecations` on 8.3/8.4 (`--display-deprecations` because PHP 8.4 raises deprecations in the code under test that 8.3 does not, and PHPUnit otherwise prints only the count — the 5 it first surfaced were `lcg_value()` calls, since replaced by `\Random\Randomizer`; 8.2 excluded — phpunit `^12.5` needs `>=8.3`; the suite is fully offline via the `tests/TestBootstrap.php` doubles, no service containers; `setup-php` installs `ext-redis`, currently phpredis 6.x while dev hosts run 5.3.7 — see `.claude/rules/redis-test-doubles.md`); `style` runs `php vendor/bin/php-cs-fixer fix --dry-run --diff --using-cache=no`; `composer-health` runs `composer validate --strict --no-check-publish` and `composer audit --locked`. All jobs check out with `actions/checkout@v7` and cache Composer with `actions/cache@v6`.
 
 ## Architecture
 
@@ -102,7 +102,7 @@ Each file exports one `function filename($args)`. Auto-loaded from `Tasks/` on `
 - `get_map` — returns VPS IP/VNC/slice map for a host
 - `queue_action` — executes a queued `queue.php` action inside the TaskWorker via a superglobal (`$_POST`/`$_REQUEST`) shim so legacy action handlers run unchanged
 - `chat_message` — persists V1 chat messages (`migrations/2026_07_phase2_chat_messages.sql`)
-- `memcached_queue_task` — processes `cpu_usage`/`bandwidth`/`server_info` queue entries from Memcached/Redis for `vps` and `quickservers`; drains each host under the `queuein:<ip>` SharedState lock (900s TTL, renewed between items, renew-fail ⇒ stop that host); the raw `queuein:<ip>` queue LIST stays OUTSIDE the `dc:*` facade; InnoDB cluster retry with exponential backoff; writes CPU + bandwidth metrics to InfluxDB v2
+- `memcached_queue_task` — processes `cpu_usage`/`bandwidth`/`server_info` queue entries from Memcached/Redis for `vps` and `quickservers`; drains each host under the `queuein:<ip>` SharedState lock (900s TTL, renewed between items, renew-fail ⇒ stop that host); the raw `queuein:<ip>` queue LIST stays OUTSIDE the `dc:*` facade; InnoDB cluster retry with exponential backoff (jitter drawn from `\Random\Randomizer`); writes CPU + bandwidth metrics to InfluxDB v2
 - `boardctl_task` — runs a single queued boardctl job via `boardctl_run_job($historyId)`; receives full `queue_log` row; sets `App::session()->account_id` from `history_owner`; 2hr timeout (`set_time_limit(7500)`); on error calls `boardctl_append_output`/`boardctl_set_status`; dispatched by `boardctl_queue_timer` (15s) which parses `history_type` as `"<action>:<assetId>"`, holds the per-asset Redis lock `boardctl_asset_<id>` (22200s = 6h job cap + 10min buffer) and hands the ownership token to the detached runner (`scripts/boardctl_runner.php`), which releases it token-checked (with a fresh-connection fallback); allows concurrent multi-asset execution
 
 ## Web Endpoints (`Web/`)
@@ -120,7 +120,7 @@ Each file exports one `function filename($args)`. Auto-loaded from `Tasks/` on `
 - `stdObject.php` — callable-property bag (magic `__call` dispatch)
 - `SharedState.php` — static Redis facade for all cross-process state: locks (SET NX EX + Lua token-checked renew/release), `dc:*`-namespaced registries/flags/presence, fail-safe when Redis is unavailable AND when a live-but-dead handle's commands throw (all wrapped; timed 30s re-probe self-heals — see Key Patterns)
 - `FeatureFlags.php` — feature-flag gating for V1 protocol rollout (see `docs/FEATURE_FLAGS.md`)
-- `Events.php` — GatewayWorker business logic (onConnect, onMessage, onClose); `dispatchTask($type, $args, $onResult, $onError)` wraps async dispatch with `onClose`/`onError` handling; `createDbConnection()` builds a retrying Workerman MySQL connection; V1 client protocol handlers (auth/hello, chat, cmd, pty, queue, config_vps, admin, telemetry) are documented in `docs/PROTOCOL_V1.md`
+- `Events.php` — GatewayWorker business logic (onConnect, onMessage, onClose); `dispatchTask($type, $args, $onResult, $onError)` wraps async dispatch with `onClose`/`onError` handling; `createDbConnection()` builds a retrying Workerman MySQL connection; `rng()` returns the lazily-built process-local `\Random\Randomizer` used by the bot spawn/wander sampling; V1 client protocol handlers (auth/hello, chat, cmd, pty, queue, config_vps, admin, telemetry) are documented in `docs/PROTOCOL_V1.md`
 
 ## Dependencies (`composer.json`)
 - Version constraints are now caret-/branch-pinned to what `composer.lock` resolved (was mostly floating `*`); pure pins, no version drift
@@ -139,6 +139,7 @@ Each file exports one `function filename($args)`. Auto-loaded from `Tasks/` on `
 
 ## Code Style
 - PSR-2 + PHP 8.2 migrations (`@PSR2`, `@PHP82Migration`) — see `.php-cs-fixer.dist.php`. The ruleset targeted `@PHP74Migration` long after `composer.json` moved to `php >=8.2`, so 8.0–8.2 modernisations went unchecked; risky fixers stay disabled
+- Randomness: `\Random\Randomizer`, never `lcg_value()` (deprecated in PHP 8.4) — see `.claude/rules/php84-randomizer.md`
 - The reference-only `experiments/` tree (amphp/Swoole samples) has been DELETED from the repo; its `exclude` entry in `.php-cs-fixer.dist.php` is now vestigial
 - Cache file: `.php-cs-fixer.cache`
 - No trailing commas in multiline, no heredoc indentation, no method argument space changes

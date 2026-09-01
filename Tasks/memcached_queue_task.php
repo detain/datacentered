@@ -102,7 +102,7 @@ function memcached_queue_task($args)
                 Worker::safeEcho('['.$try.'/'.$maxTries.'] Got PDO Exception #'.$e->getCode().': "'.$e->getMessage()."\"\n");
                 if (in_array($e->getCode(), $clusterErrors)) {
                     // Exponential backoff with jitter: 50–150 ms, 100–300 ms, 200–600 ms …
-                    usleep((int)(50000 * (2 ** ($try - 1)) * (0.75 + lcg_value() * 0.5)));
+                    usleep((int)(50000 * (2 ** ($try - 1)) * (0.75 + (new \Random\Randomizer())->getFloat(0.0, 1.0) * 0.5)));
                 } elseif (in_array($e->getCode(), $connErrors)) {
                     usleep((int)(100000 * $try));
                     try {

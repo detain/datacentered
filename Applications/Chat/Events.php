@@ -368,6 +368,17 @@ class Events
     private static $localHostName = null;
 
     /**
+     * Shared PRNG for the bot's spawn/wander sampling and nothing else.
+     *
+     * Replaces lcg_value(), deprecated in PHP 8.4. One per process, created on
+     * first use and CSPRNG-seeded by the engine; the bot ticks often enough
+     * that re-seeding a fresh Randomizer per call would be pure waste.
+     *
+     * @var \Random\Randomizer|null
+     */
+    private static $randomizer = null;
+
+    /**
      * Bot names - randomly selected for variety.
      *
      * @var string[]
@@ -5192,6 +5203,21 @@ class Events
     }
 
     /**
+     * Lazily-built process-local Randomizer. See self::$randomizer.
+     *
+     * The callers below keep their original `min + draw * span` arithmetic
+     * rather than the tidier getFloat($min, $max): getFloat() throws a
+     * ValueError when $min >= $max, where the old expression just returned
+     * $min, so the tidier form would add a throw path to a timer callback.
+     *
+     * @return \Random\Randomizer
+     */
+    private static function rng()
+    {
+        return self::$randomizer ??= new \Random\Randomizer();
+    }
+
+    /**
      * Pick a point inside $bounds, within $radius scene units of $near when a
      * reference position is available (uniform over the disc), otherwise
      * uniformly anywhere in $bounds.
@@ -5205,12 +5231,12 @@ class Events
     {
         if ($near === null) {
             return [
-                $bounds['minX'] + lcg_value() * ($bounds['maxX'] - $bounds['minX']),
-                $bounds['minZ'] + lcg_value() * ($bounds['maxZ'] - $bounds['minZ'])
+                $bounds['minX'] + self::rng()->getFloat(0.0, 1.0) * ($bounds['maxX'] - $bounds['minX']),
+                $bounds['minZ'] + self::rng()->getFloat(0.0, 1.0) * ($bounds['maxZ'] - $bounds['minZ'])
             ];
         }
-        $angle = lcg_value() * 2 * M_PI;
-        $dist = sqrt(lcg_value()) * $radius;  // sqrt => uniform over the disc
+        $angle = self::rng()->getFloat(0.0, 1.0) * 2 * M_PI;
+        $dist = sqrt(self::rng()->getFloat(0.0, 1.0)) * $radius;  // sqrt => uniform over the disc
         return [
             max($bounds['minX'], min($bounds['maxX'], $near['x'] + cos($angle) * $dist)),
             max($bounds['minZ'], min($bounds['maxZ'], $near['z'] + sin($angle) * $dist))
@@ -5371,7 +5397,7 @@ class Events
                 $botState['target_z'] = $spawnZ;
             }
             if (!isset($botState['yaw'])) {
-                $botState['yaw'] = lcg_value() * 2 * M_PI;
+                $botState['yaw'] = self::rng()->getFloat(0.0, 1.0) * 2 * M_PI;
             }
         } else {
             // Pick a random bot name
@@ -5385,7 +5411,7 @@ class Events
                 $anchor = self::randomRealClientPosition();
             }
             [$spawnX, $spawnZ] = self::randomPointNear($anchor, $roomBounds, self::BOT_SPAWN_RADIUS);
-            $spawnYaw = lcg_value() * 2 * M_PI;  // Random initial facing direction
+            $spawnYaw = self::rng()->getFloat(0.0, 1.0) * 2 * M_PI;  // Random initial facing direction
 
             // Initialize bot state
             $botState = [
