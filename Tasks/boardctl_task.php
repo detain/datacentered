@@ -12,11 +12,13 @@ use Workerman\Worker;
  * in a new session via `setsid ... &` and returns immediately. The detached job
  * survives a datacentered restart and never keeps the task port bound.
  *
- * The runner owns the per-asset GlobalData CAS lock for the job's lifetime and
- * writes a pidfile so boardctl_startup_reap() can distinguish a still-running job
- * from a dead one.
+ * The runner owns the per-asset SharedState (Redis) lock for the job's lifetime,
+ * released by the ownership token handed to it here, and writes a pidfile so
+ * boardctl_startup_reap() can distinguish a still-running job from a dead one.
  *
  * @param array $args queue_log row (history_id, history_type, history_owner, ...)
+ *                    plus lock_token: the raw SharedState::lock() ownership token
+ *                    for 'boardctl_asset_<id>' set by boardctl_queue_timer.
  * @return string JSON: {ok, spawned, history_id} (consumed by boardctl_queue_timer)
  */
 function boardctl_task($args)
@@ -28,12 +30,16 @@ function boardctl_task($args)
     }
     $ownerId = isset($args['history_owner']) ? intval($args['history_owner']) : 0;
 
-    // Derive the per-asset lock var exactly as boardctl_queue_timer does so the
-    // detached runner releases the same GlobalData CAS lock the timer acquired.
+    // Derive the per-asset lock name exactly as boardctl_queue_timer does so the
+    // detached runner releases the same SharedState (Redis) lock the timer holds.
     $historyType = (string)($args['history_type'] ?? '');
     $parts = explode(':', $historyType, 2);
     $assetId = isset($parts[1]) ? intval($parts[1]) : intval($historyType);
     $lockVar = 'boardctl_asset_'.$assetId;
+    // Raw ownership token from the producer (Events::boardctl_queue_timer via
+    // SharedState::lock). Empty until the producer is wired -> the runner falls
+    // back to a force-release, matching the pre-token blind set=0 behaviour.
+    $lockToken = (string)($args['lock_token'] ?? '');
 
     $runner = __DIR__.'/../scripts/boardctl_runner.php';
     if (!is_file($runner)) {
@@ -67,7 +73,12 @@ function boardctl_task($args)
         . PHP_BINARY . ' ' . escapeshellarg($runner)
         . ' --history-id=' . $historyId
         . ' --owner=' . $ownerId
-        . ' --lock=' . escapeshellarg($lockVar);
+        // Legacy compat during rollout: --lock is still carried for an old runner;
+        // the new runner prefers --asset/--token via SharedState and uses --lock
+        // only as a key-derivation fallback when --asset is missing or <= 0.
+        . ' --lock=' . escapeshellarg($lockVar)
+        . ' --asset=' . escapeshellarg((string)$assetId)
+        . ' --token=' . escapeshellarg($lockToken);
 
     $proc = proc_open($cmd, $descriptorspec, $pipes);
     if ($proc === false || $proc === 0) {
