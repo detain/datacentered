@@ -24,4 +24,6 @@ still on 5.3.7, so an untyped override is a hard fatal on CI, not a deprecation.
 - **Never "simplify" back to `get($key)` / `set($key, $value, $opts = null)`** —
   that is exactly what broke CI.
 - Verify locally with `php vendor/bin/phpunit`; the suite is offline (doubles
-  from `tests/TestBootstrap.php`), so no Redis server is required.
+  from `tests/TestBootstrap.php`), so no Redis server is required. CI adds
+  `--display-deprecations` so PHP 8.4-only deprecations are printed, not just
+  counted.

@@ -33,7 +33,7 @@ jobs:
       matrix:
         php: ['8.2', '8.3', '8.4']
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - uses: shivammathur/setup-php@v2
         with:
@@ -61,7 +61,7 @@ jobs:
         # 8.2 is excluded on purpose: phpunit ^12.5 requires PHP >= 8.3.
         php: ['8.3', '8.4']
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - uses: shivammathur/setup-php@v2
         with:
@@ -76,7 +76,7 @@ jobs:
         id: composer-cache
         run: echo "dir=$(composer config cache-files-dir)" >> "$GITHUB_OUTPUT"
 
-      - uses: actions/cache@v4
+      - uses: actions/cache@v6
         with:
           path: ${{ steps.composer-cache.outputs.dir }}
           key: composer-${{ runner.os }}-php${{ matrix.php }}-${{ hashFiles('composer.lock') }}
@@ -88,14 +88,17 @@ jobs:
       # The suite runs fully offline: SharedState/Redis, Channel, the Workerman
       # timer loop and the DB are all replaced by in-memory doubles installed
       # from tests/TestBootstrap.php. No service containers needed.
+      # --display-deprecations: PHP 8.4 raises 5 deprecations in the code under
+      # test that 8.3 does not. Without this flag PHPUnit prints only the count,
+      # so they stay invisible until someone bumps the runtime.
       - name: PHPUnit
-        run: php vendor/bin/phpunit --colors=always
+        run: php vendor/bin/phpunit --colors=always --display-deprecations
 
   style:
     name: Code style
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - uses: shivammathur/setup-php@v2
         with:
@@ -110,7 +113,7 @@ jobs:
         id: composer-cache
         run: echo "dir=$(composer config cache-files-dir)" >> "$GITHUB_OUTPUT"
 
-      - uses: actions/cache@v4
+      - uses: actions/cache@v6
         with:
           path: ${{ steps.composer-cache.outputs.dir }}
           key: composer-${{ runner.os }}-php8.3-${{ hashFiles('composer.lock') }}
@@ -128,7 +131,7 @@ jobs:
     name: Composer validate + audit
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - uses: shivammathur/setup-php@v2
         with:
