@@ -26,7 +26,7 @@ composer install
 php vendor/bin/phpunit
 ```
 
-**CI** (`.github/workflows/ci.yml`, on push to `master`, PRs, and `workflow_dispatch`): `syntax` runs `php -l` over every tracked `*.php` on PHP 8.2/8.3/8.4 (the only check that verifies the declared `>=8.2` floor); `tests` runs `php vendor/bin/phpunit` on 8.3/8.4 (8.2 excluded — phpunit `^12.5` needs `>=8.3`; the suite is fully offline via the `tests/TestBootstrap.php` doubles, no service containers); `style` runs `php vendor/bin/php-cs-fixer fix --dry-run --diff --using-cache=no`; `composer-health` runs `composer validate --strict --no-check-publish` and `composer audit --locked`.
+**CI** (`.github/workflows/ci.yml`, on push to `master`, PRs, and `workflow_dispatch`): `syntax` runs `php -l` over every tracked `*.php` on PHP 8.2/8.3/8.4 (the only check that verifies the declared `>=8.2` floor); `tests` runs `php vendor/bin/phpunit` on 8.3/8.4 (8.2 excluded — phpunit `^12.5` needs `>=8.3`; the suite is fully offline via the `tests/TestBootstrap.php` doubles, no service containers; `setup-php` installs `ext-redis`, currently phpredis 6.x while dev hosts run 5.3.7 — see `.claude/rules/redis-test-doubles.md`); `style` runs `php vendor/bin/php-cs-fixer fix --dry-run --diff --using-cache=no`; `composer-health` runs `composer validate --strict --no-check-publish` and `composer audit --locked`.
 
 ## Architecture
 

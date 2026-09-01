@@ -40,8 +40,18 @@ class ThrowingGetRedis
 /**
  * Shared-handle double for the REPROBE path: a REAL \Redis subclass so the
  * `instanceof \Redis` preference branch accepts it, answering PING without a
- * socket and reading/writing a raw string keyspace. phpredis internal methods
- * declare no return types, so these untyped overrides are signature-safe.
+ * socket and reading/writing a raw string keyspace.
+ *
+ * SIGNATURES: phpredis 5.x declares these methods untyped, but 6.x declares
+ * real (non-tentative) types — `Redis::get(string $key): mixed` and
+ * `Redis::set/ping(): Redis|string|bool` — so plain untyped overrides are a
+ * hard fatal there, not a deprecation. CI runs 6.x while dev boxes are still
+ * on 5.3.7, so every override below is written to bind against BOTH:
+ *   - params: a lone variadic is compatible with any parent parameter list;
+ *   - return: the narrowest type the double really produces, which stays
+ *     covariant with `mixed`, with `Redis|string|bool`, and with no parent
+ *     return type at all.
+ * Do not "simplify" these back to `get($key)` — that is what broke CI.
  */
 class LiveHandleRedis extends \Redis
 {
@@ -51,21 +61,23 @@ class LiveHandleRedis extends \Redis
     /** @var int PINGs received — recovery must probe once per window, then stop */
     public $pings = 0;
 
-    public function ping()
+    public function ping(...$args): bool
     {
         $this->pings++;
 
         return true;
     }
 
-    public function get($key)
+    public function get(...$args): string|false
     {
+        $key = $args[0];
+
         return array_key_exists($key, $this->data) ? $this->data[$key] : false;
     }
 
-    public function set($key, $value, $opts = null)
+    public function set(...$args): bool
     {
-        $this->data[$key] = (string) $value;
+        $this->data[$args[0]] = (string) $args[1];
 
         return true;
     }
@@ -83,14 +95,14 @@ class DeadHandleRedis extends \Redis
     /** @var int PING attempts */
     public $pings = 0;
 
-    public function ping()
+    public function ping(...$args): bool
     {
         $this->pings++;
 
         throw new \RedisException('simulated: server still down on PING');
     }
 
-    public function get($key)
+    public function get(...$args): string|false
     {
         throw new \RedisException('simulated: server still down on GET');
     }
