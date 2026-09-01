@@ -350,7 +350,7 @@ namespace {
         {
             return array_values(array_filter(
                 self::loop()->timers,
-                static fn(array $t) => abs($t['interval'] - $interval) < 1e-9
+                static fn (array $t) => abs($t['interval'] - $interval) < 1e-9
             ));
         }
 

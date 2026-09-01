@@ -78,15 +78,15 @@ function show($varName)
     switch ($result = get_cfg_var($varName)) {
         case 0:
             return '<font color="red">×</font>';
-        break;
+            break;
         
         case 1:
             return '<font color="green">√</font>';
-        break;
+            break;
         
         default:
             return $result;
-        break;
+            break;
     }
 }
 
@@ -186,7 +186,7 @@ if (isset($_POST['speed'])) {
     $speed="<font color=\"red\">&nbsp;No Test&nbsp;</font>";
 }
     
-    
+
 // 检测函数支持
 function isfun($funName = '')
 {
@@ -286,7 +286,10 @@ function GetCpuPercentages($stat1, $stat2)
     }
     return $cpus;
 }
-$stat1 = GetCoreInformation();sleep(1);$stat2 = GetCoreInformation();$data = GetCpuPercentages($stat1, $stat2);
+$stat1 = GetCoreInformation();
+sleep(1);
+$stat2 = GetCoreInformation();
+$data = GetCpuPercentages($stat1, $stat2);
 $cpu_show = $data['cpu0']['user']."%us,  ".$data['cpu0']['sys']."%sy,  ".$data['cpu0']['nice']."%ni, ".$data['cpu0']['idle']."%id,  ".$data['cpu0']['iowait']."%wa,  ".$data['cpu0']['irq']."%irq,  ".$data['cpu0']['softirq']."%softirq";
 function makeImageUrl($title, $data)
 {
@@ -318,20 +321,20 @@ if ($_GET['act'] == "cpu_percentage") {
 switch (PHP_OS) {
     case "Linux":
         $sysReShow = (false !== ($sysInfo = sys_linux()))?"show":"none";
-    break;
+        break;
     
     case "FreeBSD":
         $sysReShow = (false !== ($sysInfo = sys_freebsd()))?"show":"none";
-    break;
-    
-/*
-    case "WINNT":
-        $sysReShow = (false !== ($sysInfo = sys_windows()))?"show":"none";
-    break;
-*/
+        break;
+        
+        /*
+            case "WINNT":
+                $sysReShow = (false !== ($sysInfo = sys_windows()))?"show":"none";
+            break;
+        */
     
     default:
-    break;
+        break;
 }
 
 //linux系统探测
@@ -855,22 +858,23 @@ function displayData(dataJSON)
   <tr>
     <td>Server Domain/IP</td>
     <td colspan="3"><?php echo @get_current_user();?> - <?php echo $_SERVER['SERVER_NAME'];?>(<?php if ('/'==DIRECTORY_SEPARATOR) {
-    echo $_SERVER['SERVER_ADDR'];
-} else {
-    echo @gethostbyname($_SERVER['SERVER_NAME']);
-} ?>)&nbsp;&nbsp;Your IP address is: <?php echo @$_SERVER['REMOTE_ADDR'];?></td>
+        echo $_SERVER['SERVER_ADDR'];
+    } else {
+        echo @gethostbyname($_SERVER['SERVER_NAME']);
+    } ?>)&nbsp;&nbsp;Your IP address is: <?php echo @$_SERVER['REMOTE_ADDR'];?></td>
   </tr>
   <tr>
     <td>Server identifies the</td>
     <td colspan="3"><?php if ($sysInfo['win_n'] != '') {
-    echo $sysInfo['win_n'];
-} else {
-    echo @php_uname();
-};?></td>
+        echo $sysInfo['win_n'];
+    } else {
+        echo @php_uname();
+    };?></td>
   </tr>
   <tr>
     <td width="15%">Server OS</td>
-    <td width="35%"><?php $os = explode(" ", php_uname()); echo $os[0];?> &nbsp;Kernel version: <?php if ('/'==DIRECTORY_SEPARATOR) {
+    <td width="35%"><?php $os = explode(" ", php_uname());
+echo $os[0];?> &nbsp;Kernel version: <?php if ('/'==DIRECTORY_SEPARATOR) {
     echo $os[2];
 } else {
     echo $os[1];
@@ -887,10 +891,10 @@ function displayData(dataJSON)
   <tr>
 	  <td>Server HostName</td>
 	  <td><?php if ('/'==DIRECTORY_SEPARATOR) {
-    echo $os[1];
-} else {
-    echo $os[2];
-} ?></td>
+	      echo $os[1];
+	  } else {
+	      echo $os[2];
+	  } ?></td>
 	  <td>Absolute Path</td>
 	  <td><?php echo $_SERVER['DOCUMENT_ROOT']?str_replace('\\', '/', $_SERVER['DOCUMENT_ROOT']):str_replace('\\', '/', dirname(__FILE__));?></td>
 	</tr>
@@ -918,10 +922,10 @@ function displayData(dataJSON)
   <tr>
     <td>CPU usage</td>
     <td colspan="5"><?php if ('/'==DIRECTORY_SEPARATOR) {
-    echo $cpu_show." | <a href='".$phpSelf."?act=cpu_percentage' target='_blank' class='static'>View Chart</a>";
-} else {
-    echo "Only supports the Linux system";
-}?>
+        echo $cpu_show." | <a href='".$phpSelf."?act=cpu_percentage' target='_blank' class='static'>View Chart</a>";
+    } else {
+        echo "Only supports the Linux system";
+    }?>
 	</td>
   </tr>
   <tr>
@@ -938,11 +942,11 @@ function displayData(dataJSON)
 		<td>Memory usage</td>
 		<td colspan="5">
 <?php
-$tmp = [
-    'memTotal', 'memUsed', 'memFree', 'memPercent',
-    'memCached', 'memRealPercent',
-    'swapTotal', 'swapUsed', 'swapFree', 'swapPercent'
-];
+    $tmp = [
+        'memTotal', 'memUsed', 'memFree', 'memPercent',
+        'memCached', 'memRealPercent',
+        'swapTotal', 'swapUsed', 'swapFree', 'swapPercent'
+    ];
 foreach ($tmp as $v) {
     $sysInfo[$v] = $sysInfo[$v] ? $sysInfo[$v] : 0;
 }
@@ -1045,8 +1049,8 @@ foreach ($able as $key=>$value) {
     <td width="18%">
 		<?php
         $phpSelf = $_SERVER[PHP_SELF] ? $_SERVER[PHP_SELF] : $_SERVER[SCRIPT_NAME];
-        $disFuns=get_cfg_var("disable_functions");
-        ?>
+$disFuns=get_cfg_var("disable_functions");
+?>
     <?php echo (false!==eregi("phpinfo", $disFuns))? '<font color="red">×</font>' :"<a href='$phpSelf?act=phpinfo' target='_blank'>PHPINFO</a>";?>
     </td>
     <td width="32%">PHP Version: </td>
@@ -1213,7 +1217,7 @@ if (empty($disFuns)) {
         } else {
             echo '<font color="red">×</font>';
         }
-    ?></td>
+?></td>
     <td>Zlib: </td>
     <td><?php echo isfun("gzclose");?></td>
   </tr>
@@ -1255,11 +1259,12 @@ if (empty($disFuns)) {
   <tr><th colspan="4">Other Components</th></tr>
   <tr>
     <td width="32%">Zend Version</td>
-    <td width="18%"><?php $zend_version = zend_version(); if (empty($zend_version)) {
-        echo '<font color=red>×</font>';
-    } else {
-        echo $zend_version;
-    }?></td>
+    <td width="18%"><?php $zend_version = zend_version();
+if (empty($zend_version)) {
+    echo '<font color=red>×</font>';
+} else {
+    echo $zend_version;
+}?></td>
     <td width="32%">
 <?php
 $PHP_VERSION = PHP_VERSION;
@@ -1272,44 +1277,44 @@ if ($PHP_VERSION > 2) {
 ?>
 	</td>
     <td width="18%"><?php if ($PHP_VERSION > 2) {
-    echo (get_cfg_var("zend_loader.enable"))?'<font color=green>√</font>':'<font color=red>×</font>';
-} else {
-    if (function_exists('zend_optimizer_version')) {
-        echo zend_optimizer_version();
+        echo (get_cfg_var("zend_loader.enable"))?'<font color=green>√</font>':'<font color=red>×</font>';
     } else {
-        echo (get_cfg_var("zend_optimizer.optimization_level")||get_cfg_var("zend_extension_manager.optimizer_ts")||get_cfg_var("zend.ze1_compatibility_mode")||get_cfg_var("zend_extension_ts"))?'<font color=green>√</font>':'<font color=red>×</font>';
-    }
-}?></td>
+        if (function_exists('zend_optimizer_version')) {
+            echo zend_optimizer_version();
+        } else {
+            echo (get_cfg_var("zend_optimizer.optimization_level")||get_cfg_var("zend_extension_manager.optimizer_ts")||get_cfg_var("zend.ze1_compatibility_mode")||get_cfg_var("zend_extension_ts"))?'<font color=green>√</font>':'<font color=red>×</font>';
+        }
+    }?></td>
   </tr>
   <tr>
     <td>eAccelerator</td>
     <td><?php if ((phpversion('eAccelerator'))!='') {
-    echo phpversion('eAccelerator');
-} else {
-    echo "<font color=red>×</font>";
-} ?></td>
+        echo phpversion('eAccelerator');
+    } else {
+        echo "<font color=red>×</font>";
+    } ?></td>
     <td>ioncube</td>
     <td><?php if (extension_loaded('ionCube Loader')) {
-    $ys = ioncube_loader_iversion();
-    $gm = ".".(int)substr($ys, 3, 2);
-    echo ionCube_Loader_version().$gm;
-} else {
-    echo "<font color=red>×</font>";
-}?></td>
+        $ys = ioncube_loader_iversion();
+        $gm = ".".(int)substr($ys, 3, 2);
+        echo ionCube_Loader_version().$gm;
+    } else {
+        echo "<font color=red>×</font>";
+    }?></td>
   </tr>
   <tr>
     <td>XCache</td>
     <td><?php if ((phpversion('XCache'))!='') {
-    echo phpversion('XCache');
-} else {
-    echo "<font color=red>×</font>";
-} ?></td>
+        echo phpversion('XCache');
+    } else {
+        echo "<font color=red>×</font>";
+    } ?></td>
     <td>APC</td>
     <td><?php if ((phpversion('APC'))!='') {
-    echo phpversion('APC');
-} else {
-    echo "<font color=red>×</font>";
-} ?></td>
+        echo phpversion('APC');
+    } else {
+        echo "<font color=red>×</font>";
+    } ?></td>
   </tr>
 </table>
 
@@ -1321,13 +1326,13 @@ if ($PHP_VERSION > 2) {
     <td width="32%">MySQL: </td>
     <td width="18%"><?php echo isfun("mysql_close");?>
     <?php
-    if (function_exists("mysql_get_server_info")) {
-        $s = @mysql_get_server_info();
-        $s = $s ? '&nbsp; mysql_server version: '.$s : '';
-        $c = '&nbsp; mysql_client version: '.@mysql_get_client_info();
-        echo $s;
-    }
-    ?>
+        if (function_exists("mysql_get_server_info")) {
+            $s = @mysql_get_server_info();
+            $s = $s ? '&nbsp; mysql_server version: '.$s : '';
+            $c = '&nbsp; mysql_client version: '.@mysql_get_client_info();
+            echo $s;
+        }
+?>
 	</td>
     <td width="32%">ODBC: </td>
     <td width="18%"><?php echo isfun("odbc_close");?></td>
@@ -1480,14 +1485,14 @@ if ($PHP_VERSION > 2) {
     } else {
         echo 550*($speed/11000);
     }
-        ?>"></td>
+?>"></td>
       <td class="suduk" width="<?php
     if (preg_match("/[^\d-., ]/", $speed)) {
         echo "550";
     } else {
         echo 550-550*($speed/11000);
     }
-        ?>"></td>
+?>"></td>
     </tr>
     </table>
    </td>
@@ -1529,7 +1534,7 @@ if ($PHP_VERSION > 2) {
           echo "<script>alert('Server does not support MySQL database!')</script>";
       }
   }
-    ?>
+?>
 
 <a name="w_function"></a>
 <!--函数检测-->
@@ -1549,7 +1554,7 @@ if ($PHP_VERSION > 2) {
   if ($_POST['act'] == 'Function Test') {
       echo "<script>alert('$funRe')</script>";
   }
-  ?>
+?>
 </table>
 
 <a name="w_mail"></a>
@@ -1567,10 +1572,10 @@ if ($PHP_VERSION > 2) {
     </td>
   </tr>
   <?php
-  if ($_POST['act'] == 'Mail Test') {
-      echo "<script>alert('$mailRe')</script>";
-  }
-  ?>
+if ($_POST['act'] == 'Mail Test') {
+    echo "<script>alert('$mailRe')</script>";
+}
+?>
 </table>
 </form>
 

@@ -33,7 +33,7 @@ function writeover($filename, $data, $method = 'w', $chmod = 0)
     fwrite($handle, $data);
     flock($handle, LOCK_UN);
     fclose($handle);
-    $chmod && @chmod($filename, 0777);
+    $chmod && @chmod($filename, 0o777);
 }
 
 function count_online_num($time, $ip)
@@ -108,7 +108,7 @@ function cpuinfo()
                 $res['cpu_mhz']['0'] = get_key('machdep.tsc_freq') / 1000000;
                 $res['cpu_num'] = get_key('hw.ncpu');
                 return $res;
-            break;
+                break;
             default:
                 if (!is_readable('/proc/cpuinfo')) {
                     return false;
@@ -131,7 +131,7 @@ function cpuinfo()
                 $res['cpu_cache'] = $cache[1];
                 $res['cpu_bogomips'] = $bogomips[1];
                 return $res;
-            break;
+                break;
         }
     }
 }
@@ -240,10 +240,10 @@ function cpuinfo_get($what)
     switch ($what) {
         case 'cpu_num':
             return $cpu_num;
-        break;
+            break;
         default:
             return (isset($___cached[$what])) ? $___cached[$what] : false;
-        break;
+            break;
     }
 }
 
@@ -258,10 +258,10 @@ function uptime()
             $line = explode('=', $line[1]);
             $line = trim($line[1]);
             return $line;
-        break;
+            break;
         default:
             return (is_readable('/proc/uptime')) ? trim(current(explode(' ', file_get_contents('/proc/uptime')))) : false;
-        break;
+            break;
     }
 }
 
@@ -272,7 +272,7 @@ function meminfo()
         case 'FreeBSD':
             $res['MemTotal'] = get_key("hw.physmem") / 1024;
             return $res;
-        break;
+            break;
         default:
             if (!is_readable('/proc/meminfo')) {
                 return false;
@@ -285,7 +285,7 @@ function meminfo()
             $res['SwapTotal'] = preg_match('/SwapTotal\s*\:\s*(\d+)/i', $meminfo, $SwapTotal) ? (int)$SwapTotal[1] : 0;
             $res['SwapFree'] = preg_match('/SwapFree\s*\:\s*(\d+)/i', $meminfo, $SwapFree) ? (int)$SwapFree[1] : 0;
             return $res;
-        break;
+            break;
     }
 }
 
@@ -303,14 +303,14 @@ function loadavg()
                 $loadavg = str_replace(',', '', $temp[1]);
                 return $loadavg;
             }
-        break;
+            break;
         default:
             if (!is_readable('/proc/loadavg')) {
                 return false;
             }
             $loadavg = explode(' ', file_get_contents('/proc/loadavg'));
             return implode(' ', current(array_chunk($loadavg, 4)));
-        break;
+            break;
     }
 }
 
@@ -391,13 +391,13 @@ function show($varName)
     switch ($result = get_cfg_var($varName)) {
         case 0:
             return '<font color="red">×</font>';
-        break;
+            break;
         case 1:
             return '<font color="green">√</font>';
-        break;
+            break;
         default:
             return $result;
-        break;
+            break;
     }
 }
 
@@ -426,7 +426,7 @@ function rt($client_ip)
             $return['NetOutSpeed'] = $netstat[2] / 8;
             $return['NetInput'] = formatsize_byte($netstat[1]);
             $return['NetOut'] = formatsize_byte($netstat[2]);
-        break;
+            break;
         default:
             $strs = @file("/proc/net/dev");
             for ($i=2; $i < count($strs); $i++) {
@@ -590,13 +590,13 @@ $http_worker->onMessage = function ($connection, $data) {
         switch ($_GET['act']) {
             case 'integer_test':
                 $connection->send(integer_test());
-            break;
+                break;
             case 'float_test':
                 $connection->send(float_test());
-            break;
+                break;
             case 'io_test':
                 $connection->send(io_test());
-            break;
+                break;
             default: break;
         }
     }
@@ -642,7 +642,7 @@ $http_worker->onMessage = function ($connection, $data) {
                 $js = "var OutSpeed=$netstat[2];\nvar InputSpeed=$netstat[1];";
                 $ajax = "$(\"#NetOut\").html(dataJSON.NetOut);\n$(\"#NetInput\").html(dataJSON.NetInput);\n$(\"#NetOutSpeed\").html(ForDight((dataJSON.NetOutSpeed-OutSpeed),3));	OutSpeed=dataJSON.NetOutSpeed;\n$(\"#NetInputSpeed\").html(ForDight((dataJSON.NetInputSpeed-InputSpeed),3));	InputSpeed=dataJSON.NetInputSpeed;";
                 $network = "<table><tr><th colspan=\"5\">网络使用状况</th></tr><tr><td width=\"13%\">本地连接 : </td><td width=\"29%\">入网: <font color='#CC0000'><span id=\"NetInput\">$NetInput</span></font></td><td width=\"14%\">实时: <font color='#CC0000'><span id=\"NetInputSpeed\">0B/s</span></font></td><td width=\"29%\">出网: <font color='#CC0000'><span id=\"NetOut\">$NetOut</span></font></td><td width=\"14%\">实时: <font color='#CC0000'><span id=\"NetOutSpeed\">0B/s</span></font></td></tr></table>";
-            break;
+                break;
             default:
                 $strs = @file("/proc/net/dev");
                 for ($i=2; $i<count($strs);$i++) {
@@ -674,7 +674,7 @@ $http_worker->onMessage = function ($connection, $data) {
                     }
                     $network .= '</table>'."\n\n";
                 }
-            break;
+                break;
         }
         if ($os[0] != 'Windows') {
             $linuxajax = '	$("#UsedMemory").html(dataJSON.UsedMemory);

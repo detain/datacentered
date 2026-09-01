@@ -131,10 +131,13 @@ Each file exports one `function filename($args)`. Auto-loaded from `Tasks/` on `
 - HyperV SOAP uses PHP's native ext-soap `\SoapClient` (`Tasks/async_hyperv_get_list.php`, `Tasks/hyperv_cleanupresources.php`); the `clue/soap-react` dependency was dead/unused and has been removed
 - `influxdata/influxdb-client-php` (dev-master) — InfluxDB v2 metrics (`Tasks/bandwidth.php`, and HyperV SOAP call metrics in `Tasks/async_hyperv_get_list.php`)
 - `cache/memcached-adapter 1.2.0` — Memcached queue/map storage
-- `corneltek/cliframework 3.0.x-dev`, `guzzlehttp/guzzle 7.13.1`
+- `guzzlehttp/guzzle ^7.13.1` (locked at 7.15.5)
+- `friendsofphp/php-cs-fixer ^3.95` (require-dev) — the style gate documented under Commands was previously NOT a declared dependency, so it could never actually run
+- REMOVED as dead/unused: `corneltek/cliframework` (zero references outside `vendor/`; it pinned `symfony/finder ^2.7` → `symfony/config 3.3.2` → `symfony/filesystem ~2.8|~3.0`, which capped php-cs-fixer at the 2021-era v2.19 and dragged in twig/pimple/doctrine-inflector/symfony-class-loader), plus `satooshi/php-coveralls` and `codacy/coverage` (both abandoned upstream, never wired to any CI — there are no workflows and `phpunit.xml.dist` has no coverage config, so no clover report was ever produced for them to upload)
 
 ## Code Style
-- PSR-2 + PHP 7.4 migrations (`@PSR2`, `@PHP74Migration`) — see `.php-cs-fixer.dist.php`
+- PSR-2 + PHP 8.2 migrations (`@PSR2`, `@PHP82Migration`) — see `.php-cs-fixer.dist.php`. The ruleset targeted `@PHP74Migration` long after `composer.json` moved to `php >=8.2`, so 8.0–8.2 modernisations went unchecked; risky fixers stay disabled
+- `experiments/` is EXCLUDED from the fixer: reference-only amphp/Swoole samples, 11 of which are pre-PHP8 syntax that does not lint under 8.3
 - Cache file: `.php-cs-fixer.cache`
 - No trailing commas in multiline, no heredoc indentation, no method argument space changes
 - All `Worker::safeEcho()` for process-safe output; never `echo` in workers without it

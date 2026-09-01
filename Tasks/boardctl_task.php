@@ -49,7 +49,7 @@ function boardctl_task($args)
 
     $logDir = '/home/my/logs/boardctl';
     if (!is_dir($logDir)) {
-        @mkdir($logDir, 0775, true);
+        @mkdir($logDir, 0o775, true);
     }
     $logFile = $logDir.'/'.$historyId.'.log';
 

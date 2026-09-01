@@ -78,7 +78,7 @@ require_once __DIR__.'/../Applications/Chat/SharedState.php';
 
 $logDir = '/home/my/logs/boardctl';
 if (!is_dir($logDir)) {
-    @mkdir($logDir, 0775, true);
+    @mkdir($logDir, 0o775, true);
 }
 $pidFile = $logDir.'/'.$historyId.'.pid';
 @file_put_contents($pidFile, (string)getmypid());

@@ -301,7 +301,7 @@ namespace {
         {
             return array_values(array_filter(
                 TestTimer::added(),
-                static fn(array $t) => abs($t['interval'] - \Events::BOT_MOVE_INTERVAL) < 1e-9
+                static fn (array $t) => abs($t['interval'] - \Events::BOT_MOVE_INTERVAL) < 1e-9
                     && $t['args'] === [self::LOCATION]
             ));
         }
@@ -1203,7 +1203,7 @@ namespace {
             // Both the user's join and the bot's join reach clients over the group.
             $joined = $this->presenceGroupEvents('dc.presence.joined');
             $this->assertCount(2, $joined, 'the user and the bot are both announced');
-            $ids = array_map(static fn(array $e) => $e['data']['clientId'], $joined);
+            $ids = array_map(static fn (array $e) => $e['data']['clientId'], $joined);
             $this->assertContains($this->userId, $ids);
             $this->assertContains(self::BOT_ID, $ids);
             $this->assertDeadChannelTransportUnused('join+spawn:');
@@ -1233,7 +1233,7 @@ namespace {
             $this->assertContains($timerId, TestTimer::deleted());
 
             $left = $this->presenceGroupEvents('dc.presence.left');
-            $ids = array_map(static fn(array $e) => $e['data']['clientId'], $left);
+            $ids = array_map(static fn (array $e) => $e['data']['clientId'], $left);
             $this->assertContains($this->userId, $ids, 'the user is announced as gone');
             $this->assertContains(self::BOT_ID, $ids, 'the bot avatar is announced as gone (no ghost)');
         }

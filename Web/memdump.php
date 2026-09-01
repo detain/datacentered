@@ -18,4 +18,3 @@ if ($fp) {
 } else {
     echo 'Failed to open memory_dump.json for writing';
 }
-

@@ -25,12 +25,12 @@ class Events
 {
     /** Dedicated task-worker pool for payment processing, isolated from the
      *  shared 2208 pool so slow VPS/HyperV tasks cannot starve activations. */
-    const PAYMENT_TASK_ADDRESS = 'Text://127.0.0.1:2209';
+    public const PAYMENT_TASK_ADDRESS = 'Text://127.0.0.1:2209';
 
     /** Bounded per-channel hot-cache depth (PROTOCOL_V1.md §4 / plan B6:
      *  last N=100 messages per channel serve channel.join history and the
      *  live tail; the DB (chat_messages) is the unbounded durable store). */
-    const CHAT_HISTORY_MAX = 100;
+    public const CHAT_HISTORY_MAX = 100;
 
     public static $process_handle = null;
     public static $process_pipes = null;
@@ -109,16 +109,16 @@ class Events
     // ====================================================================
 
     /** Redis key prefix (SharedState): unix ts of the last pong received from a client. */
-    const DC_PONG_KEY_PREFIX = 'dc:presence:ping:';
+    public const DC_PONG_KEY_PREFIX = 'dc:presence:ping:';
 
     /** Redis key prefix (SharedState): unix ts of the last ping the hub sent to a client. */
-    const DC_PING_SENT_KEY_PREFIX = 'dc:presence:ping_sent:';
+    public const DC_PING_SENT_KEY_PREFIX = 'dc:presence:ping_sent:';
 
     /** Gateway group every dc_presence client is joined to at auth (auth.hello). */
-    const DC_PRESENCE_GROUP = 'dc_presence';
+    public const DC_PRESENCE_GROUP = 'dc_presence';
 
     /** Seconds after which a reported dc:presence:viewport entry is treated as absent (BUG-B5). */
-    const DC_VIEWPORT_MAX_AGE = 30;
+    public const DC_VIEWPORT_MAX_AGE = 30;
 
     // ====================================================================
     // SharedState (Redis) key map + TTLs — GlobalData→Redis migration (A2).
@@ -138,67 +138,67 @@ class Events
     // ====================================================================
 
     /** Redis HASH: vps_id => JSON vps_masters row (the shared host registry). */
-    const HOSTS_REGISTRY_KEY = 'dc:state:hosts';
+    public const HOSTS_REGISTRY_KEY = 'dc:state:hosts';
 
     /** Redis HASH: room id => JSON room object (legacy chat rooms registry). */
-    const ROOMS_REGISTRY_KEY = 'dc:state:rooms';
+    public const ROOMS_REGISTRY_KEY = 'dc:state:rooms';
 
     /** Field of the seeded default room within ROOMS_REGISTRY_KEY. */
-    const DEFAULT_ROOM_ID = 'room_1';
+    public const DEFAULT_ROOM_ID = 'room_1';
 
     /** Redis HASH: channel id => JSON {type,topic,created_by,created_at}. */
-    const CHANNEL_META_REGISTRY_KEY = 'dc:state:channel_meta';
+    public const CHANNEL_META_REGISTRY_KEY = 'dc:state:channel_meta';
 
     /** Redis HASH: timer name => JSON {interval,timer_id}. */
-    const TIMERS_REGISTRY_KEY = 'dc:state:timers';
+    public const TIMERS_REGISTRY_KEY = 'dc:state:timers';
 
     /** Redis HASH: pty_id => JSON pty session entry. */
-    const PTYS_REGISTRY_KEY = 'dc:state:ptys';
+    public const PTYS_REGISTRY_KEY = 'dc:state:ptys';
 
     /** Redis STRING prefix: one JSON entry per in-flight cmd run (run_id). */
-    const RUNNING_KEY_PREFIX = 'dc:state:running:';
+    public const RUNNING_KEY_PREFIX = 'dc:state:running:';
 
     /** Redis SET of run ids, the enumeration index beside RUNNING_KEY_PREFIX. */
-    const RUNNING_INDEX_KEY = 'dc:state:running_ids';
+    public const RUNNING_INDEX_KEY = 'dc:state:running_ids';
 
     /** Redis STRING prefix: telemetry.sysinfo relay correlation entries. */
-    const SYSINFO_KEY_PREFIX = 'dc:state:sysinfo:';
+    public const SYSINFO_KEY_PREFIX = 'dc:state:sysinfo:';
 
     /** Redis STRING: cache-aside payload of handleAdminHosts. */
-    const ADMIN_HOSTS_CACHE_KEY = 'dc:state:admin_hosts_cache';
+    public const ADMIN_HOSTS_CACHE_KEY = 'dc:state:admin_hosts_cache';
 
     /** Redis STRING prefix: per-client dc presence record. */
-    const DC_PRESENCE_KEY_PREFIX = 'dc:presence:client:';
+    public const DC_PRESENCE_KEY_PREFIX = 'dc:presence:client:';
 
     /** Redis ZSET: every presence member (real + bot), score = last-seen ts. */
-    const DC_PRESENCE_INDEX_KEY = 'dc:presence:index';
+    public const DC_PRESENCE_INDEX_KEY = 'dc:presence:index';
 
     /** Redis ZSET: recipient-enumeration index, score = last-seen ts. */
-    const DC_ACTIVE_INDEX_KEY = 'dc:presence:active';
+    public const DC_ACTIVE_INDEX_KEY = 'dc:presence:active';
 
     /** Redis LIST prefix: bounded per-channel message tail (newest kept). */
-    const CHAT_MSGS_KEY_PREFIX = 'dc:chat:msgs:';
+    public const CHAT_MSGS_KEY_PREFIX = 'dc:chat:msgs:';
 
     /** Redis ZSET: channel id => last-activity ts (enumeration + window). */
-    const CHAT_ACTIVITY_KEY = 'dc:chat:activity';
+    public const CHAT_ACTIVITY_KEY = 'dc:chat:activity';
 
     /** Redis STRING prefix: bot presence state per location. */
-    const BOT_STATE_KEY_PREFIX = 'dc:presence:bot_state:';
+    public const BOT_STATE_KEY_PREFIX = 'dc:presence:bot_state:';
 
     /** Once-per-window cold-start reap lock TTL (seconds). The 60s TTL is the crash guard: a boot that dies mid-reap is retried after a minute instead of never. */
-    const STARTUP_REAP_LOCK_TTL = 60;
+    public const STARTUP_REAP_LOCK_TTL = 60;
 
     /** In-flight run registry entry TTL (seconds) — bounds leaks from agents that die without cmd.exit. */
-    const RUNNING_ENTRY_TTL = 3600;
+    public const RUNNING_ENTRY_TTL = 3600;
 
     /** telemetry.sysinfo correlation entry TTL (seconds) — replaces the 5-minute reaper Timer. */
-    const SYSINFO_TTL = 300;
+    public const SYSINFO_TTL = 300;
 
     /** handleAdminHosts cache-aside TTL (seconds) — the old admin_hosts_cache_ttl sibling, made native. */
-    const ADMIN_HOSTS_CACHE_TTL = 5;
+    public const ADMIN_HOSTS_CACHE_TTL = 5;
 
     /** Presence record/index staleness window (seconds); records carry it as a real TTL. */
-    const PRESENCE_STALE_TTL = 90;
+    public const PRESENCE_STALE_TTL = 90;
 
     /**
      * How long a presence RECORD (and its index membership) is retained.
@@ -220,18 +220,18 @@ class Events
      *
      * INVARIANT: must stay comfortably GREATER than PRESENCE_STALE_TTL.
      */
-    const PRESENCE_RECORD_TTL = 270;
+    public const PRESENCE_RECORD_TTL = 270;
 
     /** Presence auxiliary per-client key TTLs (seconds) — safety nets; every delete path is deterministic. */
-    const PRESENCE_PING_TTL = 3600;
-    const PRESENCE_MOVE_TTL = 60;
-    const PRESENCE_SESSION_TTL = 86400;
+    public const PRESENCE_PING_TTL = 3600;
+    public const PRESENCE_MOVE_TTL = 60;
+    public const PRESENCE_SESSION_TTL = 86400;
 
     /** dc.presence.join/move window after which an idle channel's hot-cache tail is swept (seconds) — replaces the 60s chat reaper Timer. */
-    const CHAT_CHANNEL_IDLE_TTL = 3600;
+    public const CHAT_CHANNEL_IDLE_TTL = 3600;
 
     /** Minimum seconds between write-path chat sweeps (see sweepIdleChatChannelsThrottled()). */
-    const CHAT_SWEEP_MIN_INTERVAL = 300;
+    public const CHAT_SWEEP_MIN_INTERVAL = 300;
 
     /** @var int unix ts of the last write-path chat sweep in THIS process */
     private static $lastChatSweepAt = 0;
@@ -254,7 +254,7 @@ class Events
      * unlikely. BOT_STATE_TTL must stay strictly GREATER than this so a dead
      * owner still leaves a takeable ghost state rather than an instant vanish.
      */
-    const BOT_OWNER_LOCK_TTL = 30;
+    public const BOT_OWNER_LOCK_TTL = 30;
 
     /**
      * Bot state/presence record TTL (seconds) — refreshed every moveBot tick;
@@ -263,7 +263,7 @@ class Events
      * what lets the new owner adopt the bot's existing identity and position
      * instead of respawning it fresh.
      */
-    const BOT_STATE_TTL = 90;
+    public const BOT_STATE_TTL = 90;
 
     // ====================================================================
     // Bot Presence System (DataCenter 3D)
@@ -272,10 +272,10 @@ class Events
     // ====================================================================
 
     /** Default datacenter/location name when no location is specified. */
-    const BOT_DEFAULT_LOCATION = 'main';
+    public const BOT_DEFAULT_LOCATION = 'main';
 
     /** Bot movement interval in seconds (500ms). */
-    const BOT_MOVE_INTERVAL = 0.5;
+    public const BOT_MOVE_INTERVAL = 0.5;
 
     /**
      * Bot walking speed in SCENE units per second.
@@ -285,7 +285,7 @@ class Events
      * 1.2 was "units/sec" read as metres and made the bot creep at ~0.14 m/s
      * (the client's own walk speed is 14 u/s).
      */
-    const BOT_WALK_SPEED = 11.7;
+    public const BOT_WALK_SPEED = 11.7;
 
     /**
      * FALLBACK datacenter bounds, used ONLY until the browser reports the real
@@ -294,30 +294,30 @@ class Events
      * roomSpawn = {x: cx, z: maxZ - ROOM_MARGIN*0.5}, so the room is nowhere
      * near the world origin and these numbers are only a last resort.
      */
-    const BOT_BOUNDS_X_MIN = -50.0;
-    const BOT_BOUNDS_X_MAX = 50.0;
-    const BOT_BOUNDS_Z_MIN = -50.0;
-    const BOT_BOUNDS_Z_MAX = 50.0;
+    public const BOT_BOUNDS_X_MIN = -50.0;
+    public const BOT_BOUNDS_X_MAX = 50.0;
+    public const BOT_BOUNDS_Z_MIN = -50.0;
+    public const BOT_BOUNDS_Z_MAX = 50.0;
 
     /** Distance threshold to consider bot has reached its target (units). */
-    const BOT_TARGET_THRESHOLD = 1.0;
+    public const BOT_TARGET_THRESHOLD = 1.0;
 
     /** Redis key prefix (SharedState) holding the browser-reported room bounds per location. */
-    const DC_ROOM_BOUNDS_KEY_PREFIX = 'dc:presence:room_bounds:';
+    public const DC_ROOM_BOUNDS_KEY_PREFIX = 'dc:presence:room_bounds:';
 
     /** Spawn the bot within this many scene units of the joining player. */
-    const BOT_SPAWN_RADIUS = 25.0;
+    public const BOT_SPAWN_RADIUS = 25.0;
 
     /** Pick wander targets within this many scene units of a real player. */
-    const BOT_WANDER_RADIUS = 30.0;
+    public const BOT_WANDER_RADIUS = 30.0;
 
     /** Keep the bot this far inside the reported walls so it never clips them. */
-    const BOT_BOUNDS_INSET = 2.0;
+    public const BOT_BOUNDS_INSET = 2.0;
 
     /** Reported-bounds sanity limits (contract BOT-BOUNDS validation). */
-    const BOT_BOUNDS_MIN_SPAN = 4.0;
-    const BOT_BOUNDS_MAX_SPAN = 5000.0;
-    const BOT_BOUNDS_MAX_COORD = 100000.0;
+    public const BOT_BOUNDS_MIN_SPAN = 4.0;
+    public const BOT_BOUNDS_MAX_SPAN = 5000.0;
+    public const BOT_BOUNDS_MAX_COORD = 100000.0;
 
     /**
      * Process-local map of location => Workerman timer id for the bot move
@@ -916,7 +916,7 @@ class Events
             case 'cmd.kill':
                 self::handleCmdKill($client_id, $envelope);
                 return;
-            // pty.* real interactive terminals (PROTOCOL_V1.md §2.3/§5; plan step 2.4).
+                // pty.* real interactive terminals (PROTOCOL_V1.md §2.3/§5; plan step 2.4).
             case 'pty.open':
                 self::handlePtyOpen($client_id, $envelope);
                 return;
@@ -929,7 +929,7 @@ class Events
             case 'pty.close':
                 self::handlePtyClose($client_id, $envelope);
                 return;
-            // queue.* parity bridge (PROTOCOL_V1.md §2.4; plan step 2.5).
+                // queue.* parity bridge (PROTOCOL_V1.md §2.4; plan step 2.5).
             case 'queue.action':
                 self::handleQueueAction($client_id, $envelope);
                 return;
@@ -942,7 +942,7 @@ class Events
             case 'queue.ack':
                 self::handleQueueAck($client_id, $envelope);
                 return;
-            // telemetry.* host→hub metrics (PROTOCOL_V1.md §2.5; plan step 2.6).
+                // telemetry.* host→hub metrics (PROTOCOL_V1.md §2.5; plan step 2.6).
             case 'telemetry.host':
                 self::handleTelemetryHost($client_id, $envelope);
                 return;
@@ -961,11 +961,11 @@ class Events
             case 'telemetry.sysinfo':
                 self::handleTelemetrySysinfo($client_id, $envelope);
                 return;
-            // config.* hub→host configuration (PROTOCOL_V1.md §2.6; plan step 2.6).
+                // config.* hub→host configuration (PROTOCOL_V1.md §2.6; plan step 2.6).
             case 'config.maps':
                 self::handleConfigMaps($client_id, $envelope);
                 return;
-            // vps.* service lifecycle callbacks (PROTOCOL_V1.md §2.7; plan step 2.6).
+                // vps.* service lifecycle callbacks (PROTOCOL_V1.md §2.7; plan step 2.6).
             case 'vps.lock':
                 self::handleVpsLock($client_id, $envelope);
                 return;
@@ -978,7 +978,7 @@ class Events
             case 'vps.progress':
                 self::handleVpsProgress($client_id, $envelope);
                 return;
-            // channel.*/chat.* channels & messaging (PROTOCOL_V1.md §2.10; plan step 2.7).
+                // channel.*/chat.* channels & messaging (PROTOCOL_V1.md §2.10; plan step 2.7).
             case 'channel.list':
                 self::handleChannelList($client_id, $envelope);
                 return;
@@ -997,7 +997,7 @@ class Events
             case 'chat.send':
                 self::handleChatSend($client_id, $envelope);
                 return;
-            // admin.* admin/CLI introspection (PROTOCOL_V1.md §2.9; plan step 2.8).
+                // admin.* admin/CLI introspection (PROTOCOL_V1.md §2.9; plan step 2.8).
             case 'admin.hosts':
                 self::handleAdminHosts($client_id, $envelope);
                 return;
@@ -1007,7 +1007,7 @@ class Events
             case 'admin.running':
                 self::handleAdminRunning($client_id, $envelope);
                 return;
-            // dc.presence.* datacenter 3D scene presence (dc.md step 7).
+                // dc.presence.* datacenter 3D scene presence (dc.md step 7).
             case 'dc.presence.join':
                 self::handleDcPresenceJoin($client_id, $envelope);
                 return;
@@ -1017,15 +1017,15 @@ class Events
             case 'dc.presence.leave':
                 self::handleDcPresenceLeave($client_id, $envelope);
                 return;
-            // IDEA-3: dc.viewport.update — client reports its camera position + direction
+                // IDEA-3: dc.viewport.update — client reports its camera position + direction
             case 'dc.viewport.update':
                 self::handleDcViewportUpdate($client_id, $envelope);
                 return;
-            // pong: client responded to a server-initiated health ping.
-            // BUG-B3: record the RECEIPT time. The old `= 0` made a correctly
-            // answering client look infinitely stale to every prune/watchdog
-            // that compares dc_ping against (now - threshold), so answering the
-            // health ping was what got you disconnected.
+                // pong: client responded to a server-initiated health ping.
+                // BUG-B3: record the RECEIPT time. The old `= 0` made a correctly
+                // answering client look infinitely stale to every prune/watchdog
+                // that compares dc_ping against (now - threshold), so answering the
+                // health ping was what got you disconnected.
             case 'pong':
                 // Record the receipt in Redis: dc:presence:ping:<client_id>
                 // (TTL-capped) replaced the GlobalData dc_ping: key. SharedState
@@ -1040,7 +1040,7 @@ class Events
                 // heartbeat staleness bookkeeping.
                 self::touchPresence($client_id);
                 return;
-            // ping: server responding to a client-initiated ping
+                // ping: server responding to a client-initiated ping
             case 'ping':
                 Gateway::sendToClient($client_id, json_encode([
                     'v' => 1,
@@ -1353,8 +1353,8 @@ class Events
         $_SESSION['module'] = $role === 'bot' ? 'bot' : $module;
         $_SESSION['name'] = $row[$name_col];
         $_SESSION['ima'] = $role;
-        $_SESSION['ip'] = isset($row[$ip_col]) ? $row[$ip_col] : $_SERVER['REMOTE_ADDR'];
-        $_SESSION['type'] = isset($row[$prefix.'_type']) ? $row[$prefix.'_type'] : '';
+        $_SESSION['ip'] = $row[$ip_col] ?? $_SERVER['REMOTE_ADDR'];
+        $_SESSION['type'] = $row[$prefix.'_type'] ?? '';
         $_SESSION['online'] = date('Y-m-d H:i:s');
         $_SESSION['login'] = true;
         $_SESSION['v1_authed'] = true;
@@ -2015,7 +2015,7 @@ class Events
                     }
                 }
                 // Keep at most the 2 most-recently-responsive connections per session.
-                usort($stillActive, fn($a, $b) => $b['pong'] <=> $a['pong']);
+                usort($stillActive, fn ($a, $b) => $b['pong'] <=> $a['pong']);
                 foreach (array_slice($stillActive, 2) as $k) {
                     $toDrop[] = $k['cid'];
                 }
@@ -2027,7 +2027,7 @@ class Events
                     );
                     $live = SharedState::get($listKey);
                     if (is_array($live)) {
-                        SharedState::set($listKey, array_values(array_filter($live, fn($c) => $c !== $cid)), self::PRESENCE_SESSION_TTL);
+                        SharedState::set($listKey, array_values(array_filter($live, fn ($c) => $c !== $cid)), self::PRESENCE_SESSION_TTL);
                     }
                     Gateway::closeClient($cid, 'session_pruned');
                     Worker::safeEcho("[dc_presence] pruned non-responsive client {$cid} from session {$sessionId}\n");
@@ -2370,7 +2370,7 @@ class Events
             'who_name' => $_SESSION['name'] ?? '',
             'host' => $pty['host'],
             'scope' => $pty['scope'] ?? '',
-            'code' => isset($relayData['code']) ? $relayData['code'] : null
+            'code' => $relayData['code'] ?? null
         ]);
     }
 
@@ -3887,7 +3887,7 @@ class Events
             self::sendV1Error($client_id, $re, 'bad_request', 'channel.publish data.body must be a non-empty string');
             return;
         }
-        $level = isset($data['level']) ? $data['level'] : 'chat';
+        $level = $data['level'] ?? 'chat';
         if (!in_array($level, ['chat', 'log', 'info', 'warn', 'error'], true)) {
             self::sendV1Error($client_id, $re, 'bad_request', 'channel.publish data.level must be "chat", "log", "info", "warn" or "error"');
             return;
@@ -4041,7 +4041,7 @@ class Events
             self::sendV1Error($client_id, $re, 'bad_request', 'chat.send data.body must be a non-empty string');
             return;
         }
-        $level = isset($data['level']) ? $data['level'] : 'chat';
+        $level = $data['level'] ?? 'chat';
         if (!in_array($level, ['chat', 'log', 'info', 'warn', 'error'], true)) {
             self::sendV1Error($client_id, $re, 'bad_request', 'chat.send data.level must be "chat", "log", "info", "warn" or "error"');
             return;
@@ -4133,10 +4133,10 @@ class Events
             if (($session_data['ima'] ?? '') === 'admin') {
                 $admins[] = [
                     'id' => (string) $session_data['uid'],
-                    'name' => isset($session_data['name']) ? $session_data['name'] : '',
+                    'name' => $session_data['name'] ?? '',
                     'ima' => 'admin',
-                    'img' => isset($session_data['img']) ? $session_data['img'] : '',
-                    'online' => isset($session_data['online']) ? $session_data['online'] : ''
+                    'img' => $session_data['img'] ?? '',
+                    'online' => $session_data['online'] ?? ''
                 ];
                 continue;
             }
@@ -4144,18 +4144,18 @@ class Events
             // host_id from the uid the hub itself bound at auth ("vps<id>"/
             // "qs<id>"/"bot<id>") — never from client-supplied data.
             $host_id = intval(preg_replace('/[^0-9]/', '', $uid));
-            $module = isset($session_data['module']) ? $session_data['module'] : 'vps';
+            $module = $session_data['module'] ?? 'vps';
             // vps-module fallback to the shared hosts registry (vps_masters
             // rows keyed by vps_id) for sessions missing type/ip.
             $row = $module === 'vps' && isset($registry[$host_id]) && is_array($registry[$host_id]) ? $registry[$host_id] : [];
             $hosts[] = [
                 'id' => $uid,
                 'host_id' => $host_id,
-                'name' => isset($session_data['name']) ? $session_data['name'] : (isset($row['vps_name']) ? $row['vps_name'] : ''),
-                'ima' => isset($session_data['ima']) ? $session_data['ima'] : '',
-                'type' => isset($session_data['type']) ? $session_data['type'] : (isset($row['vps_type']) ? $row['vps_type'] : ''),
-                'ip' => isset($session_data['ip']) ? $session_data['ip'] : (isset($row['vps_ip']) ? $row['vps_ip'] : ''),
-                'online' => isset($session_data['online']) ? $session_data['online'] : '',
+                'name' => $session_data['name'] ?? ($row['vps_name'] ?? ''),
+                'ima' => $session_data['ima'] ?? '',
+                'type' => $session_data['type'] ?? ($row['vps_type'] ?? ''),
+                'ip' => $session_data['ip'] ?? ($row['vps_ip'] ?? ''),
+                'online' => $session_data['online'] ?? '',
                 'module' => $module
             ];
         }
@@ -4307,11 +4307,11 @@ class Events
                 : (isset($run['id']) && is_string($run['id']) && $run['id'] !== '' ? $run['id'] : $run_id);
             $running[] = [
                 'run_id' => $run_id,
-                'host' => isset($run['host']) ? $run['host'] : '',
-                'command' => isset($run['command']) ? $run['command'] : '',
+                'host' => $run['host'] ?? '',
+                'command' => $run['command'] ?? '',
                 'interact' => !empty($run['interact']),
                 'update_after' => !empty($run['update_after']),
-                'for' => isset($run['for']) ? $run['for'] : null,
+                'for' => $run['for'] ?? null,
                 'rows' => isset($run['rows']) ? intval($run['rows']) : 0,
                 'cols' => isset($run['cols']) ? intval($run['cols']) : 0,
                 'started' => isset($run['started']) ? intval($run['started']) : 0
@@ -4347,7 +4347,7 @@ class Events
     private static function isInPeerViewport(float $moverX, float $moverZ, array $peerViewport): bool
     {
         if (!isset($peerViewport['x'], $peerViewport['z'], $peerViewport['viewDist'],
-                  $peerViewport['dirX'], $peerViewport['dirZ'])) {
+            $peerViewport['dirX'], $peerViewport['dirZ'])) {
             return true; // fail-open: no viewport data = broadcast
         }
 
@@ -5087,7 +5087,7 @@ class Events
                     $listKey = 'dc:presence:session_clients:' . $sessionId;
                     $clients = SharedState::get($listKey);
                     if (is_array($clients)) {
-                        SharedState::set($listKey, array_values(array_filter($clients, fn($c) => $c !== $clientId)), self::PRESENCE_SESSION_TTL);
+                        SharedState::set($listKey, array_values(array_filter($clients, fn ($c) => $c !== $clientId)), self::PRESENCE_SESSION_TTL);
                     }
                     SharedState::del($ck);
                 }
@@ -5384,7 +5384,7 @@ class Events
             } else {
                 $anchor = self::randomRealClientPosition();
             }
-            list($spawnX, $spawnZ) = self::randomPointNear($anchor, $roomBounds, self::BOT_SPAWN_RADIUS);
+            [$spawnX, $spawnZ] = self::randomPointNear($anchor, $roomBounds, self::BOT_SPAWN_RADIUS);
             $spawnYaw = lcg_value() * 2 * M_PI;  // Random initial facing direction
 
             // Initialize bot state
@@ -5534,7 +5534,7 @@ class Events
         // random point in bounds when no real player position is known.
         if ($distance < self::BOT_TARGET_THRESHOLD) {
             $anchor = self::randomRealClientPosition();
-            list($targetX, $targetZ) = self::randomPointNear($anchor, $roomBounds, self::BOT_WANDER_RADIUS);
+            [$targetX, $targetZ] = self::randomPointNear($anchor, $roomBounds, self::BOT_WANDER_RADIUS);
             $botState['target_x'] = $targetX;
             $botState['target_z'] = $targetZ;
 
@@ -5724,7 +5724,7 @@ class Events
             $listKey = 'dc:presence:session_clients:' . $sessionId;
             $clients = SharedState::get($listKey);
             if (is_array($clients)) {
-                SharedState::set($listKey, array_values(array_filter($clients, fn($c) => $c !== $client_id)), self::PRESENCE_SESSION_TTL);
+                SharedState::set($listKey, array_values(array_filter($clients, fn ($c) => $c !== $client_id)), self::PRESENCE_SESSION_TTL);
             }
             SharedState::del($sessionKey);
         }
@@ -5876,7 +5876,9 @@ class Events
     {
         if (is_null(self::$db)) {
             self::$db = self::createDbConnection();
-            if (is_null(self::$db)) return;
+            if (is_null(self::$db)) {
+                return;
+            }
         }
         $token = SharedState::lock('processing_queue', 900);
         if ($token === null) {
@@ -6046,7 +6048,9 @@ class Events
     {
         if (is_null(self::$db)) {
             self::$db = self::createDbConnection();
-            if (is_null(self::$db)) return;
+            if (is_null(self::$db)) {
+                return;
+            }
         }
         // boardctl jobs now run as detached processes (scripts/boardctl_runner.php)
         // that survive a datacentered restart, so we must NOT blindly fail every
@@ -6134,7 +6138,9 @@ class Events
     {
         if (is_null(self::$db)) {
             self::$db = self::createDbConnection();
-            if (is_null(self::$db)) return;
+            if (is_null(self::$db)) {
+                return;
+            }
         }
         try {
             self::$db->query("UPDATE queue_log SET history_new_value='pending'"
@@ -6256,7 +6262,9 @@ class Events
     {
         if (is_null(self::$db)) {
             self::$db = self::createDbConnection();
-            if (is_null(self::$db)) return;
+            if (is_null(self::$db)) {
+                return;
+            }
         }
         // Snapshot of the shared hosts registry once per tick; field names of
         // the Redis hash are the vps ids (migration A2 — the old live
@@ -6921,7 +6929,9 @@ class Events
     {
         if (is_null(self::$db)) {
             self::$db = self::createDbConnection();
-            if (is_null(self::$db)) return;
+            if (is_null(self::$db)) {
+                return;
+            }
         }
         // NOTE: For performance, ensure queue_log has a compound index on (history_section, history_new_value).
         // Verified in staging with: SHOW INDEX FROM queue_log WHERE Key_name = 'idx_boardctl_pending';

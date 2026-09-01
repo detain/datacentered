@@ -19,7 +19,6 @@
 		"php": ">=8.2",
 		"ext-curl": "*",
 		"ext-redis": "*",
-		"corneltek/cliframework": "^3.0",
 		"roave/security-advisories": "dev-latest",
 		"react/child-process": "^0.6.7@stable",
 		"react/event-loop": "^1.6.0@stable",
@@ -37,11 +36,10 @@
 		"workerman/workerman": "^5.2.2@stable"
 	},
 	"require-dev": {
-		"react/promise": "^3.0",
+		"friendsofphp/php-cs-fixer": "^3.95",
 		"phpunit/phpunit": "^12.5",
-		"vlucas/phpdotenv": "dev-master",
-		"satooshi/php-coveralls": "^0.6.1",
-		"codacy/coverage": "dev-master"
+		"react/promise": "^3.0",
+		"vlucas/phpdotenv": "dev-master"
 	},
 	"suggest": {
 		"codeclimate/php-test-reporter": "dev-master",
