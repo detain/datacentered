@@ -1,6 +1,6 @@
 ---
 name: gateway-event
-description: Adds or modifies GatewayWorker event handling in Applications/Chat/Events.php. Use when user says 'handle message', 'on connect', 'gateway event', 'client message handler', 'broadcast to client', or needs to modify Events.php. Covers onConnect/onClose lifecycle hooks, msg* handler methods, Gateway::send* routing, session read/write, bindUid, joinGroup. Do NOT use for new Worker services, task dispatch to port 2208, or GlobalData timer setup.
+description: Adds or modifies GatewayWorker event handling in Applications/Chat/Events.php. Use when user says 'handle message', 'on connect', 'gateway event', 'client message handler', 'broadcast to client', or needs to modify Events.php. Covers onConnect/onClose lifecycle hooks, msg* handler methods, Gateway::send* routing, session read/write, bindUid, joinGroup. Do NOT use for new Worker services, task dispatch to port 2208, or cross-process shared state / locks (shared state now goes through the SharedState Redis facade — use the redis-shared-state skill).
 ---
 # Gateway Event
 

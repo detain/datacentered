@@ -1,6 +1,6 @@
 ---
 name: add-task
-description: Creates a new PHP task function in `Tasks/` following the project's auto-load pattern. Each file exports one function named after the file (e.g. `Tasks/my_task.php` → `function my_task($args)`). Handles available globals: `$worker_db`, `$global`, `$influx_v2_database`, `$memcache`, `$redis`. Use when user says 'add task', 'new task function', 'create task', 'task worker function', or adds/modifies files in `Tasks/`. Do NOT use for modifying `Events.php`, adding Web endpoints, or creating Worker services.
+description: Creates a new PHP task function in `Tasks/` following the project's auto-load pattern. Each file exports one function named after the file (e.g. `Tasks/my_task.php` → `function my_task($args)`). Handles available globals: `$worker_db`, `$influx_v2_client`, `$influx_v2_database`, `$memcache`, `$redis` (cross-process state and locks go through the `SharedState` facade, not a shared-state client global). Use when user says 'add task', 'new task function', 'create task', 'task worker function', or adds/modifies files in `Tasks/`. Do NOT use for modifying `Events.php`, adding Web endpoints, or creating Worker services.
 ---
 # add-task
 
@@ -9,7 +9,7 @@ description: Creates a new PHP task function in `Tasks/` following the project's
 - **File name = function name.** The file name must match the function name exactly (e.g., `my_task.php` must contain `function my_task($args)`). Any mismatch breaks auto-loading.
 - **Never declare a namespace** inside a task file — auto-loader calls `call_user_func($task_data['type'], ...)` by bare function name.
 - **Always return a value** (string, bool, or `null`). The dispatcher wraps it in `{'return': $result}` and sends it back to the caller.
-- **Do not connect to databases yourself.** `$worker_db`, `$global`, `$memcache`, `$redis`, and `$influx_v2_database` are already initialised before your function runs.
+- **Do not connect to databases yourself.** `$worker_db`, `$memcache`, `$redis`, `$influx_v2_client`, and `$influx_v2_database` are already initialised before your function runs. There is no `$global` global — cross-process locks and shared state go through the `SharedState` facade (`Applications/Chat/SharedState.php`), which resolves its Redis client from `$GLOBALS['redis']` / `USE_REDIS`.
 
 ## Instructions
 
@@ -25,7 +25,7 @@ description: Creates a new PHP task function in `Tasks/` following the project's
 
    function <name>($args)
    {
-       global $worker_db, $global, $influx_v2_database, $memcache, $redis;
+       global $worker_db, $influx_v2_client, $influx_v2_database, $memcache, $redis;
 
        // TODO: implement
 
@@ -54,18 +54,22 @@ description: Creates a new PHP task function in `Tasks/` following the project's
 
    The container is initialised once per worker process when `functions.inc.php` first loads — never call `App::setContainer()` inside a task. Do not reach into `$GLOBALS['tf']` directly; that path is being removed.
 
-4. **Add a GlobalData CAS lock** if the task must not run concurrently per resource:
+4. **Add a `SharedState` lock** if the task must not run concurrently per resource (see the `redis-shared-state` skill for the full discipline and TTL table). A `null` token means another process holds it or Redis is down, so skip; renew before each blocking step and abort on `false`; release in `finally`:
 
    ```php
-   $lockVar = '<name>_' . $args['id'];
-   if (!isset($global->$lockVar)) {
-       $global->$lockVar = 0;
-   }
-   if (!$global->cas($lockVar, 0, time())) {
+   $lockName = '<name>_' . $args['id'];   // bare name; lock() prepends dc:lock:
+   $token = SharedState::lock($lockName, 900);
+   if ($token === null) {
        return 'locked';
    }
-   // ... do work ...
-   $global->$lockVar = 0; // always release
+   try {
+       // ... do work; renew before any long/blocking call ...
+       if (!SharedState::renew($lockName, $token, 900)) {
+           return 'lost lock'; // expired or taken — never proceed holding nothing
+       }
+   } finally {
+       SharedState::unlock($lockName, $token); // owner-checked; no-op if stolen
+   }
    ```
 
 5. **Write to InfluxDB** only when the task collects metrics:
@@ -156,4 +160,4 @@ $conn->connect();
 - **`$worker_db` is null / method call on non-object** — you declared `global $worker_db` but the task is running in a process where the DB connection dropped. Add a reconnect check or wrap in try/catch and log the PDOException code.
 - **Task silently does nothing** — task was dispatched but `onMessage` never fired. Confirm the TaskWorker is running: `php start.php status` and check `/home/my/logs/billingd.log` for startup errors.
 - **InfluxDB write hangs** — forgot `$influx_v2_database->close()` after the write loop. Always call `close()` once per task invocation.
-- **`cas` never returns true (lock stuck)** — a previous run crashed before releasing. Manually reset: `$global->$lockVar = 0;` via a temporary task or debug script, then investigate the crash in the log.
+- **A lock seems stuck (always `null`)** — a previous run crashed while holding it. Unlike the old CAS flag, a `SharedState` lock self-expires at its TTL (no manual reset needed), so the wait is bounded; investigate the crash in `/home/my/logs/billingd.log`, and renew before long calls so a slow run does not drop a lock it still needs.

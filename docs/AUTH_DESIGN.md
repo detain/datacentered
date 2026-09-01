@@ -2,7 +2,7 @@
 
 Status: **DESIGN ONLY** (Phase 0 Step 0.4) · Per plan B5 (Auth) and B8 (flag lifecycle) · Decision OQ1: **hub config push** (decided 2026-06-29)
 
-This document specifies token issuance, storage, push, validation, rotation, and admin session auth for the WebSocket revamp. **No code ships from this step.** Everything described here is dormant behind **Flag A (`WS_NEW_HANDLING`, default OFF)** — while OFF, behavior is byte-identical to today.
+This document specifies token issuance, storage, push, validation, rotation, and admin session auth for the WebSocket revamp. It **was authored as design-only at step 0.4**; the code has since shipped behind **Flag A (`WS_NEW_HANDLING`)**, which is **enabled-by-default (ON) since 9eabb50** (see `docs/FEATURE_FLAGS.md`). While Flag A is explicitly OFF (an operator setting) or Redis is unreachable (fail-safe OFF), behavior is byte-identical to today's legacy flow.
 
 ---
 
@@ -14,8 +14,8 @@ What the code actually does today, so this design plugs into real structures:
   - `Web/queue.php` — every action (`get_queue`, `get_new_vps`, `get_qs_queue`, …) resolves the caller by
     `SELECT * FROM vps_masters LEFT JOIN vps_master_details USING (vps_id) WHERE vps_ip = $_SERVER['REMOTE_ADDR']`
     (and the parallel `qs_masters`/`qs_master_details` lookup keyed on `qs_ip` for QuickServers). No credential of any kind — possession of the IP *is* the identity.
-  - `Applications/Chat/Events.php::msgLogin` (`ima == 'host'`, ~line 1220) — same `vps_masters WHERE vps_ip = REMOTE_ADDR` lookup; on match it sets `$_SESSION` (`uid = 'vps'.$vps_id`, `module`, `name`, `ima`, `ip`, `type`, `login=true`), binds UID, joins the `hosts` group, and CAS-updates the `$global->hosts` map.
-- **Admin auth** (`Events.php::msgLogin`, `ima == 'admin'`, ~line 1265) has two branches:
+  - `Applications/Chat/Events.php::msgLogin` — the `ima == 'host'` branch (`Events.php` ~:6584; host-registry `hSet` ~:6610) — same `vps_masters WHERE vps_ip = REMOTE_ADDR` lookup; on match it sets `$_SESSION` (`uid = 'vps'.$vps_id`, `module`, `name`, `ima`, `ip`, `type`, `login=true`), binds UID, joins the `hosts` group, and updates the shared hosts registry (Redis `dc:state:hosts` HASH via SharedState, since the GlobalData→Redis migration; formerly the retired store's `hosts` map).
+- **Admin auth** (`Events.php::msgLogin`, the `ima == 'admin'` branch; MD5 credential check `Events.php` ~:6642) has two branches:
   1. `session_id` supplied → validated against the mystage DB: `sessions LEFT JOIN accounts ON session_owner=account_id WHERE account_ima="admin" AND session_id = :session_id`. **This branch is the keeper.**
   2. `username`/`password` supplied → `accounts WHERE account_lid=:username AND account_passwd = md5(:password)`. **This is the MD5 path B5 drops.**
 - **`vps_masters` columns actually referenced** in this repo: `vps_id`, `vps_name`, `vps_ip`, `vps_type` (plus everything via `SELECT *` and the `vps_master_details` join). `qs_masters` referenced via `qs_id`, `qs_ip`.
@@ -33,7 +33,7 @@ Replace **IP-only trust** (hosts) and the **MD5 password path** (admins) with:
 
 - **Hosts and bots:** per-identity bearer tokens, generated and distributed by the hub ("hub config push", OQ1). Token + source-IP check (defense in depth, per B5).
 - **Admins/browsers:** keep session-based auth — `auth.hello{role:"admin", session}` validated against the existing mystage session table, exactly the mechanism branch (1) above already uses. Drop the MD5 username/password branch on the new path.
-- **Dormant by default (B8):** all of this sits behind Flag A. With Flag A OFF (the default, everywhere, indefinitely), the legacy `msgLogin` IP/session/MD5 flow and the IP-keyed `queue.php` flow continue **untouched and byte-identical**. Nothing changes until an operator opts a node in.
+- **Flag-gated (B8):** all of this sits behind Flag A, which is **enabled-by-default (ON) since 9eabb50** (see `docs/FEATURE_FLAGS.md`). With Flag A explicitly OFF (an operator setting, everywhere, indefinitely) or while Redis is unreachable (fail-safe OFF), the legacy `msgLogin` IP/session/MD5 flow and the IP-keyed `queue.php` flow continue **untouched and byte-identical**.
 
 Non-goals: mTLS/client certificates (may be layered later; TLS already terminates at gateway 7272 per B5), customer/guest auth (explicitly out of scope, as today), HTTP `queue.php` auth changes (HTTP stays IP-keyed under Flag B; token auth applies to the v1 WS path).
 
@@ -109,7 +109,7 @@ Hub validation steps, in order:
 2. Parse `host_id` → fetch the single row (`vps_masters`, `qs_masters`, or `ws_bots` by role/prefix). Unknown id → `auth.error {code:"unknown_host"}`.
 3. **Constant-time token compare:** `hash_equals($row['vps_token_hash'], hash('sha256', $presented))`. Also check `*_token_prev_hash` if within its `prev_expires` grace window (rotation, §6). Mismatch → `auth.error {code:"bad_token"}`. `hash_equals` (not `==`/`===`) is mandatory to prevent timing side-channels.
 4. **Source-IP defense in depth (per B5):** `$_SERVER['REMOTE_ADDR']` must equal `vps_ip`/`qs_ip` (or `bot_ip` when pinned; bots with `bot_ip NULL` skip this). Token valid but IP wrong → `auth.error {code:"ip_mismatch"}` and an operator-visible alert, since that combination smells like token theft. IP is *secondary* — an IP match without a valid token is never sufficient on this path.
-5. On success: populate the same session shape legacy sets today (`uid`, `module`, `name`, `ima`, `ip`, `type`, `login`), `bindUid`, join group, CAS-update `$global->hosts` — identical downstream state so everything after auth (queue ops, channels, PTY) is agnostic to *which* auth admitted the connection. Reply `auth.welcome`.
+5. On success: populate the same session shape legacy sets today (`uid`, `module`, `name`, `ima`, `ip`, `type`, `login`), `bindUid`, join group, update the `dc:state:hosts` Redis registry (SharedState) — identical downstream state so everything after auth (queue ops, channels, PTY) is agnostic to *which* auth admitted the connection. Reply `auth.welcome`.
 
 **Error codes** (closed set, machine-readable so agents can distinguish "re-bootstrap" from "retry"). This is the authoritative set the hub emits on the v1 auth path (`handleAuthHello()` / `sendV1Error()` in `Events.php`); PROTOCOL_V1.md §2.1's `auth_failed` is only an illustrative generic example, not a concrete code — the codes actually sent are:
 
@@ -129,7 +129,7 @@ Hub validation steps, in order:
 
 **Legacy coexistence:** the legacy `msgLogin` IP-only path is **not modified by this design at all** — with Flag A off it is the only path; with Flag A on it remains available as long as Flag B (`LEGACY_COMPAT`) is ON, so a host rolled back from the new agent re-authenticates the old way without operator surgery. Only Flag B→OFF (P7.3, operator action) retires it.
 
-**Rate limiting:** failed `auth.hello` attempts per source IP should be throttled (e.g. exponential backoff after N failures, tracked in GlobalData/Redis) — cheap insurance even though 256-bit tokens are not guessable. **Deferred: not implemented as of step 2.2** — `handleAuthHello()` rejects+closes on each bad attempt but does not yet throttle repeat offenders. Tracked as a follow-up (see PROTOCOL_V1.md §6 and the reconciliation notes below).
+**Rate limiting:** failed `auth.hello` attempts per source IP should be throttled (e.g. exponential backoff after N failures, tracked in Redis via the SharedState facade) — cheap insurance even though 256-bit tokens are not guessable. **Deferred: not implemented as of step 2.2** — `handleAuthHello()` rejects+closes on each bad attempt but does not yet throttle repeat offenders. Tracked as a follow-up (see PROTOCOL_V1.md §6 and the reconciliation notes below).
 
 ## 5. Admin / browser auth
 
@@ -161,14 +161,14 @@ Both are operator actions on the hub (admin UI/CLI), centralized per OQ1.
 
 ## 7. Flag interaction (B8)
 
-- **Everything in §§2–6 is inert while Flag A (`WS_NEW_HANDLING`) is OFF** — the default, everywhere. Deploying this to all hubs and thousands of hosts is a runtime no-op: no schema *reads* on the auth path, no new ops emitted, no behavioral delta. The schema migration itself (nullable columns / new empty table) is deploy-time and behavior-neutral.
+- **Everything in §§2–6 is inert while Flag A (`WS_NEW_HANDLING`) is explicitly OFF** — an operator setting, or the Redis-unreachable fail-safe. Flag A is **enabled-by-default (ON) since 9eabb50** (see `docs/FEATURE_FLAGS.md`); with the flag OFF, deploying this to all hubs and thousands of hosts is a runtime no-op: no schema *reads* on the auth path, no new ops emitted, no behavioral delta. The schema migration itself (nullable columns / new empty table) is deploy-time and behavior-neutral.
 - Every new decision point gates on the Step 0.5 helper — `FeatureFlags::useNewHandling()` (hub-side per server; agent-side per host) — **this design has a hard dependency on Step 0.5 (feature-flag infrastructure) landing first**; token issuance UI, `config.token` push, and `auth.hello` handling all check it before doing anything.
 - Flag A is per-server/per-host and reversible without redeploy: toggling a host back off means its agent stops sending `auth.hello` and resumes legacy `msgLogin`/HTTP-IP auth, which Flag B (`LEGACY_COMPAT`, default ON) guarantees still works. Tokens already issued simply sit unused in the DB — re-enabling later needs no re-issuance.
 - Flag B→OFF (State 3, operator-only, P7.3) is the *only* event that disables legacy IP auth and the MD5 branch at runtime; physical deletion of that code follows later (P7) and is outside this design.
 
 ## 8. Consistency check
 
-This design matches **B5 as written**: hosts/bots get per-identity bearer tokens generated by the hub, stored in `vps_masters` (plus the `qs_masters` mirror and a new `ws_bots` registry), and distributed by hub config push over the existing channel with centralized rotation (OQ1); agents send `auth.hello{token}` and the hub validates token (constant-time) **plus** source IP as defense in depth; admins authenticate with `auth.hello{role:"admin", session}` against the existing mystage session, and the MD5 password path is dropped from the new surface. It matches **B8**: it ships dormant behind Flag A (default OFF — deploy is a runtime no-op fleet-wide), it is reversible per host without redeploy, and the legacy IP-only and MD5 paths are left byte-for-byte untouched and remain the active default under Flag B until the operator — never the implementation — flips B off in P7. No step herein modifies `Web/queue.php`, the queue/HyperV task paths, or existing `msgLogin` behavior, so the ⛔ queue & HyperV invariant is unaffected.
+This design matches **B5 as written**: hosts/bots get per-identity bearer tokens generated by the hub, stored in `vps_masters` (plus the `qs_masters` mirror and a new `ws_bots` registry), and distributed by hub config push over the existing channel with centralized rotation (OQ1); agents send `auth.hello{token}` and the hub validates token (constant-time) **plus** source IP as defense in depth; admins authenticate with `auth.hello{role:"admin", session}` against the existing mystage session, and the MD5 password path is dropped from the new surface. It matches **B8**: at authoring time it shipped dormant behind Flag A (then-default OFF — deploy was a runtime no-op fleet-wide; **the default has since flipped ON in 9eabb50**, see `docs/FEATURE_FLAGS.md`), it is reversible per host without redeploy, and the legacy IP-only and MD5 paths are left byte-for-byte untouched and remain the active fallback under Flag B until the operator — never the implementation — flips B off in P7. No step herein modifies `Web/queue.php`, the queue/HyperV task paths, or existing `msgLogin` behavior, so the ⛔ queue & HyperV invariant is unaffected.
 
 ---
 
@@ -221,8 +221,10 @@ all", exactly as shipped. The presented token is also read only from `$_POST`,
 which makes this a POST-only endpoint (a bare GET presents no POST `token` field
 and therefore always fails auth).
 
-The endpoint is additionally gated behind **Flag A** (`FeatureFlags::useNewHandling()`):
-even with a correct token, it stays a runtime no-op (`{"status":"error","error":"disabled"}`)
-until an operator turns Flag A on — so provisioning the token is necessary but
-not sufficient to make it live, consistent with the B8 ship-dormant contract used
-everywhere else in this program.
+The endpoint is additionally gated behind **Flag A** (`FeatureFlags::useNewHandling()`),
+which is **enabled-by-default (ON) since 9eabb50** (see `docs/FEATURE_FLAGS.md`). Once
+the operator provisions `WS_TRIGGER_TOKEN` the endpoint is therefore live; it stays a
+runtime no-op (`{"status":"error","error":"disabled"}`) only while Flag A is held
+explicitly OFF or Redis is unreachable (fail-safe OFF). Provisioning the token is the
+necessary operator step; the B8 ship-dormant contract this endpoint followed at
+authoring time has since been superseded by the ON default.

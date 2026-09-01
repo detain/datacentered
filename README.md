@@ -1,12 +1,12 @@
 # DataCentered
 
-A Server to handle and basically manage other servers and providing several interfaces and many advanced featuers and functionality including asynchronous support, websocket server and secure websocket server, events, timers, tasks, global data mapping between threadsa and processes and services, subscriptionn and publishing based service, child process handling, timers, and much more.
+A Server to handle and basically manage other servers and providing several interfaces and many advanced featuers and functionality including asynchronous support, websocket server and secure websocket server, events, timers, tasks, shared-state mapping between processes and services via Redis, subscriptionn and publishing based service, child process handling, timers, and much more.
 
 ## OverAll Features
 
 * Asynchronous support througfhout
 * Server running on VPS hosts provides remote API type access to cmds similar to HyperV
-* Central Server on my that utilises GlobalData to share informatoin
+* Central Server on my that utilises Redis (via the `Applications/Chat/SharedState.php` facade) to share informatoin
 * Central Server peeridocially triggers ...
 * VPS Host server periodicsally updates its own basic list of services
 * Central Server has as WSS server clients can connect to for various information
@@ -20,7 +20,7 @@ Lots more just didnt feel like typing more right now
 
 * WSS Server
 * Task Server
-* GlobalData Server
+* Redis shared-state (`Applications/Chat/SharedState.php` facade; replaced the retired GlobalData server)
 * Channel Server+Client
 * Timer component
 * React/Child-Process component
@@ -29,7 +29,6 @@ Lots more just didnt feel like typing more right now
 
 * WSS Server
 * Task Server
-* GlobalData Client
 * Channel Server+Client
 * Timer component
 * React/Child-Process component
@@ -64,11 +63,11 @@ Integrates Program Execution with the EventLoop. Child processes launched may be
 * [StdOut/StdErr Example](https://github.com/reactphp/child-process/blob/master/examples/03-stdout-stderr.php)
 * [ChildProcess: Child Process Component - ReactPHP](https://reactphp.org/child-process/)
 
-## GlobalData component
+## SharedState (Redis) component
 
-Using PHP __set __get __isset __unsetmagic method to trigger communication with GlobalData server, the actual variable is stored in GlobalData server. For example, when setting a non-existent property to a client class, a __setmagic method is triggered . The client class __setsends a request to the GlobalData server in the method and saves it in a variable. When accessing a non-existent variable in the __getclient class, the method of the class is triggered. The client initiates a request to the GlobalData server to read this value, thereby completing the process of variable sharing between processes.
+Cross-process shared state on Redis through the `Applications/Chat/SharedState.php` facade: distributed locks (`SET NX EX` with a mandatory TTL, Lua token-checked release/renew), shared registries as Redis HASHes, per-channel chat hot caches, feature flags and presence/session state — every key guarded into the `dc:*` namespace (`dc:lock:`, `dc:state:`, `dc:chat:`, `dc:flag:`, `dc:presence:`). Values are JSON-encoded by the facade; when Redis is unreachable it fails safe (reads null/`[]`, writes `false`, `lock()` returns null, logged once per process), so a lost lock takes the same branch a lost CAS used to. This replaced the retired GlobalData shared-variable server; the `GLOBALDATA_IP` constant remains, but only as the address of the GatewayWorker `register` service (`:1236`).
 
-* [GitHub walkor/GlobalData: Inter-process variable sharing component for distributed data sharing](https://github.com/walkor/GlobalData)
+* [walkor / GlobalData: Inter-process variable sharing component — the RETIRED predecessor this facade replaced](https://github.com/walkor/GlobalData)
 
 ## Additional WorkerMan Manual Links
 
@@ -309,7 +308,6 @@ project documentation: [https://github. Com/lobtao/workermvc_demo](https://gith
 [forest2087 / docker-workerman: Docker For PHP workerman environment](https://github.com/forest2087/docker-workerman)
 [garveen / laravoole: Laravel && Swoole || Workerman to get 10x faster than php-fpm](https://github.com/garveen/laravoole)
 [Getting Started | WorkerMan 3.x manual](http://doc3.workerman.net/getting-started/README.html)
-[GlobalData Variable Sharing Components | Manual for WorkerMan 3.x.](http://doc3.workerman.net/component/global-data.html)
 [Home - Beanbun - a simple and open PHP crawler framework](http://www.beanbun.org/#/)
 [Home - workerman question and answer community](http://wenda.workerman.net/#all)
 [hprose/hprose-workerman: A PHP class that enables you to use Hprose with Workerman. Includes custom protocol, bridge and interface. Enjoy Hprose at its finest with multi-process powers!](https://github.com/hprose/hprose-workerman)
@@ -331,7 +329,6 @@ project documentation: [https://github. Com/lobtao/workermvc_demo](https://gith
 [tmtbe / ServerFrame: Frame Extension Based on the wokerman Engine Framework](https://github.com/tmtbe/ServerFrame)
 [top-think / think-worker: ThinkPHP5 Workerman extend](https://github.com/top-think/think-worker)
 [walkor / Channel: Interprocess communication component for workerman](https://github.com/walkor/Channel)
-[walkor / GlobalData: Inter-process variable sharing component for distributed data sharing](https://github.com/walkor/GlobalData)
 [walkor / laychat: layim + Workerman chat rooms, support group chat, chat, facial expressions, send pictures, send files](https://github.com/walkor/laychat)
 [walkor / live-ascii-camera: Use HTML5 to convert camera video to ascii characters and send them to other pages in real time via websocket. Serverman]](https://github.com/walkor/live-ascii-camera)
 [walkor / php-http-proxy: HTTP proxy written in PHP based on workerman.](https://github.com/walkor/php-http-proxy)
@@ -362,11 +359,11 @@ project documentation: [https://github. Com/lobtao/workermvc_demo](https://gith
 ##### Queue Info
 
 * Memcached Queue Task [30s]
-  * Set $global->cas('queuein', 0, 1)
-  * Iterate $memcache->get('queuein'.$suffix) combining into $processQueue and empting queuein<id>
+  * Per host IP: acquire the SharedState (Redis) drain lock `dc:lock:queuein:<ip>` (`SET NX EX` 900s, retries with random backoff; renew between items — a failed renew stops that host's drain this cycle)
+  * Batch-pop up to 300 items from the raw `queuein:<ip>` LIST (`$redis->lPop`) — or the Memcached `getAndFlush` fallback — combining into $processQueue
   * Process $processQueue
-  * Set $memcache->cas($response['cas'], 'queueout, [])
-  * Set $global->queuein = 0;
+  * Release token-checked: `SharedState::unlock('queuein:'.$hostIp, $token)`
+  * NOTE: the raw queue DATA key `queuein:<ip>` intentionally lives OUTSIDE the facade's `dc:*` namespace — only the same-named drain lock goes through SharedState
 * /queue.php URL Endpoint
   * if post action=queue
     * $memcache->get('queue')

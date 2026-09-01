@@ -9,7 +9,7 @@ description: Creates a new Workerman Worker service file in `Applications/Chat/s
 - Every service file **must** end with the `GLOBAL_START` guard — without it, running the file directly will fail to boot.
 - Buffer sizes must be set inside `onConnect`, not at the class level, to match the per-connection pattern used by existing service files.
 - After creating the file, you **must** add the service name to `$services` in `start.php` or the worker will never load.
-- Services that must only run on the admin host (e.g., globaldata, channel, register) go in the `array_merge(...)` branch in `start.php`. All other services go in the base `$services` array.
+- Services that must only run on the admin host (e.g., channel, register) go in the `array_merge(...)` branch in `start.php`. All other services go in the base `$services` array.
 
 ## Instructions
 
@@ -26,6 +26,9 @@ description: Creates a new Workerman Worker service file in `Applications/Chat/s
        ini_set('default_socket_timeout', 1200);
    }
 
+   // GLOBALDATA_IP supplies the GatewayWorker register service address,
+   // consumed as GLOBALDATA_IP:1236 by the gateway / businessworker workers.
+   // It is unrelated to the retired shared-state service.
    if (!defined('GLOBALDATA_IP')) {
        require_once '/home/my/include/config/config.settings.php';
    }
@@ -56,19 +59,19 @@ description: Creates a new Workerman Worker service file in `Applications/Chat/s
    
    Verify the file exists in `Applications/Chat/` before proceeding.
 
-3. **Add extra use-statements** only if needed (e.g., `use \GatewayWorker\BusinessWorker;` for GatewayWorker types). Follow the import order in existing files: Workerman core first, then GatewayWorker, then GlobalData.
+3. **Add extra use-statements** only if needed (e.g., `use \GatewayWorker\BusinessWorker;` for GatewayWorker types, `require_once __DIR__ . '/SharedState.php';` when the worker uses the `SharedState` facade). Follow the import order in existing files: Workerman core first, then GatewayWorker.
 
-4. **Add `onWorkerStart`** if the service needs initialization (DB connections, loading configs, registering with GlobalData). Model after `Applications/Chat/start_task.php` `onWorkerStart` for resource setup.
+4. **Add `onWorkerStart`** if the service needs initialization (DB connections, loading configs, or seeding cross-process state through the `SharedState` Redis facade — see the `redis-shared-state` skill). Model after `Applications/Chat/start_task.php` `onWorkerStart` for resource setup.
 
 5. **Register in `start.php`** — open `start.php` and add `'<service_name>'` to `$services`:
    - Standard service (runs on all hosts): add to the base array on line 33.
      ```php
      $services = ['task', 'gateway', 'gateway_ssl', 'businessworker', 'web', '<service_name>'];
      ```
-   - myadmin1-only service: add to the `array_merge` branch on line 35.
-     ```php
-     $services = array_merge(['globaldata', 'channel', 'register', '<service_name>'], $services);
-     ```
+    - myadmin1-only service: add to the `array_merge` branch on line 35.
+      ```php
+      $services = array_merge(['channel', 'register', '<service_name>'], $services);
+      ```
    Verify `start.php` line 33–35 reflects the change before proceeding.
 
 6. **Validate** the new service loads without errors:
@@ -93,6 +96,9 @@ description: Creates a new Workerman Worker service file in `Applications/Chat/s
        ini_set('default_socket_timeout', 1200);
    }
 
+   // GLOBALDATA_IP supplies the GatewayWorker register service address,
+   // consumed as GLOBALDATA_IP:1236 by the gateway / businessworker workers.
+   // It is unrelated to the retired shared-state service.
    if (!defined('GLOBALDATA_IP')) {
        require_once '/home/my/include/config/config.settings.php';
    }
@@ -129,8 +135,8 @@ description: Creates a new Workerman Worker service file in `Applications/Chat/s
 
 - **Worker starts but is missing from process list** — `'<service_name>'` was not added to `$services` in `start.php`. Check lines 33–35 of `start.php`.
 
-- **`Address already in use` on chosen port** — the port conflicts with an existing service. Current port assignments: 1236 (register), 2207 (globaldata), 2208 (task), 3333 (channel), 7271 (gateway), 7272 (gateway SSL), 55151 (web). Choose a port outside this list.
+- **`Address already in use` on chosen port** — the port conflicts with an existing service. Current port assignments: 1236 (register), 2208 (task), 2209 (payment-task), 3333 (channel), 7271 (gateway), 7272 (gateway SSL), 55151 (web). (The retired shared-state service's old port is free again.) Choose a port outside this list.
 
 - **Service runs standalone but crashes under `start.php`** — missing `GLOBAL_START` guard at the bottom. Ensure the file ends with `if (!defined('GLOBAL_START')) { Worker::runAll(); }`.
 
-- **`GLOBALDATA_IP` undefined** — config was not loaded. Ensure the guard block `if (!defined('GLOBALDATA_IP')) { require_once '/home/my/include/config/config.settings.php'; }` appears before any use of the constant.
+- **`GLOBALDATA_IP` undefined** — the register-address constant was not loaded. `GLOBALDATA_IP` is the GatewayWorker **register** service address (consumed as `GLOBALDATA_IP:1236` by gateway / businessworker), not a shared-state service. Ensure the guard block `if (!defined('GLOBALDATA_IP')) { require_once '/home/my/include/config/config.settings.php'; }` appears before any use of the constant.

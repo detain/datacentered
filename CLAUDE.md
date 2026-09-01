@@ -33,7 +33,6 @@ php vendor/bin/phpunit
 | Service | File | Port | Notes |
 |---|---|---|---|
 | Register | `start_register.php` | `1236` | GatewayWorker service registry (`text://`) |
-| GlobalData | `start_globaldata.php` | `2207` | Cross-process shared variables |
 | Channel | `start_channel.php` | `3333` | Pub/sub inter-process comms |
 | Gateway | `start_gateway.php` | `7271` | WebSocket client connections |
 | Gateway SSL | `start_gateway_ssl.php` | `7272` | WSS (certs at `/home/my/files/apache_setup/`) |
@@ -41,8 +40,9 @@ php vendor/bin/phpunit
 | TaskWorker | `start_task.php` | `2208` | Text protocol; loads all `Tasks/*.php` |
 | WebServer | `start_web.php` | `55151` | HTTP + HTTPS; serves `Web/` |
 
-**myadmin1 only**: `globaldata`, `channel`, `register` (hostname check in `start.php`)
-**GlobalData IP**: `GLOBALDATA_IP` constant from `/home/my/include/config/config.settings.php`
+**myadmin1 only**: `channel`, `register` (hostname check in `start.php`)
+**Register host**: `GLOBALDATA_IP` constant from `/home/my/include/config/config.settings.php` — the host running `register`; gateway/BusinessWorkers set `registerAddress` to `GLOBALDATA_IP:1236`. The name predates the RETIRED GlobalData shared-variable service; the constant itself stays.
+**Shared state**: Redis (external service) via the `Applications/Chat/SharedState.php` facade — replaced the retired GlobalData server.
 **Logs**: `Worker::$stdoutFile` → `/home/my/logs/billingd.log`
 
 ## Key Patterns
@@ -60,19 +60,33 @@ $task_connection->connect();
 // which adds onClose/onError handling automatically.
 ```
 
-### GlobalData CAS Lock
+### SharedState (Redis) Lock & Shared State
+Redis is the platform's shared-state layer: the static `SharedState` facade in
+`Applications/Chat/SharedState.php` (phpredis; resolves the process-wide `$redis`
+global or `USE_REDIS`/`REDIS_HOST`/`REDIS_PORT`) replaced the retired GlobalData
+service — with real TTLs everywhere GlobalData had none.
 ```php
-global $global; // \GlobalData\Client instance at GLOBALDATA_IP:2207
-$var = 'vps_host_' . $service_id;
-if ($global->cas($var, 0, time())) {
-    $global->$requestVar = 'working';
-    // do work
-    $global->$var = 0; // release lock
+// Acquire: SET NX EX with a MANDATORY positive TTL. null token == held elsewhere OR Redis down (fail-safe).
+$lockName = 'vps_host_' . $service_id;
+$token = SharedState::lock($lockName, 900);
+if ($token !== null) {
+    try {
+        // Long work: renew before the TTL lapses. false == ownership lost (expired/stolen) => ABORT, don't touch the work.
+        if (!SharedState::renew($lockName, $token, 900)) { return; }
+        // ... do work ...
+    } finally {
+        SharedState::unlock($lockName, $token); // Lua token-compared DEL: no-op if the lock was re-acquired by someone else
+    }
 }
 ```
+- **Token discipline:** `lock()` returns a `host:pid:random` token; always pass it to `renew()`/`unlock()`. `unlock($name)` with a null token is an UNCONDITIONAL admin/stale-cleanup delete — never on a normal completion path.
+- **Fail-safe posture:** BOTH failure modes degrade identically — no Redis client (reads return null/`[]`, writes `false`, `lock()` returns `null`) AND a live-but-dead handle (every command dispatch is wrapped, so transport throws never escape into timers/Tasks; same fail-safe returns). Reason logged once per process — call sites need no try/catch; a lost lock takes the same branch a lost CAS used to. Death is timed, not sticky: `client()` short-circuits for `REPROBE_INTERVAL` (30s), then re-probes — PINGs the shared `$redis` handle and a PING that answers resumes it (phpredis re-handshakes on current builds); after 2 consecutive failed re-probe PINGs (`SHARED_HANDLE_GRACE_PROBES`) the shared handle is deprioritized (never closed/replaced/re-PINGed) and the facade heals through its OWN fresh PING-guarded lazy connect — so self-heal is bounded (shared handle when it recovers, else fresh internal handle within ~2 windows) with no restart. `SharedState::transportFailed()` distinguishes "transport dead" from contention/unset for the few callers that must (FeatureFlags' fail-safe defaults; `processing_queue_timer` escalating a dead-transport nudge as `unavailable`, contained by its three consumers: the 30s tick's safeCall, trigger_payment's `\Throwable` catch, and `msgPaymentprocess`'s local try/catch that keeps the boardctl nudge running).
+- **Namespaces (every key guarded into `dc:*`):** `dc:lock:` (raw lock tokens — with one observability exception: the `vps_host_<id>:request` sibling is a JSON `set()` value carrying the lock family's TTL 900, not a token), `dc:state:` (registry HASHes `hosts`/`rooms`/`channel_meta`/`timers`/`ptys`; per-key `running:<id>` STRING EX3600 + `running_ids` SET index; `sysinfo:<id>` EX300; `admin_hosts_cache` EX5), `dc:chat:` (`msgs:<channel>` LIST RPUSH+LTRIM keeping the newest 100, `activity` ZSET with read-time idle sweep at 3600s), `dc:flag:` (feature flags, no TTL), `dc:presence:` (records EX90 + `index`/`active` ZSETs swept by staleness).
+- **Lock TTLs:** `processing_queue` 900s (renewed mid-chain), `vps_host_<id>` 900s (Events + Tasks contend on the same key; renew-fail ⇒ abort), `queuein:<ip>` 900s (per-host drain), `startup_reap` 60s, `boardctl_asset_<id>` 22200s (token handed to the detached runner), `bot_owner:<loc>` 10s (renewed every move tick = the ownership heartbeat; `bot_state` TTL 30s outlives the lock). Ops rule: TTLs match or exceed the old GlobalData reap windows, never shorter — HyperV `GetVMList` can run 10+ minutes.
+- **Not namespaced:** the raw queue DATA LIST `queuein:<ip>` (and its Memcached fallback) lives OUTSIDE `dc:*` and is never touched by the facade — only the same-named drain lock goes through it.
 
 ### Task Function Signature (`Tasks/*.php`)
-Each file exports one `function filename($args)`. Auto-loaded from `Tasks/` on `onWorkerStart`. Available globals: `$worker_db` (Workerman MySQL), `$global` (GlobalData client), `$influx_v2_database`, `$memcache`, `$redis`. Use `App::db()` for MyAdmin database/session access; `$GLOBALS['tf']` has been removed.
+Each file exports one `function filename($args)`. Auto-loaded from `Tasks/` on `onWorkerStart`. Available globals: `$worker_db` (Workerman MySQL), `$influx_v2_database`, `$memcache`, `$redis` (no `$global` — cross-process state goes through the `SharedState` Redis facade, which `require_once`s from `Applications/Chat/SharedState.php`). Use `App::db()` for MyAdmin database/session access; `$GLOBALS['tf']` has been removed.
 
 ## Task Functions (`Tasks/`)
 - `bandwidth` — writes InfluxDB v2 bandwidth per VPS (in/out bytes)
@@ -81,13 +95,13 @@ Each file exports one `function filename($args)`. Auto-loaded from `Tasks/` on `
 - `processing_queue_task` — runs `process_payment` for billing queue entries
 - `vps_queue_task` / `vps_get_list` / `vps_update_info` — VPS lifecycle ops via `vps_queue_handler`
 - `async_hyperv_get_list` — SOAP `GetVMList` via native ext-soap `\SoapClient` (WSDL mode, `SOAP_1_2`); call outcomes (duration/success/code/msg) are recorded to InfluxDB v2 via the `$influx_v2_database` global (same client used by `bandwidth.php`) through the local `async_hyperv_report_metric()` helper — this replaced the removed `workerman/statistics`/`StatisticClient::report()` mechanism
-- `sync_hyperv_queue` / `async_hyperv_queue_runner` — HyperV queue sync with CAS
+- `sync_hyperv_queue` / `async_hyperv_queue_runner` — HyperV queue sync under the `vps_host_<id>` SharedState (Redis) lock (900s TTL; renew-fail ⇒ abort)
 - `hyperv_cleanupresources` — SOAP `CleanUpResources` call via `SoapClient`
 - `get_map` — returns VPS IP/VNC/slice map for a host
 - `queue_action` — executes a queued `queue.php` action inside the TaskWorker via a superglobal (`$_POST`/`$_REQUEST`) shim so legacy action handlers run unchanged
 - `chat_message` — persists V1 chat messages (`migrations/2026_07_phase2_chat_messages.sql`)
-- `memcached_queue_task` — processes `cpu_usage`/`bandwidth`/`server_info` queue entries from Memcached/Redis for `vps` and `quickservers`; InnoDB cluster retry with exponential backoff; writes CPU + bandwidth metrics to InfluxDB v2
-- `boardctl_task` — runs a single queued boardctl job via `boardctl_run_job($historyId)`; receives full `queue_log` row; sets `App::session()->account_id` from `history_owner`; 2hr timeout (`set_time_limit(7500)`); on error calls `boardctl_append_output`/`boardctl_set_status`; dispatched by `boardctl_queue_timer` (15s) which parses `history_type` as `"<action>:<assetId>"`, holds per-asset CAS lock (`boardctl_asset_<id>`, stale after 7800s), and allows concurrent multi-asset execution
+- `memcached_queue_task` — processes `cpu_usage`/`bandwidth`/`server_info` queue entries from Memcached/Redis for `vps` and `quickservers`; drains each host under the `queuein:<ip>` SharedState lock (900s TTL, renewed between items, renew-fail ⇒ stop that host); the raw `queuein:<ip>` queue LIST stays OUTSIDE the `dc:*` facade; InnoDB cluster retry with exponential backoff; writes CPU + bandwidth metrics to InfluxDB v2
+- `boardctl_task` — runs a single queued boardctl job via `boardctl_run_job($historyId)`; receives full `queue_log` row; sets `App::session()->account_id` from `history_owner`; 2hr timeout (`set_time_limit(7500)`); on error calls `boardctl_append_output`/`boardctl_set_status`; dispatched by `boardctl_queue_timer` (15s) which parses `history_type` as `"<action>:<assetId>"`, holds the per-asset Redis lock `boardctl_asset_<id>` (22200s = 6h job cap + 10min buffer) and hands the ownership token to the detached runner (`scripts/boardctl_runner.php`), which releases it token-checked (with a fresh-connection fallback); allows concurrent multi-asset execution
 
 ## Web Endpoints (`Web/`)
 - `queue.php` — VPS/QS queue dispatch; actions: `map`, `get_queue`, `get_new_vps`, `queue`
@@ -102,12 +116,14 @@ Each file exports one `function filename($args)`. Auto-loaded from `Tasks/` on `
 ## Process & Utility Classes (`Applications/Chat/`)
 - `Process.php` — PTY child process wrapper (`proc_open` + `TcpConnection` streams → `Gateway::sendToClient`)
 - `stdObject.php` — callable-property bag (magic `__call` dispatch)
+- `SharedState.php` — static Redis facade for all cross-process state: locks (SET NX EX + Lua token-checked renew/release), `dc:*`-namespaced registries/flags/presence, fail-safe when Redis is unavailable AND when a live-but-dead handle's commands throw (all wrapped; timed 30s re-probe self-heals — see Key Patterns)
 - `FeatureFlags.php` — feature-flag gating for V1 protocol rollout (see `docs/FEATURE_FLAGS.md`)
 - `Events.php` — GatewayWorker business logic (onConnect, onMessage, onClose); `dispatchTask($type, $args, $onResult, $onError)` wraps async dispatch with `onClose`/`onError` handling; `createDbConnection()` builds a retrying Workerman MySQL connection; V1 client protocol handlers (auth/hello, chat, cmd, pty, queue, config_vps, admin, telemetry) are documented in `docs/PROTOCOL_V1.md`
 
 ## Dependencies (`composer.json`)
 - Version constraints are now caret-/branch-pinned to what `composer.lock` resolved (was mostly floating `*`); pure pins, no version drift
-- `workerman/workerman v5.2.2`, `gateway-worker` (dev-master), `globaldata` (dev-master), `channel` (dev-master), `mysql` (dev-master), `gatewayclient` (dev-master)
+- `workerman/workerman v5.2.2`, `gateway-worker` (dev-master), `channel` (dev-master), `mysql` (dev-master), `gatewayclient` (dev-master)
+- `workerman/globaldata` — REMOVED; the retired shared-variable client (and the `globaldata` entry in `start.php`'s `$services`) is replaced by the `SharedState` Redis facade
 - `workerman/coroutine ^1.1.5` — now an explicitly-declared direct dependency (was previously an undeclared transitive dep of `workerman/workerman`); still functionally dormant/unused at runtime
 - `react/child-process v0.6.7`, `react/http v1.11.0`, `react/event-loop v1.6.0`
 - `react/mysql v0.6.0` — dead/unused dependency; runtime MySQL uses `workerman/mysql`'s `\Workerman\MySQL\Connection` (auto-reconnects on 2006/2013, persists `utf8mb4` charset)

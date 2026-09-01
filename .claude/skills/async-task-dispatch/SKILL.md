@@ -9,7 +9,7 @@ description: Dispatches work to the TaskWorker at `Text://127.0.0.1:2208` using 
 - **Never** call `AsyncTcpConnection` outside of an async context (i.e., only inside Workerman event callbacks or timer callbacks — not in a bare script).
 - **Always** call `$task_connection->connect()` **after** setting `onMessage` — setting handlers after `connect()` causes missed messages.
 - Task functions are auto-loaded by filename in `Tasks/*.php`. The filename (without `.php`) **must** match the function name exactly, and it **must** match the `type` key in the JSON payload.
-- Use `GlobalData CAS lock` before dispatching if the task must not run concurrently. Acquire the lock **before** creating the `AsyncTcpConnection`.
+- Acquire a `SharedState` cross-process lock before dispatching if the task must not run concurrently (see the `redis-shared-state` skill). Acquire the lock **before** creating the `AsyncTcpConnection`.
 - Periodic timers must be registered only in **worker process 0**: `if ($worker->id == 0)`.
 - The task response is always JSON: `{"return": <value>}`. Decode with `json_decode($task_result, true)`.
 
@@ -26,11 +26,11 @@ use Workerman\Worker;
 
 function my_task_function($args)
 {
-    global $worker_db, $global, $influx_v2_database, $memcache, $redis;
-    // $worker_db  → \Workerman\MySQL\Connection
-    // $global     → \GlobalData\Client at GLOBALDATA_IP:2207
-    // $memcache   → \Memcached connected to localhost:11211
-    // $redis      → \Redis (when USE_REDIS === true)
+    global $worker_db, $influx_v2_database, $memcache, $redis;
+    // $worker_db → \Workerman\MySQL\Connection
+    // $memcache  → \Memcached connected to localhost:11211
+    // $redis     → \Redis (when USE_REDIS === true); the SharedState facade
+    //              resolves its client from this global automatically
 
     $result = [];
     // ... your logic ...
@@ -58,24 +58,30 @@ $task_connection->connect();
 
 Verify: `$args` is JSON-serializable (no circular refs, no resource types).
 
-### Step 3 — Add a GlobalData CAS lock (if task must not run concurrently)
+### Step 3 — Add a SharedState lock (if task must not run concurrently)
 
-Based on `Tasks/vps_queue_task.php:37`:
+Use the `SharedState` Redis facade — see the `redis-shared-state` skill for the full acquire / renew-check / finally-unlock discipline and the lock-name TTL table. Based on `Tasks/vps_queue_task.php`, acquire in the dispatcher **before** connecting and release when the task result returns:
 
 ```php
-global $global;
-$var = 'my_task_lock'; // unique lock key
-if (!isset($global->$var)) {
-    $global->$var = 0;
+$lockName = 'my_task_lock';                  // bare name; lock() prepends dc:lock:
+$token = SharedState::lock($lockName, 900);  // null == already running (or Redis down)
+if ($token === null) {
+    return; // someone else holds it this cycle — skip
 }
-if ($global->cas($var, 0, 1)) {
-    // dispatch AsyncTcpConnection here (Step 2)
-    // Task function must call: $global->$var = 0; at the end
-}
-// else: already running, skip silently or log
+
+$task_connection = new AsyncTcpConnection('Text://127.0.0.1:2208');
+$task_connection->send(json_encode(['type' => 'my_task_function', 'args' => $args]));
+$task_connection->onMessage = function ($connection, $task_result) use ($task_connection, $lockName, $token) {
+    $task_connection->close();
+    SharedState::unlock($lockName, $token);  // owner-checked release on completion
+};
+$task_connection->onClose = function ($connection) use ($lockName, $token) {
+    SharedState::unlock($lockName, $token);  // connection-drop safety; no-op if already released
+};
+$task_connection->connect();
 ```
 
-Verify: The Task file releases the lock (`$global->$var = 0;`) in all code paths, including error paths.
+Verify: The lock releases in both `onMessage` and `onClose` (a token-checked `unlock` is idempotent on the second call). For a long-running task, the task function itself must `SharedState::renew($lockName, $token, 900)` before each blocking call and abort on `false` — never continue while holding nothing.
 
 ### Step 4 — Register a periodic timer (if scheduling recurring work)
 
@@ -144,10 +150,10 @@ grep -r 'function ' Tasks/ | grep -v '//' | awk -F'function ' '{print $2}' | cut
 ```
 Ensure the function name, filename (without `.php`), and `type` value are identical.
 
-**Task fires but CAS lock is never released — subsequent runs skip**
-The task function returned early (exception or early `return`) before `$global->$var = 0`. Add lock release to all exit paths or wrap the body in try/finally:
+**Task fires but the lock is never released — subsequent runs skip**
+A holder returned or threw before releasing. With `SharedState` a crashed holder self-expires at the lock TTL (no manual reset, unlike the old CAS flag), but still release on every path: wrap synchronous work and, for async dispatch, release in both `onMessage` and `onClose`. For a synchronous body use try/finally:
 ```php
-try { /* work */ } finally { $global->$var = 0; }
+try { /* work */ } finally { SharedState::unlock($lockName, $token); }
 ```
 
 **`onMessage` never fires — connection hangs**

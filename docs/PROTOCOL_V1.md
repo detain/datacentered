@@ -565,13 +565,13 @@ Request `data:{}`. Reply `data`:
 
 | Field | Type | Notes |
 |---|---|---|
-| `hosts` | arr<obj> | `[{id:str (uid), host_id:int, name:str, ima:str, type:int\|str, ip:str, online:str (Y-m-d H:i:s), module:str}]` — from Gateway sessions + `$global->hosts`, same source data as `msgClients` minus the chat-room noise and minus the mandatory `gzcompress` (use `enc:"gzip"` if large). |
+| `hosts` | arr<obj> | `[{id:str (uid), host_id:int, name:str, ima:str, type:int\|str, ip:str, online:str (Y-m-d H:i:s), module:str}]` — from Gateway sessions + the `dc:state:hosts` Redis HASH (SharedState registry), same source data as `msgClients` minus the chat-room noise and minus the mandatory `gzcompress` (use `enc:"gzip"` if large). |
 | `admins` | arr<obj> | `[{id:str, name:str, ima:"admin", img:str, online:str}]`. |
 
 #### `admin.timers` — replaces chat `timers`
 
 Request `data:{}`. Reply `data`: `{ timers: map<str,obj> }` — timer name →
-`{interval:int, last_run:ts?, timer_id:int}` from `$global->timers`.
+`{interval:int, last_run:ts?, timer_id:int}` from the `dc:state:timers` Redis HASH.
 *Diff note:* legacy `msgTimers` replies with an **empty** `{type:"timers"}`
 (the status calls are commented out); v1 specifies the real payload the CLI
 `ListCommand` wants.
@@ -580,8 +580,8 @@ Request `data:{}`. Reply `data`: `{ timers: map<str,obj> }` — timer name →
 
 Request `data:{}`. Reply `data`: `{ running: arr<obj> }` where each entry is the
 hub's registry record: `{run_id:str, host:str (uid), command:str, interact:bool,
-update_after:bool, for:str\|null, rows:int, cols:int, started:ts}` (legacy
-`$global->running` entries carry `type/command/id/interact/update_after/host/rows/cols/for`;
+update_after:bool, for:str\|null, rows:int, cols:int, started:ts}` (the retired
+GlobalData `running` entries carried `type/command/id/interact/update_after/host/rows/cols/for`;
 `type` dropped, `started` added).
 
 ### 2.10 `channel.*` / `chat.*` — channels & messaging (rebuilt; plan B6)
@@ -640,14 +640,23 @@ time}` — `is`/`to` are replaced by the channel id or `to` uid; `content` →
 
 Real-time position tracking for admins in the `dc.html` 3D datacenter scene.
 All three client→server ops require role **admin** and a successful prior
-`auth.hello`. Presence data is held in the `$global->dc_presence`
-GlobalData hash (`uid` → presence record). Group subscriptions live on the
-`Channel:dc_presence` group; clients are joined to it automatically on
-successful `auth.hello` (`Channel::joinGroup($client_id, 'dc_presence')`).
+`auth.hello`. Presence data is held in **Redis** via the SharedState facade:
+one JSON record per connection at `dc:presence:client:<client_id>`
+(`PRESENCE_STALE_TTL` = 90s expiry), membership indexed in the
+`dc:presence:index` / `dc:presence:active` ZSETs scored by last-seen ts.
+Group fan-out rides the GatewayWorker
+group `dc_presence`: clients are joined to it automatically on successful
+`auth.hello` (`Gateway::joinGroup($client_id, 'dc_presence')`, `Events.php`
+~:1137).
 
-Broadcasts are sent via `Channel::publish('dc_presence', ...)` — every
-client subscribed to that group receives the fan-out event, including the
-originating client (which may de-duplicate against its own uid).
+Broadcasts go out via `Gateway::sendToGroup('dc_presence', ...)` (`Events.php`
+~:1369) — every member of that group receives the fan-out event, including the
+originating client (which may de-duplicate against its own uid). The former
+`\Channel\Client::publish('dc_presence', ...)` route was removed as dead
+(BUG-A3: no `\Channel\Client::on('dc_presence')` subscriber was ever registered,
+`publish()` dialed the default `127.0.0.1:2206` while `start_channel.php` binds
+`0.0.0.0:3333`, and the `channel` service runs only on myadmin1 — so it failed
+silently forever).
 
 #### `dc.presence.join` (C→H)
 
@@ -664,8 +673,8 @@ Client enters the datacenter 3D scene at the specified position.
 **Reply:** `{ok: true, re: "<id>", data: {}}` on success;
 `{ok: false, re: "<id>", error: {code: "forbidden"}}` if not authed.
 
-On success the server also broadcasts `dc.presence.joined` to all subscribers
-of `Channel:dc_presence` (including the joiner — client should ignore its
+On success the server also broadcasts `dc.presence.joined` to all members of the
+`dc_presence` Gateway group (including the joiner — client should ignore its
 own uid in the broadcast).
 
 #### `dc.presence.move` (C→H; fire-and-forget — no reply)
@@ -684,8 +693,8 @@ is emitted to the sender.
 | `z` | num | yes (default `0`) | Z coordinate. |
 | `yaw` | num | yes (default `0`) | Horizontal rotation in degrees. |
 
-On success the server broadcasts `dc.presence.updated` to all subscribers
-of `Channel:dc_presence` (including the mover — client may de-duplicate).
+On success the server broadcasts `dc.presence.updated` to all members of the
+`dc_presence` Gateway group (including the mover — client may de-duplicate).
 
 #### `dc.presence.leave` (C→H)
 
@@ -697,11 +706,11 @@ Client exits the datacenter 3D scene.
 `{ok: false, re: "<id>", error: {code: "forbidden"}}` if not authed.
 
 On success the server also broadcasts `dc.presence.left` to all remaining
-subscribers of `Channel:dc_presence`.
+members of the `dc_presence` Gateway group.
 
 #### `dc.presence.joined` (H→C; broadcast, no reply)
 
-Fan-out event published to `Channel:dc_presence` when a member enters the
+Fan-out event sent to the `dc_presence` Gateway group when a member enters the
 scene.
 
 **Envelope fields (v1 envelope with `op: "dc.presence.joined"`):**
@@ -716,7 +725,7 @@ scene.
 
 #### `dc.presence.updated` (H→C; broadcast, no reply)
 
-Fan-out event published to `Channel:dc_presence` when a member moves.
+Fan-out event sent to the `dc_presence` Gateway group when a member moves.
 
 | Field | Type | Req | Notes |
 |---|---|---|---|
@@ -727,7 +736,7 @@ Fan-out event published to `Channel:dc_presence` when a member moves.
 
 #### `dc.presence.left` (H→C; broadcast, no reply)
 
-Fan-out event published to `Channel:dc_presence` when a member leaves the
+Fan-out event sent to the `dc_presence` Gateway group when a member leaves the
 scene.
 
 | Field | Type | Req | Notes |
@@ -737,9 +746,13 @@ scene.
 **Known limitation — stale presence on unexpected disconnect.** `onClose`
 is a legacy handler that must remain byte-unchanged (⛔ invariant). It does
 not emit `dc.presence.left`, so a client that loses its connection without
-sending `dc.presence.leave` remains in `$global->dc_presence` until the next
-explicit leave or a future presence-reaper step. Consumers must treat this
-as a documented scope boundary.
+sending `dc.presence.leave` is not announced as gone — but it no longer
+lingers forever: the record key expires at `PRESENCE_STALE_TTL` (90s),
+`sweepPresenceStale()` prunes the ZSET indexes (run from the presence flush
+and the 30s session-health timer, which also pings clients and drops those
+that miss 3+ consecutive pongs), and the 90s TTL is the eventual-consistency
+backstop when a deterministic removal raced a dead worker. Consumers must
+treat the TTL/sweep window as the documented scope boundary.
 
 ---
 
@@ -773,8 +786,8 @@ as a documented scope boundary.
 
 Per the OQ5 decision (`ws_progress.md`, 2026-07-01): all `chat.*` /
 `channel.*` messages are persisted to a **new `chat_messages` table**, plus a
-**bounded last-N hot cache** (GlobalData/Redis, N=100 per channel) serving
-`channel.join` history and live tails.
+**bounded last-N hot cache** (Redis LIST `dc:chat:msgs:<channel>`, N=100 per
+channel) serving `channel.join` history and live tails.
 
 Schema sketch (final DDL in Phase 2.7):
 
@@ -791,9 +804,10 @@ CREATE TABLE chat_messages (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 ```
 
-Why (from the OQ5 verification): today's `say()` writes to an **unbounded**
-`GlobalData rooms[0]['messages']` array — never trimmed, always room index `0`
-regardless of the `$to` target, and direct messages aren't persisted at all.
+Why (from the OQ5 verification): at that time `say()` wrote to an **unbounded**
+`rooms[0]['messages']` array in the (since-retired) shared-variable store —
+never trimmed, always room index `0`
+regardless of the `$to` target, and direct messages weren't persisted at all.
 v1 fixes this rather than preserving it: DB = durability/scrollback/search,
 hot cache = live tail; the cache is bounded and evicts, the table does not.
 High-volume `log`-level channel traffic MAY be sampled/skipped for DB writes
@@ -840,9 +854,13 @@ Flag A (`WS_NEW_HANDLING`, see `docs/FEATURE_FLAGS.md`):
 - `Events::isV1Envelope()` — detects a v1-shaped frame per §1 (requires all of
   `v==1`, non-empty `id`, non-empty `op`, int `ts`, and a `data` array). Legacy
   `{"type":...}` messages never match, so the legacy dispatch path is byte-unchanged.
-- `Events::dispatchV1($client_id, $envelope)` — the router. With **Flag A OFF
-  (the default) it is fully dormant**: the frame is parsed but no logic runs and
-  no reply is sent, so deploying it is a runtime no-op (State 1, per B8). With
+- `Events::dispatchV1($client_id, $envelope)` — the router. **Gated by Flag A
+  (`WS_NEW_HANDLING`)**: with the flag explicitly OFF it is fully dormant — the
+  frame is parsed but no logic runs and no reply is sent, so deploying it is a
+  runtime no-op (State 1, per B8 — the ship-dormant default at step 2.1; the
+  unset default has since **flipped ON in 9eabb50**, see `docs/FEATURE_FLAGS.md`,
+  so the router is live unless an operator sets Flag A `0` or Redis is
+  unreachable and `useNewHandling()` fails safe to OFF). With
   **Flag A ON**, only `ping` is functional end-to-end — it answers with the frozen
   event-shaped pong `{"v":1,"op":"pong","id":"<the ping's id>","ts":<unix>,"data":{}}`
   (§2.1, corrected 2026-07-31: this line also used to describe a `re`-correlated
@@ -853,7 +871,7 @@ Flag A (`WS_NEW_HANDLING`, see `docs/FEATURE_FLAGS.md`):
   before the legacy `type`-dispatch.
 
 Verified by `tests/EventsV1RouterTest.php` (legacy shapes never detected as v1;
-dormant-by-default; ping→pong byte-exact when Flag A on; unimplemented ops →
+dormant-when-Flag-A-off (the ship-time default, flipped ON in 9eabb50); ping→pong byte-exact when Flag A on; unimplemented ops →
 `not_implemented`).
 
 **Non-blocking notes from review (carried forward, not fixed in 2.1):**
@@ -864,9 +882,12 @@ dormant-by-default; ping→pong byte-exact when Flag A on; unimplemented ops →
    this — with Flag A ON, pre-auth `ping` is answered and other pre-auth ops
    return `not_implemented` rather than erroring+closing. This is a known,
    deliberate gap to be closed in **2.2** (tracked by a `@todo` on `dispatchV1()`).
-2. **Per-frame GlobalData round-trip when Flag A is OFF (perf).** Every
+2. **Per-frame shared-store round-trip on the flag check (perf).** Every
    v1-shaped frame consults `FeatureFlags::useNewHandling()`, which reads
-   GlobalData, even in the dormant default state. Acceptable for this phase
+   `dc:flag:ws_new_handling` from Redis via the SharedState facade (the flag
+   store moved off the retired GlobalData service in the GlobalData→Redis
+   migration; note the flag has since become enabled-by-default, so the check
+   is live, not dormant). Acceptable for this phase
    (no action needed); revisit if v1 frame volume grows before adoption.
 3. **Silent drop of v1-shaped input when Flag A is OFF (behavior delta).** A
    dormant v1 frame produces **no reply and no log line** — it is silently
@@ -890,7 +911,7 @@ by Flag A (`WS_NEW_HANDLING`) and dormant when it is OFF:
   its grace window) → source-IP defense-in-depth **hard fail**. On success it
   populates the same session shape legacy `msgLogin` sets (`uid`/`module`/`name`/
   `ima`/`ip`/`type`/`online`/`login`), sets `v1_authed`, `bindUid`s, joins the role
-  group, CAS-updates `$global->hosts` for vps hosts, and replies `auth.welcome`
+  group, updates the `dc:state:hosts` Redis HASH for vps hosts, and replies `auth.welcome`
   ({ `session`, `host_id`?, `uid`, `name`, `hub_time`, `timers`? } per §2.1 — no `img`).
 - **Auth gate now enforced (closes the step 2.1 gap).** `dispatchV1()` enforces the
   §2.1 ordering rule: with Flag A ON, any op other than `auth.hello` received before
@@ -899,8 +920,11 @@ by Flag A (`WS_NEW_HANDLING`) and dormant when it is OFF:
 - **Migration.** `migrations/2026_07_phase2_token_auth.sql` adds the nullable
   `*_token_*` columns to `vps_masters`/`qs_masters` and creates the empty `ws_bots`
   table (AUTH_DESIGN §2). Behavior-neutral, operator-applied manually.
-- Still dormant behind Flag A: with the flag OFF (the default), `dispatchV1()`
-  returns before any auth logic, so this is a fleet-wide runtime no-op.
+- Gated by Flag A: with the flag explicitly OFF, `dispatchV1()` returns before
+  any auth logic, so this is a fleet-wide runtime no-op. Today the unset flag
+  reads ON (flipped in 9eabb50 — see `docs/FEATURE_FLAGS.md`), so `auth.hello` is
+  live; explicitly setting Flag A `0` (or the Redis-unreachable fail-safe) is
+  what makes it dormant.
 
 **Concrete auth-failure codes (clarifies §2.1's example).** §2.1 shows `auth_failed`
 only as an *illustrative generic* reply code. The concrete, machine-readable codes the
@@ -941,19 +965,24 @@ a pre-auth `cmd.*` op is answered `auth_required` + close, per step 2.2):
   Role **host** + ownership. **⛔ Exit-code invariant (E1):** `code`/`term` are
   forwarded to the admin **verbatim** — no casting/defaulting/remapping —
   because `queue_log` completion depends on provirted's 0/1 codes. Removes the
-  finished run from the registry via a whole-map CAS loop.
+  finished run from the registry — deletes its `dc:state:running:<run_id>` key
+  and its id from the `dc:state:running_ids` SET index.
 - `Events::handleCmdKill()` — `cmd.kill` (admin `C→H`, relayed `H→A`). Role
   **admin**; the registry entry is intentionally left in place — the agent's
   ensuing `cmd.exit` performs cleanup (mirrors legacy `stop_run`→`ran`).
 
-All five relay through the **same shared `$global->running` GlobalData
-registry** the legacy path uses, via the identical whole-map CAS
-read-modify-write loop, so legacy md5-keyed entries and v1 uuid-keyed entries
-**coexist without collision** (registration, exit-removal, and onClose sweep all
-CAS-safe). Registry entries also carry the legacy `id` field aliased to
+All five relay through the **same shared running registry** the legacy path
+uses — Redis via SharedState since the GlobalData→Redis migration: one
+`dc:state:running:<run_id>` STRING per run (JSON value, EX `RUNNING_ENTRY_TTL`
+= 3600s, self-reclaiming orphans) plus a `dc:state:running_ids` SET index for
+enumeration. The old whole-map CAS read-modify-write loop is gone — registration
+(`SET NX` + `sAdd`), exit-removal (`DEL` + `sRem`) and the onClose sweep are
+O(1) per-field ops — so legacy md5-keyed entries and v1 uuid-keyed entries
+**coexist without collision**. Registry entries also carry the legacy `id` field aliased to
 `run_id` so pre-existing consumers read them without notices. Still dormant
-behind Flag A: with the flag OFF (the default) `cmd.*` produces no reply, no
-relay and no registry write — a fleet-wide runtime no-op.
+behind Flag A: with the flag OFF `cmd.*` produces no reply, no
+relay and no registry write (today the unset flag reads ON, so `cmd.*` is live;
+explicitly setting Flag A OFF is what makes it a fleet-wide runtime no-op).
 
 Verified by `tests/EventsV1CmdTest.php` (happy paths + explicit-field carry;
 role/ownership rejections; run_id-collision non-overwrite; host-offline
@@ -1003,23 +1032,28 @@ allocation is a Phase-3 host-agent concern:
 - `Events::handlePtyResize()` — `pty.resize` (admin `C→H`, relayed `H→A`; no
   reply). Role **admin** AND **owner-only** (sender uid == registry `for`) —
   resize is origination-side only, unlike duplex `pty.data`. Relays
-  `{pty_id,cols,rows}` and CAS-updates the registry geometry. Unknown `pty_id`
+  `{pty_id,cols,rows}` and updates the registry geometry (`hSet` on the
+  `dc:state:ptys` Redis HASH). Unknown `pty_id`
   silently dropped.
 - `Events::handlePtyClose()` — `pty.close` (either party any→hub→peer; no reply).
   Either the owning admin or the allocated host may close; anyone else gets
   `forbidden`. Relays the close (with the optional exit `code` verbatim) to the
-  **other** party, removes the entry from the registry via a whole-map CAS loop,
+  **other** party, removes the entry from the registry with one `hDel` on the
+  `dc:state:ptys` Redis HASH,
   and emits a structured §5 `pty_audit` `close` line (`pty_id` / who closed /
   `code` / timestamp).
 
-Pty session state lives in a **separate `$global->ptys` GlobalData registry**,
-fully decoupled from the cmd `$global->running` registry (verified: a full pty
-open/resize/close lifecycle leaves `$global->running` byte-identical, and vice
-versa), lazily created via `$global->add('ptys', [])` so no legacy method is
+Pty session state lives in a **separate `dc:state:ptys` Redis HASH** (field =
+`pty_id`, JSON value; the hash is the same registry the retired GlobalData `ptys`
+array became), fully decoupled from the cmd `dc:state:running:*` keys (verified:
+a full pty open/resize/close lifecycle leaves the cmd running registry
+byte-identical, and vice versa); no lazy seed is needed — the first `hSet`
+creates the hash — so no legacy method is
 touched. Env dropping, scope gating, and the audit stream all improve on the
 legacy admin-gated `Process.php` shell (which has no structured pty audit at
-all). Still dormant behind Flag A: with the flag OFF (the default) `pty.*`
-produces no reply, no relay and no registry write — a fleet-wide runtime no-op.
+all). Still gated by Flag A: with the flag explicitly OFF, `pty.*`
+produces no reply, no relay and no registry write — a fleet-wide runtime no-op
+(see `docs/FEATURE_FLAGS.md`: the unset default is ON).
 
 Verified by `tests/EventsV1PtyTest.php` (command-scope happy path with default
 `cols=80`/`rows=24` and client `env` proven not relayed; structured audit-line
@@ -1029,7 +1063,7 @@ non-admin / missing-`pty_id` / missing-command / `pty_id`-collision non-overwrit
 base64 pass-through, third-party `forbidden`, unknown-id silent drop; `pty.resize`
 owner-only + registry geometry update; `pty.close` either-party relay + removal +
 verbatim `code=0`; dormancy when Flag A off; unauthed→`auth_required`+close; and
-registry isolation from `$global->running`).
+registry isolation from the cmd `dc:state:running:*` keys).
 
 **Known Phase-3 refinements (not blocking; carried forward):**
 
@@ -1040,7 +1074,7 @@ registry isolation from `$global->running`).
    agent alloc-ack is a Phase-3 refinement.
 2. **No pty reaper yet.** Registry entries are removed only on an explicit
    `pty.close`. There is no disconnect-driven or cold-start sweep of orphaned
-   `$global->ptys` entries yet — a Phase-3 (or dedicated pty-reaper step)
+   `dc:state:ptys` fields yet — a Phase-3 (or dedicated pty-reaper step)
    follow-up, mirroring the cmd path's onClose/cold-start cleanup.
 3. **Shell-scope elevation grant is unwired.** Shell scope stays denied for all
    admins until the auth design defines the concrete `pty_shell` elevation
@@ -1122,9 +1156,10 @@ byte-identical result passthrough incl. hostile payloads; role/module rejections
 task-failure/dispatch-failure → `internal`; dormancy when Flag A off; unauthed →
 `auth_required` + close) and `tests/QueueActionSuperglobalShimTest.php` (the
 `$_REQUEST`/`$_POST` save/inject/restore contract proven directly, including restore
-after a throwing handler). 124 tests green; reviewed CLEAN. Still dormant behind
-Flag A: with the flag OFF (the default) `queue.*` produces no reply, no task dispatch
-and no state change — a fleet-wide runtime no-op.
+after a throwing handler). 124 tests green; reviewed CLEAN. Gated by
+Flag A: with the flag explicitly OFF, `queue.*` produces no reply, no task dispatch
+and no state change — a fleet-wide runtime no-op; today the unset flag reads ON
+(flipped in 9eabb50 — see `docs/FEATURE_FLAGS.md`), so it is live.
 
 **Deferred follow-up (documented, not faked green).** The live end-to-end
 "WS reply === direct `vps_queue_handler()` output" byte-parity test requires the
@@ -1177,8 +1212,9 @@ a pre-auth op is answered `auth_required` + close, per step 2.2):
   `GetMap.php` json output — no hub-side transformation exists to diverge.
 - **`telemetry.sysinfo` thin relay.** Modeled on legacy `msgPhpsysinfo`: the admin
   request is relayed to the host as a fresh envelope and correlated via a
-  CAS-maintained GlobalData `sysinfos` registry (relay id → requesting admin uid +
-  original envelope id); the host's `re`-correlated response is forwarded to the
+  Redis `sysinfos` registry — one TTL'd key per relay
+  (`dc:state:sysinfo:<relay-id>`, EX `SYSINFO_TTL`=300; value = requesting admin
+  uid + original envelope id); the host's `re`-correlated response is forwarded to the
   recorded admin with `data.host` overwritten from the authed host session (never
   trusted from the payload). Reply leg requires the sender BE the addressed host.
 
@@ -1208,18 +1244,21 @@ reply `data` as b64gz "expressed as `enc:"gzip"` on the envelope"). Now:
   plain hub output is spec-compliant; hub-side compression of large outbound
   envelopes is a follow-up optimization, not a correctness gap.
 
-Still dormant behind Flag A: with the flag OFF (the default) all eleven ops — and
+Gated by Flag A: with the flag explicitly OFF, all eleven ops — and
 the gzip decode path — produce no reply, no task dispatch and no state change
 (a v1-shaped frame, gzip'd or not, is parsed and discarded), a fleet-wide runtime
-no-op. Legacy handlers byte-unchanged; `php -l` clean.
+no-op; today the unset flag reads ON (flipped in 9eabb50 — see
+`docs/FEATURE_FLAGS.md`), so they are live. Legacy handlers byte-unchanged; `php -l` clean.
 
 **Non-blocking notes from review (carried forward, not fixed in 2.6):**
 
-1. **No `sysinfos` registry reaper.** The GlobalData `sysinfos` relay registry
-   (relay id → admin) has no expiry/reaper — a host that never answers leaks its
-   entry forever, and the waiting admin gets no timeout error. Mirrors the pty
-   registry's known 2.4 gap; a dedicated reaper step (or fold into the pty reaper)
-   is the follow-up. Flagged inline in `handleTelemetrySysinfo()`.
+1. **`sysinfos` relay leak — fixed by the Redis migration; admin timeout still
+   open.** The original note recorded that the `sysinfos` relay registry
+   (relay id → admin) had no expiry/reaper, so a host that never answered leaked
+   its entry forever. Relay entries now live in Redis with a real TTL
+   (`dc:state:sysinfo:<id>` @ `SYSINFO_TTL`=300s) and self-reclaim. The waiting
+   admin still gets no timeout error — that half remains the follow-up (fold
+   into the pty reaper step).
 2. **Hub does not gzip outbound envelopes.** As above — spec-compliant, deferred
    as an optimization.
 
@@ -1243,8 +1282,10 @@ gated by Flag A (`WS_NEW_HANDLING`) and dormant when it is OFF. Reachable only v
 close, per step 2.2):
 
 - `Events::handleChannelList()` — `channel.list` (§2.10). Derives the list from
-  the union of the `$global->channel_meta` registry (explicit `channel.create`d
-  channels) and every id with traffic in the `$global->channels` hot cache, then
+  the union of the `dc:state:channel_meta` Redis HASH (explicit `channel.create`d
+  channels) and every id inside the idle window of the `dc:chat:activity` ZSET
+  index (channels with recent traffic; host:* / job:* log channels appear once
+  something is published to them), then
   **filters by the caller's ACL** so hosts see only their own channels and bots
   only `chat:*`. Reply `{channels:[{id,type,topic,members}]}`.
 - `Events::handleChannelJoin()` — `channel.join`. Validates id shape + role ACL,
@@ -1258,9 +1299,9 @@ close, per step 2.2):
   no-op); reply `{}`, best-effort presence follows.
 - `Events::handleChannelCreate()` — `channel.create`, **ADMIN-GATED** (plan B6/B7:
   the admin UI "New Channel" button). Name constrained to a sane slug; writes
-  `{type:'chat',topic,created_by,created_at}` into `$global->channel_meta` via a
-  CAS whole-map loop. A **duplicate id is rejected with `bad_request` INSIDE the
-  CAS loop** (two racing creates cannot both win; no silent overwrite of an
+  `{type:'chat',topic,created_by,created_at}` into the `dc:state:channel_meta`
+  Redis HASH with `hSetNx` — an atomic create. A **duplicate id is rejected with
+  `bad_request`** (two racing creates cannot both win; no silent overwrite of an
   existing channel's metadata). Reply `{channel:"chat:<name>"}`.
 - `Events::handleChannelPublish()` — `channel.publish` (`any→H`), the v1
   counterpart of the legacy `say()` room path: raw-text storage, durable
@@ -1289,9 +1330,12 @@ against) — and both persists and caches it:
   fanned-out event and the cached entry. `body` is stored **RAW** (no
   `nl2br`/`htmlspecialchars` at store time — rendering is a client concern, the
   OQ5 fix vs legacy `say()`).
-- **Hot cache** is the `$global->channels` map (channel id → last
-  `CHAT_HISTORY_MAX`=100 message objects), maintained with the CAS whole-map loop
-  convention of `$global->ptys`/`sysinfos`. Bounded and evicting, unlike legacy
+- **Hot cache** is a Redis LIST per channel — `dc:chat:msgs:<channel>`, last
+  `CHAT_HISTORY_MAX`=100 message objects — appended and bounded in one pipeline
+  (`SharedState::rPushLtrim`: RPUSH + LTRIM keeping the **newest** 100), with
+  last-activity ts recorded in the `dc:chat:activity` ZSET index (idle channels
+  are reclaimed at read time, `CHAT_CHANNEL_IDLE_TTL`=3600s). Bounded and
+  evicting, unlike legacy
   `rooms[0]['messages']`; it serves `channel.join` history and the live tail
   without a DB round-trip.
 - **`level:"log"` SKIPS the DB write** (cache + fan-out only, `msg_id` 0) per §4 —
@@ -1324,20 +1368,25 @@ token-auth migration) is not yet threaded into the auth session.
    `{ok:true,data:{msg_id:<int>}}` (the persisted id, 0 when skipped/failed) so the
    sender can correlate scrollback. Unspecified-but-harmless — additive only.
 
-**⚠️ KNOWN SCALABILITY FOLLOW-UP (flagged prominently — more substantive than a
-routine LOW note).** The per-channel *message* list is capped and evicts, but the
-`$global->channels` map has **no cap on the NUMBER of channel keys and no idle
-eviction**, and two growth vectors compound. (a) `chat.send`'s DM form does **not
-validate the `to` uid for existence/format**, so any authed user can mint an
-unlimited number of distinct `dm:<me>:<random>` keys — each becoming a permanent map
-entry (and a `chat_messages` row). (b) Every `channel.publish`/`chat.send` append
-**CAS round-trips the ENTIRE all-channels map**, not just the one channel, so the
-per-op GlobalData payload grows linearly with the total fleet-wide channel count.
-The already-solved per-channel 100-message cap bounds neither. Suggested follow-up:
-move to **per-channel GlobalData keys** (an append touches only its own channel)
-instead of one giant map, and/or a **channel-count cap + idle-eviction policy**, and
-validate the DM `to` uid so junk `dm:*` keys cannot be minted. Harmless at current
-channel counts; flagged inline in `chatCacheAppend()` and `handleChatSend()`.
+**⚠️ SCALABILITY FOLLOW-UP — reduced, not eliminated (re-pointed for Redis).**
+The original 2.7 finding: the per-channel *message* list was capped and evicted,
+but the single all-channels map had **no cap on the NUMBER of channel keys and
+no idle eviction**, and every `channel.publish`/`chat.send` append CAS
+round-tripped the ENTIRE map, so the per-op payload grew linearly with the
+total fleet-wide channel count. The GlobalData→Redis migration resolved the
+payload-growth vector by changing the storage shape: the cache is now **one
+Redis LIST per channel** (`dc:chat:msgs:<channel>` — an append touches only its
+own key), tails are hard-bounded by LTRIM at `CHAT_HISTORY_MAX`=100, and idle
+channels are reclaimed on read by `sweepIdleChatChannels()`
+(`CHAT_CHANNEL_IDLE_TTL`=3600s drops the tail and the `dc:chat:activity` index
+entry). **Still open:** (a) `chat.send`'s DM form does **not** validate the `to`
+uid for existence/format, so any authed user can still mint unlimited distinct
+`dm:<me>:<random>` keys — each a hot-cache LIST (idle-reclaimed only when a
+`channel.list` sweep runs) plus a permanent `chat_messages` row; and (b) a
+channel that is only ever published to — never listed — accumulates keys, since
+the sweep is read-time. Suggested follow-up stands: validate the DM `to` uid
+and/or cap + periodically reap the activity index. Harmless at current channel
+counts; flagged inline in `chatCacheAppend()` and `handleChatSend()`.
 
 **Other non-blocking notes from review (carried forward, not fixed in 2.7):**
 
@@ -1356,9 +1405,10 @@ channel counts; flagged inline in `chatCacheAppend()` and `handleChatSend()`.
    deduped by uid, pinned by `testPresenceMembersDedupedByUid`). Flagged in
    `handleChannelList()`/`chatBroadcastPresence()`.
 
-Still dormant behind Flag A: with the flag OFF (the default) all six ops produce no
+Gated by Flag A: with the flag explicitly OFF, all six ops produce no
 reply, no task dispatch, no cache write and no group op — a fleet-wide runtime
-no-op. Legacy `say`/`rooms`/`onClose` byte-unchanged; `php -l` clean on both
+no-op; today the unset flag reads ON (flipped in 9eabb50 — see
+`docs/FEATURE_FLAGS.md`), so they are live. Legacy `say`/`rooms`/`onClose` byte-unchanged; `php -l` clean on both
 `Events.php` and `Tasks/chat_message.php`.
 
 Verified by `tests/EventsV1ChatTest.php` (dormancy when Flag A off; list reflects
@@ -1391,11 +1441,11 @@ is OFF. Reachable only via `dispatchV1()` (Flag A on + v1-authed; a pre-auth
   (`msgClients`). Same source data as `msgClients` — iterate
   `Gateway::getAllClientSessions()`, split admin sessions from everything else —
   reshaped to the frozen §2.9 `hosts`/`admins` field lists, **minus the
-  chat-room noise** (`$global->rooms`) and **minus the mandatory `gzcompress`**
+  chat-room noise** (`dc:state:rooms` registry) and **minus the mandatory `gzcompress`**
   legacy always applies (a caller wanting compression uses envelope `enc:"gzip"`
   instead, per §1). `host_id` is parsed from the uid the hub itself bound at auth
   (never client-supplied); vps-module sessions missing `type`/`ip` fall back to
-  the `$global->hosts` registry row (`vps_masters`, keyed by `vps_id`). Reply
+  the `dc:state:hosts` registry row (`vps_masters`, keyed by `vps_id`). Reply
   `{ok:true,data:{hosts:arr,admins:arr}}`.
 - `Events::handleAdminTimers()` — `admin.timers`, replaces chat `timers`
   (`msgTimers`). §2.9's diff-note records that legacy `msgTimers` replies with an
@@ -1403,16 +1453,17 @@ is OFF. Reachable only via `dispatchV1()` (Flag A on + v1-authed; a pre-auth
   is a **genuine improvement**, not just parity: it returns the real registry
   payload the CLI `ListCommand` wants, name → `{interval, timer_id}` (with the
   optional `last_run` emitted only when present). The registry is
-  `$global->timers`, enriched at `Timer::add()` registration time on the
+  the `dc:state:timers` Redis HASH, enriched at `Timer::add()` registration time on the
   timer-hosting server (myadmin1, worker id 0) for each of
   `processing_queue_timer`, `processing_queue_reaper`, `boardctl_queue_timer`,
   `vps_queue_timer`, `memcache_queue_timer`, `map_queue_timer`,
   `hyperv_update_list_timer`, `hyperv_queue_timer`. Reply
   `{ok:true,data:{timers:map<str,obj>}}` (`{}` on a server that hosts no timers).
 - `Events::handleAdminRunning()` — `admin.running`, replaces chat/agent
-  `run_list`. Read-only over the **SAME** `$global->running` registry that step
-  2.3's `cmd.exec` (`handleCmdExec`) writes; it reads and never CAS-mutates the
-  map. Handles **both** entry shapes that coexist there: v1 entries (uuid
+  `run_list`. Read-only over the **SAME** running registry that step
+  2.3's `cmd.exec` (`handleCmdExec`) writes — the `dc:state:running_ids` SET
+  index enumerated with one GET per `dc:state:running:<id>` key; it reads and
+  never mutates. Handles **both** entry shapes that coexist there: v1 entries (uuid
   `run_id`, `started` present) and legacy `run_command` entries (md5 key, no
   `started`). Every entry is reshaped to the frozen §2.9 record `{run_id, host,
   command, interact, update_after, for, rows, cols, started}`; legacy `type` is
@@ -1425,7 +1476,7 @@ does not live-track `last_run`. Per the frozen §2.9 spec `last_run` is **option
 alone is fully conformant. Wiring real `last_run` would require writing a
 timestamp from **inside** each timer callback body — and several of those
 callbacks (`processing_queue_timer` / `vps_queue_timer` / `boardctl_queue_timer`)
-are **invariant-frozen**: they contain CAS-lock, DB-retry and task-dispatch logic
+are **invariant-frozen**: they contain SharedState (Redis) lock, DB-retry and task-dispatch logic
 that must stay **byte-for-byte identical** through the migration. Not touching
 those bodies is the conservative, spec-conformant choice — **confirmed sound by
 an independent Review Agent**, not an oversight. It remains a legitimate future
@@ -1461,9 +1512,10 @@ change this step):**
    isolated in git history yet. Purely informational — the program's established
    rule is NOT to commit during Phase 2 execution.
 
-Still dormant behind Flag A: with the flag OFF (the default) all three ops
+Gated by Flag A: with the flag explicitly OFF, all three ops
 produce no reply and no state read/write beyond the parse — a fleet-wide runtime
-no-op. Legacy `clients`/`timers`/`run_list` byte-unchanged; `php -l` clean.
+no-op; today the unset flag reads ON (flipped in 9eabb50 — see
+`docs/FEATURE_FLAGS.md`), so they are live. Legacy `clients`/`timers`/`run_list` byte-unchanged; `php -l` clean.
 
 Verified by `tests/EventsV1AdminTest.php` (19 tests / 156 assertions); full suite
 now 241 tests / 1296 assertions, 100% green; reviewed CLEAN by an independent
@@ -1494,23 +1546,26 @@ message). It contains **no payment business logic** and never touches
   is never open. The token is read only from `$_POST`, making this POST-only (a
   bare GET presents no token and always fails auth). The required manual operator
   provisioning of this secret is documented in `docs/AUTH_DESIGN.md` §10.
-- **Flag A dormancy gate (B8 ship-dormant).** Gated behind
-  `FeatureFlags::useNewHandling()`. With Flag A OFF (the default), a *valid*
+- **Flag A gate (B8).** Gated behind
+  `FeatureFlags::useNewHandling()`. With Flag A explicitly OFF, a *valid*
   authenticated request still gets `{"status":"error","error":"disabled"}` and
-  nothing is nudged — deploying this file is a runtime no-op fleet-wide until an
-  operator turns Flag A on.
+  nothing is nudged. Today the unset flag reads ON (flipped in 9eabb50 — see
+  `docs/FEATURE_FLAGS.md`), so once `WS_TRIGGER_TOKEN` is provisioned the endpoint
+  is live; it is dormant only under an explicit operator `0` or the
+  Redis-unreachable fail-safe.
 - **Nudge, not duplicate (design rationale).** On success it calls
   **`Events::processing_queue_timer()`** directly — the **exact same** method the
   registered 30s timer (`Events.php` `onWorkerStart`) and the legacy
   `msgPaymentprocess()` handler already invoke on-demand. That method is
-  **CAS-safe by design**: it takes the GlobalData `processing_queue` CAS lock
+  **race-safe by design**: it takes the Redis `dc:lock:processing_queue` lock
+  (SharedState `SET NX EX` 900s, token-renewed mid-chain)
   before reading the queue and dispatches each row to the dedicated payment
   TaskWorker pool (`Events::PAYMENT_TASK_ADDRESS`, `Text://127.0.0.1:2209`) via
   `Events::dispatchTask('processing_queue_task', $row, …)`. The endpoint therefore
   **reuses** the existing, frozen queue-processing path rather than duplicating
   `Tasks/processing_queue_task.php`'s logic — no divergent second code path, and
-  no possibility of double-processing (if the timer is already mid-tick the CAS
-  simply loses and the nudge is a harmless no-op).
+  no possibility of double-processing (if the timer is already mid-tick the lock
+  acquire simply loses and the nudge is a harmless no-op).
 - **Response shape (body-only, always HTTP 200).** Like other `Web/*.php` scripts
   in this codebase, the WebServer emits the included file's output as a plain 200;
   logical success/failure is carried in the JSON body's `status`/`error` fields:
@@ -1531,14 +1586,14 @@ where the constant is truly absent.
 **Non-blocking review notes (LOW severity, documented as follow-ups — no code
 change this step):**
 
-1. **CAS-lost race reports `ok`.** If an HTTP nudge arrives while the timer is
-   already mid-tick, `processing_queue_timer()`'s CAS lock is already held, so the
+1. **Lock-lost race reports `ok`.** If an HTTP nudge arrives while the timer is
+   already mid-tick, `processing_queue_timer()`'s Redis lock is already held, so the
    nudge does no new work — yet the endpoint still replies `{"status":"ok"}`. This
    is **cosmetic, not a correctness issue** (no duplicate work happens either way);
    documented so the `ok` is not misread as "a fresh drain definitely ran".
 2. **Synchronous nudge briefly stalls one WebServer worker.** `processing_queue_timer()`
    runs inline in the handling WebServer worker process, briefly occupying it while
-   it takes the CAS lock and dispatches rows. This is the **same performance
+   it takes the Redis lock and dispatches rows. This is the **same performance
    characteristic as the timer's own regular tick** (which likewise runs the body
    synchronously in its host process) — **acceptable, not a regression**.
 3. **Always HTTP 200 regardless of logical outcome.** The real outcome is in the
@@ -1553,9 +1608,10 @@ change this step):**
    real socket connect was **removed as redundant** with existing `FeatureFlagsTest`
    coverage.
 
-Still dormant behind Flag A: with the flag OFF (the default) a valid authenticated
-request nudges nothing (`disabled`) — a fleet-wide runtime no-op. Touches/duplicates
-**no** existing queue or task logic; `php -l` clean.
+Gated by Flag A: with the flag explicitly OFF, a valid authenticated
+request nudges nothing (`disabled`) — a fleet-wide runtime no-op; today the unset
+flag reads ON (flipped in 9eabb50 — see `docs/FEATURE_FLAGS.md`), so the nudge is
+live. Touches/duplicates **no** existing queue or task logic; `php -l` clean.
 
 Verified by `tests/TriggerPaymentEndpointTest.php` (9 tests / 34 assertions); suite
 250/1330, 100% green; reviewed CLEAN.
