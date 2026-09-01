@@ -9,14 +9,15 @@
  * next 30s `processing_queue_timer` tick. This file contains NO payment
  * business logic and never touches `queue_log`/billing tables itself.
  *
- * Nudge mechanism: calls Events::processing_queue_timer() — byte-identical
- * to what the registered 30s timer (Events.php onWorkerStart) and the legacy
- * msgPaymentprocess() handler already invoke. That method is cross-process
- * safe by design: it takes the GlobalData CAS lock `processing_queue` before
+ * Nudge mechanism: calls Events::processing_queue_timer() — the same method
+ * the registered 30s timer (Events.php onWorkerStart) and the legacy
+ * msgPaymentprocess() handler invoke. That method is cross-process safe by
+ * design: it takes the SharedState (Redis) lock `processing_queue` before
  * reading the queue and dispatches each row to the dedicated payment
  * TaskWorker pool (Events::PAYMENT_TASK_ADDRESS, Text://127.0.0.1:2209) via
  * Events::dispatchTask('processing_queue_task', $row, ...). If the timer is
- * already mid-run the CAS simply loses and this nudge is a harmless no-op.
+ * already mid-run the lock acquire simply loses and this nudge is a harmless
+ * no-op.
  *
  * Routing: start_web.php's WebServer maps URL paths to files under Web/ by
  * filename (Web/queue.php -> /queue.php), so the plan's logical
@@ -34,10 +35,12 @@
  * token as a POST field (e.g. a conventional GET) always fail auth.
  *
  * Dormancy (plan B8 ship-dormant rule): gated behind Flag A via
- * FeatureFlags::useNewHandling(). With Flag A OFF (the default) a valid
- * authenticated request gets {"status":"error","error":"disabled"} and
- * nothing is nudged — deploying this file is a runtime no-op fleet-wide
- * until an operator turns Flag A on.
+ * FeatureFlags::useNewHandling(). With Flag A OFF a valid authenticated
+ * request gets {"status":"error","error":"disabled"} and nothing is nudged.
+ * Flag A is ON by default over reachable Redis (an absent flag reads as 1 —
+ * see FeatureFlags.php:25-41); it is OFF only when an operator explicitly
+ * sets it to 0 or Redis is unreachable (the fail-safe state), so this
+ * endpoint is live unless an operator deliberately takes it dormant.
  *
  * Response: JSON body (the WebServer sends included-file output as a plain
  * 200 response, so success/failure is conveyed in the body's `status`
@@ -73,7 +76,7 @@ try {
         $trigger_payment_respond(['status' => 'error', 'error' => 'unauthorized']);
         return;
     }
-    // --- Flag A gate (B8 ship-dormant): no-op until an operator enables it --
+    // --- Flag A gate (B8): unset default is ON since 9eabb50; live unless explicitly OFF or Redis unreachable (fail-safe) --
     if (!class_exists('FeatureFlags', false)) {
         require_once __DIR__.'/../Applications/Chat/FeatureFlags.php';
     }
@@ -85,16 +88,12 @@ try {
     if (!class_exists('Events', false)) {
         require_once __DIR__.'/../Applications/Chat/Events.php';
     }
-    /**
-     * @var \GlobalData\Client
-     */
-    global $global;
-    if (!($global instanceof \GlobalData\Client)) {
-        // The WebServer worker has no GlobalData client of its own; the timer
-        // body needs one for its `processing_queue` CAS lock. Same client +
-        // address Events::onWorkerStart creates in the BusinessWorker.
-        $global = new \GlobalData\Client(GLOBALDATA_IP.':2207');
-    }
+    // GlobalData→Redis migration (A1): the timer's `processing_queue` lock is a
+    // SharedState lock resolved through the $GLOBALS['redis'] the WebServer
+    // already initializes in its onWorkerStart — no GlobalData client is needed
+    // here anymore. USE_REDIS is therefore operationally REQUIRED for this
+    // endpoint to ever win the lock (with Redis off, SharedState fails safe and
+    // the nudge is a no-op until the next BusinessWorker tick takes it).
     Worker::safeEcho('trigger_payment: nudging processing_queue_timer for '.$_SERVER['REMOTE_ADDR']."\n");
     Events::processing_queue_timer();
     $trigger_payment_respond(['status' => 'ok', 'nudged' => 'processing_queue_timer', 'ts' => time()]);
