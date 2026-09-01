@@ -5,10 +5,6 @@ use MyAdmin\App;
 function vps_get_list($args)
 {
     require_once '/home/my/include/functions.inc.php';
-    /**
-    * @var \GlobalData\Client
-    */
-    global $global;
     $db = App::db();
     $db->bindValue('id', (int)$args['id'], 'int');
     $db->query("select * from vps_masters left join vps_master_details using (vps_id) where vps_id=:id", __LINE__, __FILE__);

@@ -2,13 +2,11 @@
 
 use Workerman\Worker;
 
+require_once __DIR__.'/../Applications/Chat/SharedState.php';
+
 function memcached_queue_task($args)
 {
     //require_once '/home/my/include/functions.inc.php';
-    /**
-    * @var \GlobalData\Client
-    */
-    global $global;
     /**
     * @var \Workerman\MySQL\Connection
     */
@@ -34,7 +32,7 @@ function memcached_queue_task($args)
 
     // Retry helper: runs $fn, retries on InnoDB cluster rollbacks with exponential backoff.
     // Only reconnects $worker_db on genuine connection-loss errors (2006, 2013).
-    $dbRetry = function (callable $fn) use ($maxTries, &$worker_db, $global): bool {
+    $dbRetry = function (callable $fn) use ($maxTries, &$worker_db): bool {
         $clusterErrors = [40000, 3101, 1180]; // GR certification failure — connection is fine, just retry
         $connErrors    = [2006, 2013];         // gone-away / lost connection — reconnect needed
         for ($try = 1; $try <= $maxTries; $try++) {
@@ -59,7 +57,9 @@ function memcached_queue_task($args)
                         Worker::safeEcho('DB reconnect failed: '.$re->getMessage()."\n");
                     }
                 } else {
-                    $global->queuein = 0;
+                    // Unrecoverable — bubble up. (The old `$global->queuein = 0;`
+                    // reset here referenced a vestigial GlobalData scalar unrelated to
+                    // any lock; dropped with the $global dependency.)
                     throw $e; // unrecoverable, bubble up
                 }
             }
@@ -105,19 +105,24 @@ function memcached_queue_task($args)
     $processedAny = false;
 
     foreach ($queuehosts as $hostIp) {
-        $lockKey = 'queuein:'.$hostIp;
+        // Drain lock name for this host. lock() prepends the dc:lock: namespace, so the
+        // LOCK key becomes `dc:lock:queuein:<ip>`. This is DISTINCT from the production
+        // queue DATA list `queuein:<ip>` popped further below — that raw Redis LIST (and
+        // its Memcached fallback) intentionally lives OUTSIDE the dc:* namespace and is
+        // left completely untouched by this migration.
+        $lockName = 'queuein:'.$hostIp;
 
-        // Initialize lock variable if not set
-        if (!isset($global->$lockKey)) {
-            $global->$lockKey = 0;
-        }
-
-        // Try to acquire per-host lock with retries and random backoff
-        $lockAcquired = false;
+        // Try to acquire the per-host drain lock with retries and random backoff.
+        // SET NX + TTL 900 replaces cas($lockKey, 0, 1): a null token == contended or
+        // Redis-down (skip), and a crashed holder self-expires — so the isset-seed is
+        // gone. The 900s TTL mirrors the old GlobalData 900s stale-reap window (never
+        // shorter per ops rule: host-side ops like HyperV GetVMList can take 10+ min);
+        // the drain renews between items while the lock is still owned below.
+        $token = null;
         $lockAttempts = 0;
         while ($lockAttempts < 3) {
-            if ($global->cas($lockKey, 0, 1)) {
-                $lockAcquired = true;
+            $token = SharedState::lock($lockName, 900);
+            if ($token !== null) {
                 break;
             }
             $lockAttempts++;
@@ -125,7 +130,7 @@ function memcached_queue_task($args)
             usleep(rand(10000, 50000) * $lockAttempts);
         }
 
-        if (!$lockAcquired) {
+        if ($token === null) {
             // Another worker is processing this host, skip
             continue;
         }
@@ -161,7 +166,7 @@ function memcached_queue_task($args)
             }
 
             if (count($batchItems) == 0) {
-                $global->$lockKey = 0;  // Release lock
+                SharedState::unlock($lockName, $token);  // Release lock
                 continue;
             }
 
@@ -169,6 +174,16 @@ function memcached_queue_task($args)
 //            Worker::safeEcho('Processing '.count($batchItems).' items from host '.$hostIp.PHP_EOL);
 
             foreach ($batchItems as $queue) {
+        // Keep the drain lock alive between batches so a host with a full
+        // $maxItemsPerHost backlog can't outlive the 900s TTL mid-drain. A false
+        // renew means ownership is gone (expired or taken) — stop draining THIS
+        // host this cycle rather than processing holding nothing; break falls to
+        // the finally, whose token-checked unlock no-ops, and the outer loop moves
+        // to the next host (cross-host parallelism stays per-host-key, by design).
+        if (!SharedState::renew($lockName, $token, 900)) {
+            Worker::safeEcho('Lost queuein lock for host '.$hostIp.' mid-drain — stopping this host this cycle (lock expired or taken)'.PHP_EOL);
+            break;
+        }
         $module = $queue['post']['module'] ?? 'vps';
         if ($module == 'vps') {
             $tblname ='VPS';
@@ -591,8 +606,8 @@ function memcached_queue_task($args)
         } catch (\Exception $e) {
             Worker::safeEcho('Exception processing host '.$hostIp.': '.$e->getMessage().PHP_EOL);
         } finally {
-            // Always release the per-host lock
-            $global->$lockKey = 0;
+            // Always release the per-host drain lock (owner-checked via token).
+            SharedState::unlock($lockName, $token);
         }
     } // end foreach ($queuehosts as $hostIp)
 

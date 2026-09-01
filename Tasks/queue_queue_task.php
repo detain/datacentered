@@ -13,10 +13,6 @@ function queue_queue_task($args)
     * @var \Memcached
     */
     global $memcache;
-    /**
-    * @var \GlobalData\Client
-    */
-    global $global;
     require_once '/home/my/include/functions.inc.php';
     $hosts = 0;
     $memcached_start = time();

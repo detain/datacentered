@@ -7,10 +7,6 @@ use Workerman\Connection\AsyncTcpConnection;
 function sync_hyperv_queue($args)
 {
     require_once '/home/my/include/functions.inc.php';
-    /**
-    * @var \GlobalData\Client
-    */
-    global $global;
     // `select *` pulls the binary(16) uuid columns in raw. those bytes arent valid
     // utf8, so json_encode() returns false and send(false) makes Workerman
     // stopAll() the whole TaskWorker process. unpack them the same way
@@ -56,10 +52,10 @@ function sync_hyperv_queue($args)
         }
     }
     foreach ($rows as $service_id => $service_master) {
-        $var = 'vps_host_'.$service_id;
-        if (!isset($global->$var)) {
-            $global->$var = 0;
-        }
+        // Seeding the old GlobalData lock var to 0 was required for cas(0, ...) to
+        // have something to compare against. Redis SET NX needs no seed: the absence
+        // of the key IS "unlocked". async_hyperv_queue_runner acquires the real
+        // lock('vps_host_<id>', 900) downstream, so nothing to initialise here.
         if (sizeof($service_master['newvps']) > 0 || sizeof($service_master['queue']) > 0) {
             $payload = json_encode(['type' => 'async_hyperv_queue_runner', 'args' => ['id' => $service_id, 'data' => $service_master]]);
             if ($payload === false) {
