@@ -12,29 +12,13 @@
  *
  * WHAT IT INSTALLS AND WHY
  *
- * 1. An OFFLINE \GlobalData\Client (declared here so the composer autoloader
- *    never pulls vendor/workerman/globaldata/src/Client.php).
+ * The retired \GlobalData\Client seams — the offline stub, its in-memory double
+ * and that double's CAS-livelock guard — were deleted in GlobalData→Redis
+ * migration wave 5.1. All cross-process state now flows through the SharedState
+ * Redis facade, whose in-memory double (item 3) is the seam the whole suite runs
+ * against.
  *
- *    The real client lazily opens a TCP socket to GLOBALDATA_IP:2207 on the
- *    FIRST property access — not in the constructor. FeatureFlags::globalData()
- *    falls back to `new \GlobalData\Client(GLOBALDATA_IP.':2207')` whenever no
- *    $global has been injected, and it resolves GLOBALDATA_IP by requiring
- *    /home/my/include/config/config.settings.php. So on baseline, every
- *    FeatureFlags read from a test that did not inject $global reached out to
- *    the LIVE GlobalData server at 216.158.226.14:2207 (one leaked socket per
- *    call) and dragged the production settings file — and every constant in it
- *    — into the test process as a side effect.
- *
- *    This stub cannot connect: every accessor throws
- *    \GlobalData\ClientOfflineException, which is exactly the state
- *    FeatureFlags' fail-safe branches are specified for (`catch (\Throwable)`
- *    => documented default). We also predefine GLOBALDATA_IP below so
- *    FeatureFlags never requires config.settings.php at all.
- *
- *    Test doubles keep extending \GlobalData\Client (FeatureFlags gates on
- *    `instanceof`), overriding the accessors — unchanged and unaffected.
- *
- * 2. A DEAD-TRANSPORT TRIPWIRE for \Channel\Client (BUG-A3 regression guard).
+ * 1. A DEAD-TRANSPORT TRIPWIRE for \Channel\Client (BUG-A3 regression guard).
  *
  *    Presence broadcasts used to go out via \Channel\Client::publish(), which
  *    silently vanished: nothing subscribed to 'dc_presence', publish()
@@ -47,7 +31,7 @@
  *    survived so long). Tests assert
  *    \Channel\Client::$publishAttempts === [].
  *
- * 3. A recording Workerman timer loop (TestTimer / TestEventLoop).
+ * 2. A recording Workerman timer loop (TestTimer / TestEventLoop).
  *
  *    \Workerman\Timer::add() throws 'Timer can only be used in workerman
  *    running environment' outside a worker, which turned 22 of the 26
@@ -56,126 +40,22 @@
  *    prefer over the pcntl path — so TestTimer::install() injects a recording
  *    EventInterface. Timers become inspectable and runnable instead of fatal.
  *
- * 4. InMemoryGlobalData — ONE faithful in-memory GlobalData double.
+ * 3. InMemoryRedis — the in-memory duck-type of the phpredis \Redis subset the
+ *    SharedState facade uses (GlobalData→Redis migration, Phase 1).
  *
- *    Four divergent hand-rolled copies existed, and their differences from the
- *    real client were not cosmetic: they returned arrays by reference from
- *    &__get (the real client returns by value — `$global->arr[$k] = $v` does
- *    NOT reach a real server) and their cas() compared with ===, treating an
- *    ABSENT key as an empty array. The real GlobalData server compares
- *    md5(serialize()) and treats an absent key as NULL
- *    (vendor/workerman/globaldata/src/Server.php, case 'cas'), so
- *    cas($absentKey, [], $new) returns FALSE forever. Modelling that faithfully
- *    is what makes the do/while CAS loops in Events.php testable at all — and
- *    it is why this double has a livelock guard (see the class docblock).
+ *    No test may open a socket to REDIS_HOST either. The facade resolves its
+ *    client via $GLOBALS['redis'] / setClient(), so tests inject this double
+ *    through SharedState::setClient() — it deliberately does NOT extend \Redis
+ *    (duck-typing keeps the seam honest and works with the extension loaded or
+ *    not). TTLs run against a controllable clock (fastForward()) so lock
+ *    expiry/renew are deterministic.
  *
  * @see tests/V1TestSupport.php    the fake \GatewayWorker\Lib\Gateway transport
+ * @see tests/SharedStateTest.php  the facade suite this double backs
  */
 
 // ---------------------------------------------------------------------------
-// 1. Offline \GlobalData\Client — declared before the autoloader can reach the
-//    real one, so no test can ever open a socket to a GlobalData server.
-// ---------------------------------------------------------------------------
-namespace GlobalData {
-    /**
-     * Thrown by every accessor of the offline test stand-in for
-     * \GlobalData\Client. FeatureFlags catches \Throwable around each read and
-     * write, so this reproduces "GlobalData is unreachable" exactly.
-     */
-    class ClientOfflineException extends \RuntimeException
-    {
-    }
-
-    /**
-     * Offline stand-in for the real GlobalData client.
-     *
-     * Same public surface as vendor/workerman/globaldata/src/Client.php
-     * (__get/__set/__isset/__unset/cas/add/increment) but with no socket code
-     * at all. Constructing it is harmless and recorded; USING it throws.
-     */
-    class Client
-    {
-        /** @var int matches the real client's default */
-        public $timeout = 5;
-
-        /** @var int matches the real client's default */
-        public $pingInterval = 25;
-
-        /**
-         * Server addresses passed to every constructed instance that did NOT
-         * override the constructor — i.e. every attempt by production code to
-         * build a REAL client. Tests assert this stays empty.
-         *
-         * @var array<int,mixed>
-         */
-        public static $constructed = [];
-
-        /** @var array<int,mixed> */
-        protected $_globalServers = [];
-
-        public function __construct($servers)
-        {
-            if (empty($servers)) {
-                throw new \Exception('servers empty');
-            }
-            $this->_globalServers = array_values((array) $servers);
-            self::$constructed[] = $servers;
-        }
-
-        /** Forget recorded constructions (call between tests). */
-        public static function resetConstructed()
-        {
-            self::$constructed = [];
-        }
-
-        private function offline($op, $key)
-        {
-            return new ClientOfflineException(
-                "GlobalData is offline in tests: refused {$op}('{$key}'). Inject an "
-                .'InMemoryGlobalData into $GLOBALS[\'global\'] (or FeatureFlags\' private '
-                .'static $client) instead of relying on a live GlobalData server.'
-            );
-        }
-
-        public function __get($key)
-        {
-            throw $this->offline('get', $key);
-        }
-
-        public function __set($key, $value)
-        {
-            throw $this->offline('set', $key);
-        }
-
-        public function __isset($key)
-        {
-            throw $this->offline('isset', $key);
-        }
-
-        public function __unset($key)
-        {
-            throw $this->offline('unset', $key);
-        }
-
-        public function cas($key, $old_value, $new_value)
-        {
-            throw $this->offline('cas', $key);
-        }
-
-        public function add($key, $value)
-        {
-            throw $this->offline('add', $key);
-        }
-
-        public function increment($key, $step = 1)
-        {
-            throw $this->offline('increment', $key);
-        }
-    }
-}
-
-// ---------------------------------------------------------------------------
-// 2. \Channel\Client tripwire (BUG-A3). Records THEN throws.
+// 1. \Channel\Client tripwire (BUG-A3). Records THEN throws.
 // ---------------------------------------------------------------------------
 namespace Channel {
     /** Thrown when anything tries to use the removed dead presence transport. */
@@ -261,17 +141,21 @@ namespace Channel {
 }
 
 // ---------------------------------------------------------------------------
-// 3./4. Global-namespace helpers.
+// 2. Global-namespace helpers.
 // ---------------------------------------------------------------------------
 namespace {
     /**
-     * Keep FeatureFlags::globalData() from requiring the production settings
-     * file (/home/my/include/config/config.settings.php) just to learn
-     * GLOBALDATA_IP. The offline \GlobalData\Client above already makes a
-     * connect impossible; this stops the require's side effects (dozens of
-     * production constants leaking into the test process — one of them,
-     * WS_TRIGGER_TOKEN's neighbours, is why TriggerPaymentEndpointTest's
-     * setUpBeforeClass() guard mattered).
+     * The Workerman start files (Applications/Chat/start_*.php) still
+     * reference the GLOBALDATA_IP constant, so it must be defined for any
+     * test that loads those files to parse and load them (no test currently
+     * does — the define stays purely defensive). Predefining it here also
+     * means nothing reaches for
+     * /home/my/include/config/config.settings.php (dozens of production
+     * constants leaking into the test process) just to learn the value.
+     *
+     * No live GlobalData server is contacted: runtime $global usage was removed
+     * in the GlobalData→Redis migration, and the offline \GlobalData\Client
+     * stub that once backed these tests was deleted in wave 5.1.
      */
     if (!defined('GLOBALDATA_IP')) {
         define('GLOBALDATA_IP', '127.0.0.1');
@@ -496,158 +380,659 @@ namespace {
     }
 
     /**
-     * Thrown by InMemoryGlobalData::cas() once a single key has failed the
-     * compare-and-swap $casFailLimit times in a row.
+     * In-memory duck-type of the phpredis \Redis subset SharedState uses.
      *
-     * Several Events.php CAS loops are `do { ... } while (!$global->cas(...))`
-     * with no attempt ceiling, so a cas() that can never succeed is an
-     * unkillable busy loop. Under a fake whose cas() always returned true that
-     * was invisible; under a FAITHFUL fake it hangs the test runner (this is
-     * exactly why the suite used to block forever). Converting the livelock
-     * into a loud exception keeps the bug visible instead of hanging CI.
+     * Models the parts of Redis semantics the migration must not get wrong:
+     *   - SET options array with nx/xx + ex/px (case-insensitive), returning
+     *     exactly bool true/false like phpredis 5.x (SharedState::add/lock
+     *     compare === true);
+     *   - EXISTS has no NULL-vs-empty trap: a stored "" or "[]" blocks NX, and
+     *     GET of a missing key returns false (never null);
+     *   - WRONGTYPE on cross-type access, like the real server;
+     *   - LTRIM/LRANGE negative-index + clamping rules;
+     *   - TTLs against a controllable clock — fastForward($sec) advances time
+     *     and evicts, so lock expiry/renew tests never sleep.
+     *
+     * eval() implements the two Lua scripts SharedState ships (compare-token
+     * DEL and compare-token PEXPIRE) natively with identical replies, detected
+     * by their distinguishing commands; an unknown script throws loudly.
+     *
+     * Only RPUSH/LTRIM participate in multi(PIPELINE) queueing because those
+     * are the only commands SharedState pipelines.
+     *
+     * @see Applications/Chat/SharedState.php
      */
-    class GlobalDataCasLivelockException extends \RuntimeException
+    class InMemoryRedis
     {
-    }
+        /** @var array<string,array{type:string,value:mixed}> the whole keyspace */
+        public $data = [];
 
-    /**
-     * The single in-memory \GlobalData\Client double for the whole suite.
-     *
-     * Semantics are copied from the REAL client + server, not invented:
-     *   - __get      absent key => null                (Server.php case 'get' sends 'N;')
-     *   - __get      returns BY VALUE                  (real client returns by value)
-     *   - __isset    null !== __get($key)              (real client)
-     *   - __unset    removes the key                   (Server.php case 'delete')
-     *   - cas        md5(serialize(current)) === md5(serialize($old)),
-     *                where an ABSENT key's current value is NULL
-     *                                                  (Server.php case 'cas')
-     *   - add        fails when isset($store[$key])    (Server.php case 'add')
-     *   - increment  fails when the key is absent      (Server.php case 'increment')
-     *
-     * The cas() rule matters: cas($absentKey, [], $new) is FALSE against a real
-     * server, so `do { ... } while (!$global->cas($k, [], $new))` never
-     * terminates until something has seeded $k. Fakes that compared with ===
-     * and treated absent as [] hid that entirely.
-     */
-    class InMemoryGlobalData extends \GlobalData\Client
-    {
-        /** @var array<string,mixed> the whole GlobalData keyspace */
-        public $store = [];
+        /** @var array<string,float> key => eviction deadline on $clock */
+        public $expires = [];
 
-        /** @var int consecutive cas() failures on one key before we throw */
-        public $casFailLimit = 100;
+        /** @var float controllable clock in seconds (no wall time involved) */
+        public $clock = 1000000.0;
 
-        /** @var int total cas() calls (handy for "did this even try?" assertions) */
-        public $casCalls = 0;
+        /** @var bool flipped by close() */
+        protected $connected = true;
 
-        /** @var array<string,int> */
-        private $casFailures = [];
+        /** @var \Closure[] queued while in a pipeline */
+        protected $pipeline = [];
 
-        /** @param array<string,mixed> $seed initial keyspace */
-        public function __construct(array $seed = [])
+        /** @var bool */
+        protected $inPipeline = false;
+
+        // -------------------------------------------------------------------
+        // Test controls
+        // -------------------------------------------------------------------
+
+        /** Advance the controllable clock and expire whatever it passed. */
+        public function fastForward($seconds): void
         {
-            $this->store = $seed;
+            $this->clock += (float) $seconds;
+            $this->evict();
         }
 
-        public function __get($key)
+        /** Every key currently in the keyspace (post-eviction). */
+        public function allKeys(): array
         {
-            return $this->store[$key] ?? null;
+            $this->evict();
+            return array_keys($this->data);
         }
 
-        public function __set($key, $value)
+        /** Wipe the keyspace and clock between tests. */
+        public function flushAll(): void
         {
-            $this->store[$key] = $value;
+            $this->data = [];
+            $this->expires = [];
+            $this->pipeline = [];
+            $this->inPipeline = false;
+            $this->connected = true;
         }
 
-        public function __isset($key)
+        public function close(): bool
         {
-            return null !== ($this->store[$key] ?? null);
-        }
-
-        public function __unset($key)
-        {
-            unset($this->store[$key]);
-        }
-
-        public function cas($key, $old_value, $new_value)
-        {
-            $this->casCalls++;
-            $current = array_key_exists($key, $this->store) ? $this->store[$key] : null;
-            if (md5(serialize($current)) === md5(serialize($old_value))) {
-                $this->store[$key] = $new_value;
-                unset($this->casFailures[$key]);
-                return true;
-            }
-            $failures = ($this->casFailures[$key] ?? 0) + 1;
-            $this->casFailures[$key] = $failures;
-            if ($failures >= $this->casFailLimit) {
-                throw new GlobalDataCasLivelockException(sprintf(
-                    'CAS livelock: cas(%s) failed %d times in a row. The real GlobalData server '
-                    .'compares md5(serialize()) and reports an ABSENT key as NULL, so '
-                    .'cas(<absent key>, [], ...) can never succeed — a `do { } while (!cas())` '
-                    .'loop over an unseeded key spins forever. Seed the key first '
-                    .'(e.g. $global->add(%s, [])). current=%s expected=%s',
-                    var_export($key, true),
-                    $failures,
-                    var_export($key, true),
-                    gettype($current),
-                    gettype($old_value)
-                ));
-            }
-            return false;
-        }
-
-        public function add($key, $value)
-        {
-            if (isset($this->store[$key])) {
-                return false;
-            }
-            $this->store[$key] = $value;
+            $this->connected = false;
             return true;
         }
 
-        public function increment($key, $step = 1)
+        public function isConnected(): bool
         {
-            if (!isset($this->store[$key])) {
-                return false;
-            }
-            if (!is_numeric($this->store[$key])) {
-                $this->store[$key] = 0;
-            }
-            $this->store[$key] += $step;
-            return $this->store[$key];
+            return $this->connected;
         }
 
-        /**
-         * Bulk-seed keys (fluent).
-         *
-         * @param array<string,mixed> $kv
-         * @return $this
-         */
-        public function seed(array $kv)
+        // -------------------------------------------------------------------
+        // Strings
+        // -------------------------------------------------------------------
+
+        public function get($key)
         {
-            foreach ($kv as $k => $v) {
-                $this->store[$k] = $v;
+            $this->guard();
+            $entry = $this->getEntry($key);
+            if ($entry === null) {
+                return false;
             }
+            $this->assertType($key, 'string');
+
+            return $this->data[$key]['value'];
+        }
+
+        public function set($key, $value, $opts = null)
+        {
+            $this->guard();
+            $nx = false;
+            $xx = false;
+            $ttl = null;
+            if (is_array($opts)) {
+                foreach ($opts as $name => $optValue) {
+                    $flag = strtolower(is_int($name) ? (string) $optValue : $name);
+                    if ($flag === 'nx') {
+                        $nx = true;
+                    } elseif ($flag === 'xx') {
+                        $xx = true;
+                    } elseif ($flag === 'ex') {
+                        $ttl = (float) $optValue;
+                    } elseif ($flag === 'px') {
+                        $ttl = ((float) $optValue) / 1000;
+                    }
+                }
+            }
+            if ($nx && $this->hasEntry($key)) {
+                return false;
+            }
+            if ($xx && !$this->hasEntry($key)) {
+                return false;
+            }
+            $this->remove($key);
+            $this->data[$key] = ['type' => 'string', 'value' => (string) $value];
+            if ($ttl !== null) {
+                $this->expires[$key] = $this->clock + $ttl;
+            }
+
+            return true;
+        }
+
+        public function exists($key)
+        {
+            $this->guard();
+
+            return $this->hasEntry($key) ? 1 : 0;
+        }
+
+        public function del($key)
+        {
+            $this->guard();
+            $keys = func_get_args();
+            if (count($keys) === 1 && is_array($keys[0])) {
+                $keys = $keys[0];
+            }
+            $deleted = 0;
+            foreach ($keys as $one) {
+                if ($this->hasEntry($one)) {
+                    $this->remove($one);
+                    $deleted++;
+                }
+            }
+
+            return $deleted;
+        }
+
+        // -------------------------------------------------------------------
+        // Hashes
+        // -------------------------------------------------------------------
+
+        public function hSet($key, $field, $value)
+        {
+            $this->guard();
+            $this->ensureType($key, 'hash', []);
+            $isNew = !array_key_exists($field, $this->data[$key]['value']);
+            $this->data[$key]['value'][(string) $field] = (string) $value;
+
+            return $isNew ? 1 : 0;
+        }
+
+        public function hSetNx($key, $field, $value)
+        {
+            $this->guard();
+            $this->ensureType($key, 'hash', []);
+            if (array_key_exists($field, $this->data[$key]['value'])) {
+                return 0;
+            }
+            $this->data[$key]['value'][(string) $field] = (string) $value;
+
+            return 1;
+        }
+
+        public function hGet($key, $field)
+        {
+            $this->guard();
+            if (!$this->hasEntry($key)) {
+                return false;
+            }
+            $this->assertType($key, 'hash');
+            $value = $this->data[$key]['value'];
+            if (!array_key_exists($field, $value)) {
+                return false;
+            }
+
+            return $value[$field];
+        }
+
+        public function hGetAll($key)
+        {
+            $this->guard();
+            if (!$this->hasEntry($key)) {
+                return [];
+            }
+            $this->assertType($key, 'hash');
+
+            return $this->data[$key]['value'];
+        }
+
+        public function hDel($key, $field)
+        {
+            $this->guard();
+            $fields = func_get_args();
+            array_shift($fields);
+            if (count($fields) === 1 && is_array($fields[0])) {
+                $fields = $fields[0];
+            }
+            if (!$this->hasEntry($key)) {
+                return 0;
+            }
+            $this->assertType($key, 'hash');
+            $removed = 0;
+            foreach ($fields as $one) {
+                if (array_key_exists($one, $this->data[$key]['value'])) {
+                    unset($this->data[$key]['value'][$one]);
+                    $removed++;
+                }
+            }
+            if ($this->data[$key]['value'] === []) {
+                $this->remove($key);
+            }
+
+            return $removed;
+        }
+
+        public function hIncrBy($key, $field, $by)
+        {
+            $this->guard();
+            $this->ensureType($key, 'hash', []);
+            $value = $this->data[$key]['value'];
+            $current = array_key_exists($field, $value) ? $value[$field] : '0';
+            if (!is_numeric($current)) {
+                throw new \RuntimeException('ERR hash value is not an integer or out of range');
+            }
+            $next = (int) $current + (int) $by;
+            $this->data[$key]['value'][(string) $field] = (string) $next;
+
+            return $next;
+        }
+
+        // -------------------------------------------------------------------
+        // Lists (RPUSH/LTRIM are pipeline-queueable; SharedState pipelines them)
+        // -------------------------------------------------------------------
+
+        public function rPush($key, $value)
+        {
+            return $this->queueOrRun(__FUNCTION__, func_get_args(), function ($key, $value) {
+                $this->ensureType($key, 'list', []);
+                $this->data[$key]['value'][] = (string) $value;
+
+                return count($this->data[$key]['value']);
+            });
+        }
+
+        public function lRange($key, $start, $stop)
+        {
+            $this->guard();
+            if (!$this->hasEntry($key)) {
+                return [];
+            }
+            $this->assertType($key, 'list');
+
+            return $this->sliceList($this->data[$key]['value'], $start, $stop);
+        }
+
+        public function lTrim($key, $start, $stop)
+        {
+            return $this->queueOrRun(__FUNCTION__, func_get_args(), function ($key, $start, $stop) {
+                if (!$this->hasEntry($key)) {
+                    return true;
+                }
+                $this->assertType($key, 'list');
+                $sliced = $this->sliceList($this->data[$key]['value'], $start, $stop);
+                if ($sliced === []) {
+                    $this->remove($key);
+                } else {
+                    $this->data[$key]['value'] = $sliced;
+                }
+
+                return true;
+            });
+        }
+
+        // -------------------------------------------------------------------
+        // Sets
+        // -------------------------------------------------------------------
+
+        public function sAdd($key, $member)
+        {
+            $this->guard();
+            $this->ensureType($key, 'set', []);
+            $value = (string) $member;
+            $isNew = !isset($this->data[$key]['value'][$value]);
+            $this->data[$key]['value'][$value] = true;
+
+            return $isNew ? 1 : 0;
+        }
+
+        public function sRem($key, $member)
+        {
+            $this->guard();
+            $members = func_get_args();
+            array_shift($members);
+            if (count($members) === 1 && is_array($members[0])) {
+                $members = $members[0];
+            }
+            if (!$this->hasEntry($key)) {
+                return 0;
+            }
+            $this->assertType($key, 'set');
+            $removed = 0;
+            foreach ($members as $one) {
+                if (isset($this->data[$key]['value'][(string) $one])) {
+                    unset($this->data[$key]['value'][(string) $one]);
+                    $removed++;
+                }
+            }
+            if ($this->data[$key]['value'] === []) {
+                $this->remove($key);
+            }
+
+            return $removed;
+        }
+
+        public function sMembers($key)
+        {
+            $this->guard();
+            if (!$this->hasEntry($key)) {
+                return [];
+            }
+            $this->assertType($key, 'set');
+
+            return array_keys($this->data[$key]['value']);
+        }
+
+        // -------------------------------------------------------------------
+        // Sorted sets
+        // -------------------------------------------------------------------
+
+        public function zAdd($key, $score, $value)
+        {
+            $this->guard();
+            $this->ensureType($key, 'zset', []);
+            // phpredis ZADD replies int 1 for a NEW member, int 0 when it only
+            // updates an existing member's score (false on error). Modeling the
+            // 0 is what lets a facade test pin the F1 heartbeat-return bug.
+            $member = (string) $value;
+            $isNew = !array_key_exists($member, $this->data[$key]['value']);
+            $this->data[$key]['value'][$member] = (float) $score;
+
+            return $isNew ? 1 : 0;
+        }
+
+        public function zRange($key, $start, $stop)
+        {
+            $this->guard();
+            if (!$this->hasEntry($key)) {
+                return [];
+            }
+            $this->assertType($key, 'zset');
+            $ordered = $this->sortedMembers($this->data[$key]['value']);
+
+            return $this->sliceList($ordered, $start, $stop);
+        }
+
+        public function zRangeByScore($key, $min, $max)
+        {
+            $this->guard();
+            if (!$this->hasEntry($key)) {
+                return [];
+            }
+            $this->assertType($key, 'zset');
+            $lower = $this->scoreBound($min);
+            $upper = $this->scoreBound($max);
+            $within = [];
+            foreach ($this->data[$key]['value'] as $member => $score) {
+                if ($score >= $lower && $score <= $upper) {
+                    $within[$member] = $score;
+                }
+            }
+
+            return $this->sortedMembers($within);
+        }
+
+        public function zRem($key, $member)
+        {
+            $this->guard();
+            $members = func_get_args();
+            array_shift($members);
+            if (count($members) === 1 && is_array($members[0])) {
+                $members = $members[0];
+            }
+            if (!$this->hasEntry($key)) {
+                return 0;
+            }
+            $this->assertType($key, 'zset');
+            $removed = 0;
+            foreach ($members as $one) {
+                if (array_key_exists((string) $one, $this->data[$key]['value'])) {
+                    unset($this->data[$key]['value'][(string) $one]);
+                    $removed++;
+                }
+            }
+            if ($this->data[$key]['value'] === []) {
+                $this->remove($key);
+            }
+
+            return $removed;
+        }
+
+        public function zRemRangeByScore($key, $min, $max)
+        {
+            $this->guard();
+            if (!$this->hasEntry($key)) {
+                return 0;
+            }
+            $this->assertType($key, 'zset');
+            $removed = 0;
+            foreach ($this->data[$key]['value'] as $member => $score) {
+                if ($score >= (float) $min && $score <= (float) $max) {
+                    unset($this->data[$key]['value'][$member]);
+                    $removed++;
+                }
+            }
+            if ($this->data[$key]['value'] === []) {
+                $this->remove($key);
+            }
+
+            return $removed;
+        }
+
+        // -------------------------------------------------------------------
+        // Scripting (the two SharedState lock scripts, natively)
+        // -------------------------------------------------------------------
+
+        public function eval($script, $args = [], $numKeys = 0)
+        {
+            $this->guard();
+            $keys = array_slice($args, 0, (int) $numKeys);
+            $argv = array_slice($args, (int) $numKeys);
+            $key = $keys[0];
+
+            if (stripos($script, 'PEXPIRE') !== false) {
+                // Renew: compare-token then set TTL in milliseconds.
+                if (!$this->stringMatches($key, $argv[0])) {
+                    return 0;
+                }
+                $this->expires[$key] = $this->clock + ((float) $argv[1] / 1000);
+
+                return 1;
+            }
+            if (stripos($script, 'DEL') !== false) {
+                // Release: compare-token then delete.
+                if (!$this->stringMatches($key, $argv[0])) {
+                    return 0;
+                }
+                $this->remove($key);
+
+                return 1;
+            }
+
+            throw new \RuntimeException('InMemoryRedis::eval received an unsupported Lua script: '.$script);
+        }
+
+        // -------------------------------------------------------------------
+        // Pipelining
+        // -------------------------------------------------------------------
+
+        public function multi($mode = -1)
+        {
+            $this->guard();
+            $this->inPipeline = true;
+            $this->pipeline = [];
+
             return $this;
         }
 
-        /** Read a key without going through __get (bypasses nothing, just explicit). */
-        public function raw($key)
+        public function exec()
         {
-            return $this->store[$key] ?? null;
+            if (!$this->inPipeline) {
+                throw new \RuntimeException('InMemoryRedis::exec() without multi()');
+            }
+            $results = [];
+            foreach ($this->pipeline as $queued) {
+                $results[] = $queued();
+            }
+            $this->pipeline = [];
+            $this->inPipeline = false;
+
+            return $results;
         }
 
-        /** True when the key EXISTS, even if its value is null (cas() cares). */
-        public function keyExists($key)
+        // -------------------------------------------------------------------
+        // Internals
+        // -------------------------------------------------------------------
+
+        private function queueOrRun($name, array $args, \Closure $run)
         {
-            return array_key_exists($key, $this->store);
+            $this->guard();
+            if ($this->inPipeline) {
+                $this->pipeline[] = static function () use ($args, $run) {
+                    return $run(...$args);
+                };
+
+                return $this;
+            }
+
+            return $run(...$args);
         }
 
-        /** @return string[] */
-        public function keys()
+        /** Evict expired keys, then refuse every command on a closed client. */
+        private function guard(): void
         {
-            return array_keys($this->store);
+            $this->evict();
+            if (!$this->connected) {
+                throw new \RuntimeException('Redis connection is closed');
+            }
+        }
+
+        private function evict(): void
+        {
+            foreach ($this->expires as $key => $deadline) {
+                if ($deadline <= $this->clock) {
+                    $this->remove($key);
+                }
+            }
+        }
+
+        private function getEntry($key)
+        {
+            return $this->data[$key] ?? null;
+        }
+
+        private function hasEntry($key): bool
+        {
+            return array_key_exists($key, $this->data);
+        }
+
+        private function remove($key): void
+        {
+            unset($this->data[$key], $this->expires[$key]);
+        }
+
+        // Intentional divergence from real phpredis (default OPT_THROW_ON_ERROR=false
+        // would return false): cross-type reads routed through here — get() against a
+        // HASH, hGet() against a STRING — and hIncrBy() on a non-numeric field all
+        // THROW. Fail-loud is the point: to a test oracle a type mismatch is a bug,
+        // never a silent falsy. Unreachable in production by key-shape discipline:
+        // SharedState gives every key exactly one writer-side type and reads only with
+        // matching commands (never get() a HASH, never hGet() a STRING), and the
+        // facade's hIncr() has zero callers.
+        private function assertType($key, string $type): void
+        {
+            if (($this->data[$key]['type'] ?? null) !== $type) {
+                throw new \RuntimeException('WRONGTYPE Operation against a key holding the wrong kind of value');
+            }
+        }
+
+        private function ensureType($key, string $type, $emptyValue): void
+        {
+            if (!$this->hasEntry($key)) {
+                $this->data[$key] = ['type' => $type, 'value' => $emptyValue];
+            }
+            $this->assertType($key, $type);
+        }
+
+        /** GET + string equality, as the Lua `redis.call('GET',..)==ARGV[1]` does. */
+        private function stringMatches($key, $expected)
+        {
+            $entry = $this->getEntry($key);
+            if ($entry === null) {
+                return false;
+            }
+            // Real Lua redis.call('GET', key) raises WRONGTYPE against a hash/
+            // list/set/zset, so an unlock/renew aimed at a cross-type key must
+            // error loudly rather than be mistaken for a token miss (F6). An
+            // ABSENT key still legitimately matches nothing (returns false).
+            $this->assertType($key, 'string');
+
+            return $entry['value'] === (string) $expected;
+        }
+
+        /** Redis LRANGE/LTRIM index rules: negatives count back, bounds clamp. */
+        private function sliceList(array $list, $start, $stop): array
+        {
+            $len = count($list);
+            if ($start < 0) {
+                $start = max(0, $len + $start);
+            }
+            if ($stop < 0) {
+                $stop = $len + $stop;
+            }
+            $stop = min($stop, $len - 1);
+            if ($start > $stop || $start >= $len) {
+                return [];
+            }
+
+            return array_values(array_slice($list, $start, $stop - $start + 1));
+        }
+
+        /**
+         * Order raw members by score ascending, breaking ties by member name
+         * lexicographically — the guarantee Redis ZRANGE/ZRANGEBYSCORE give
+         * (F7). asort() only kept insertion order on equal scores, which let a
+         * heartbeat-present ZSET read back in an arbitrary, load-bearing order.
+         *
+         * @param array<string,float> $members member => score
+         * @return string[] members in Redis order
+         */
+        private function sortedMembers(array $members): array
+        {
+            $ordered = array_keys($members);
+            usort($ordered, static function ($a, $b) use ($members) {
+                if ($members[$a] != $members[$b]) {
+                    return $members[$a] < $members[$b] ? -1 : 1;
+                }
+
+                return strcmp((string) $a, (string) $b);
+            });
+
+            return $ordered;
+        }
+
+        /**
+         * Resolve a ZRANGEBYSCORE bound to a float. PHP's (float) cast turns the
+         * strings 'inf'/'-inf'/'+inf' into 0.0, so the open-range spellings the
+         * Redis command accepts must be mapped to the INF constants explicitly.
+         *
+         * @param float|int|string $bound
+         */
+        private function scoreBound($bound): float
+        {
+            if (is_string($bound)) {
+                switch (strtolower(trim($bound))) {
+                    case '-inf':
+                        return -INF;
+                    case 'inf':
+                    case '+inf':
+                        return INF;
+                }
+            }
+
+            return (float) $bound;
         }
     }
 
@@ -699,30 +1084,6 @@ namespace {
                 \Channel\Client::$publishAttempts,
                 trim($context.' \\Channel\\Client is the removed dead presence transport (BUG-A3); '
                     .'presence must go out via Gateway::sendToGroup()')
-            );
-        }
-
-        /**
-         * The code under test must have used the INJECTED GlobalData double,
-         * not FeatureFlags' lazy fallback.
-         *
-         * A recorded construction means something reached
-         * `new \GlobalData\Client(GLOBALDATA_IP.':2207')` — harmless here only
-         * because tests/TestBootstrap.php replaced that class with an offline
-         * stub; in production that line opens a real socket. For a dc test it
-         * also means the flag read did NOT see the fixture's flag values, so
-         * whatever the test then asserted was decided by fail-safe defaults
-         * rather than by the fixture.
-         */
-        protected function assertNoLazyGlobalDataFallback(): void
-        {
-            $this->assertSame(
-                [],
-                \GlobalData\Client::$constructed,
-                'the code under test fell through to FeatureFlags\' lazy '
-                .'new \\GlobalData\\Client(GLOBALDATA_IP:2207) fallback instead of using the '
-                .'injected double — in production that opens a real socket, and here it means '
-                .'the fixture\'s flag values were ignored'
             );
         }
 
