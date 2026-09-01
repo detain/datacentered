@@ -72,9 +72,10 @@ $worker->registerAddress = GLOBALDATA_IP.':1236'; // Service registration addres
  *
  * setupSessionHealthTimer() is NOT called by BusinessWorker, so it does belong
  * here, and only on worker 0 so the 30s presence sweep runs once pool-wide.
- * It only does a Timer::add(); its callback pulls `global $global` when it
- * fires, so it does not care that this closure runs before Events::
- * onWorkerStart() has initialized $global.
+ * It only does a Timer::add(); its callback reads and writes presence state
+ * through the SharedState Redis facade (GlobalData→Redis migration), which
+ * resolves its own client on first use, so it does not care that this closure
+ * runs before Events::onWorkerStart().
  */
 $worker->onWorkerStart = function ($worker) {
     if ($worker->id === 0) {

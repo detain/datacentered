@@ -19,6 +19,7 @@ use Workerman\Timer;
 require_once __DIR__.'/Process.php';
 require_once __DIR__.'/stdObject.php';
 require_once __DIR__.'/FeatureFlags.php';
+require_once __DIR__.'/SharedState.php';
 
 class Events
 {
@@ -35,6 +36,18 @@ class Events
     public static $process_pipes = null;
     public static $db = null;
     public static $running = [];
+
+    /**
+     * Ownership token for the SharedState `processing_queue` lock held by this
+     * process's payment-processing chain (GlobalData→Redis migration, A1).
+     * Set by processing_queue_timer() on acquire, cleared by
+     * releaseProcessingLock(); ties every renew/unlock to this holder so a
+     * chain can never renew or delete a lock another process took after its
+     * TTL lapsed. Null means "not held here".
+     *
+     * @var string|null
+     */
+    public static $processingLockToken = null;
 
     /**
      * Optional test seam for hub-originated broadcasts. Null in production, in
@@ -68,14 +81,6 @@ class Events
     public static $taskDispatcher = null;
 
     /**
-     * Batched presence move updates collected over a 50ms sliding window before
-     * publishing as a single dc.presence.batch_updated Channel broadcast.
-     *
-     * @var array<string, array{x:float,z:float,yaw:float,ts:int,uid:int|float,name:string,client_id:int}>
-     */
-    public static $moveBatch = [];
-
-    /**
      * One-shot timer reference for the batch flush. Null when no flush is pending.
      *
      * @var \Workerman\Timer|null
@@ -90,44 +95,130 @@ class Events
     //
     // ONE unambiguous representation, used identically by the `pong` dispatch
     // handler, trackSessionClient()'s duplicate-session prune and
-    // setupSessionHealthTimer():
+    // setupSessionHealthTimer(). Migration A2 moved these from GlobalData keys
+    // to TTL-capped SharedState Redis keys (PRESENCE_PING_TTL):
     //
-    //   dc_ping:<client_id>      unix ts of the last pong RECEIVED from the
-    //                            client. 0/absent == never ponged.
-    //   dc_ping_sent:<client_id> unix ts of the last ping the hub SENT to the
-    //                            client. 0/absent == never pinged.
+    //   dc:presence:ping:<client_id>       unix ts of the last pong RECEIVED
+    //                                      from the client. 0/absent == never ponged.
+    //   dc:presence:ping_sent:<client_id>  unix ts of the last ping the hub SENT
+    //                                      to the client. 0/absent == never pinged.
     //
     // Staleness is ALWAYS measured from the last pong received; a client that
     // has been pinged but has not yet had time to answer is never dropped
     // (see dcPresenceIsStale()).
     // ====================================================================
 
-    /** GlobalData key prefix: unix ts of the last pong received from a client. */
-    const DC_PONG_KEY_PREFIX = 'dc_ping:';
+    /** Redis key prefix (SharedState): unix ts of the last pong received from a client. */
+    const DC_PONG_KEY_PREFIX = 'dc:presence:ping:';
 
-    /** GlobalData key prefix: unix ts of the last ping the hub sent to a client. */
-    const DC_PING_SENT_KEY_PREFIX = 'dc_ping_sent:';
+    /** Redis key prefix (SharedState): unix ts of the last ping the hub sent to a client. */
+    const DC_PING_SENT_KEY_PREFIX = 'dc:presence:ping_sent:';
 
     /** Gateway group every dc_presence client is joined to at auth (auth.hello). */
     const DC_PRESENCE_GROUP = 'dc_presence';
 
-    /** Seconds after which a reported dc_viewport entry is treated as absent (BUG-B5). */
+    /** Seconds after which a reported dc:presence:viewport entry is treated as absent (BUG-B5). */
     const DC_VIEWPORT_MAX_AGE = 30;
 
-    /**
-     * Retry ceiling for a contended shared-index CAS. Generous enough that genuine
-     * contention (5 workers x 3 hosts) always wins, low enough that a CAS which can
-     * never succeed fails loudly instead of wedging the worker. See casShouldRetry().
-     */
-    const CAS_MAX_ATTEMPTS = 50;
+    // ====================================================================
+    // SharedState (Redis) key map + TTLs — GlobalData→Redis migration (A2).
+    //
+    // The retired GlobalData monolithic maps became Redis HASHES keyed by
+    // entry id (field = id, value = JSON): per-field HSET/HDEL are atomic on
+    // their own, so the whole-map CAS read-modify-write loops those registries
+    // needed are gone — two racing writers touching different fields cannot
+    // clobber each other, and a crashed writer's damage is one field, not the
+    // whole map. Per-entity STRING keys carry real TTLs, which likewise
+    // replaces the hand-rolled staleness reapers (sysinfos, chat channels,
+    // presence liveness).
+    //
+    // seedClientIndex()/CAS_MAX_ATTEMPTS/casShouldRetry() are gone with this:
+    // Redis has no NULL-vs-empty absent-key trap — zAdd/sAdd/hSet create the
+    // index on first write, and there is no compare-and-swap to livelock on.
+    // ====================================================================
+
+    /** Redis HASH: vps_id => JSON vps_masters row (the shared host registry). */
+    const HOSTS_REGISTRY_KEY = 'dc:state:hosts';
+
+    /** Redis HASH: room id => JSON room object (legacy chat rooms registry). */
+    const ROOMS_REGISTRY_KEY = 'dc:state:rooms';
+
+    /** Field of the seeded default room within ROOMS_REGISTRY_KEY. */
+    const DEFAULT_ROOM_ID = 'room_1';
+
+    /** Redis HASH: channel id => JSON {type,topic,created_by,created_at}. */
+    const CHANNEL_META_REGISTRY_KEY = 'dc:state:channel_meta';
+
+    /** Redis HASH: timer name => JSON {interval,timer_id}. */
+    const TIMERS_REGISTRY_KEY = 'dc:state:timers';
+
+    /** Redis HASH: pty_id => JSON pty session entry. */
+    const PTYS_REGISTRY_KEY = 'dc:state:ptys';
+
+    /** Redis STRING prefix: one JSON entry per in-flight cmd run (run_id). */
+    const RUNNING_KEY_PREFIX = 'dc:state:running:';
+
+    /** Redis SET of run ids, the enumeration index beside RUNNING_KEY_PREFIX. */
+    const RUNNING_INDEX_KEY = 'dc:state:running_ids';
+
+    /** Redis STRING prefix: telemetry.sysinfo relay correlation entries. */
+    const SYSINFO_KEY_PREFIX = 'dc:state:sysinfo:';
+
+    /** Redis STRING: cache-aside payload of handleAdminHosts. */
+    const ADMIN_HOSTS_CACHE_KEY = 'dc:state:admin_hosts_cache';
+
+    /** Redis STRING prefix: per-client dc presence record. */
+    const DC_PRESENCE_KEY_PREFIX = 'dc:presence:client:';
+
+    /** Redis ZSET: every presence member (real + bot), score = last-seen ts. */
+    const DC_PRESENCE_INDEX_KEY = 'dc:presence:index';
+
+    /** Redis ZSET: recipient-enumeration index, score = last-seen ts. */
+    const DC_ACTIVE_INDEX_KEY = 'dc:presence:active';
+
+    /** Redis LIST prefix: bounded per-channel message tail (newest kept). */
+    const CHAT_MSGS_KEY_PREFIX = 'dc:chat:msgs:';
+
+    /** Redis ZSET: channel id => last-activity ts (enumeration + window). */
+    const CHAT_ACTIVITY_KEY = 'dc:chat:activity';
+
+    /** Redis STRING prefix: bot presence state per location. */
+    const BOT_STATE_KEY_PREFIX = 'dc:presence:bot_state:';
+
+    /** Once-per-window cold-start reap lock TTL (seconds). The 60s TTL is the crash guard: a boot that dies mid-reap is retried after a minute instead of never. */
+    const STARTUP_REAP_LOCK_TTL = 60;
+
+    /** In-flight run registry entry TTL (seconds) — bounds leaks from agents that die without cmd.exit. */
+    const RUNNING_ENTRY_TTL = 3600;
+
+    /** telemetry.sysinfo correlation entry TTL (seconds) — replaces the 5-minute reaper Timer. */
+    const SYSINFO_TTL = 300;
+
+    /** handleAdminHosts cache-aside TTL (seconds) — the old admin_hosts_cache_ttl sibling, made native. */
+    const ADMIN_HOSTS_CACHE_TTL = 5;
+
+    /** Presence record/index staleness window (seconds); records carry it as a real TTL. */
+    const PRESENCE_STALE_TTL = 90;
+
+    /** Presence auxiliary per-client key TTLs (seconds) — safety nets; every delete path is deterministic. */
+    const PRESENCE_PING_TTL = 3600;
+    const PRESENCE_MOVE_TTL = 60;
+    const PRESENCE_SESSION_TTL = 86400;
+
+    /** dc.presence.join/move window after which an idle channel's hot-cache tail is swept (seconds) — replaces the 60s chat reaper Timer. */
+    const CHAT_CHANNEL_IDLE_TTL = 3600;
 
     /**
-     * Seconds of dc_bot_state:<location> heartbeat silence after which a bot owned by
-     * ANOTHER datacentered instance is presumed dead and may be taken over. moveBot()
-     * refreshes that ts every BOT_MOVE_INTERVAL (0.5s), so this is ~20 missed ticks —
-     * long enough that a busy or briefly-stalled peer is never robbed of its bot.
+     * Bot ownership lock TTL (seconds) — the heartbeat cadence is
+     * BOT_MOVE_INTERVAL (0.5s), so this is ~20 missed ticks of silence before
+     * another instance may take the bot over. Replaces the GlobalData-era
+     * BOT_OWNER_HEARTBEAT_MAX_AGE staleness constant with a real, enforced
+     * expiry: a crashed owner frees the bot when the lock lapses, no reaper.
      */
-    const BOT_OWNER_HEARTBEAT_MAX_AGE = 10;
+    const BOT_OWNER_LOCK_TTL = 10;
+
+    /** Bot state/presence record TTL (seconds) — refreshed every moveBot tick; lapses with a dead owner. */
+    const BOT_STATE_TTL = 30;
 
     // ====================================================================
     // Bot Presence System (DataCenter 3D)
@@ -166,8 +257,8 @@ class Events
     /** Distance threshold to consider bot has reached its target (units). */
     const BOT_TARGET_THRESHOLD = 1.0;
 
-    /** GlobalData key prefix holding the browser-reported room bounds per location. */
-    const DC_ROOM_BOUNDS_KEY_PREFIX = 'dc_room_bounds:';
+    /** Redis key prefix (SharedState) holding the browser-reported room bounds per location. */
+    const DC_ROOM_BOUNDS_KEY_PREFIX = 'dc:presence:room_bounds:';
 
     /** Spawn the bot within this many scene units of the joining player. */
     const BOT_SPAWN_RADIUS = 25.0;
@@ -186,25 +277,38 @@ class Events
     /**
      * Process-local map of location => Workerman timer id for the bot move
      * timer (THE BOT #4). Workerman timer ids are per-PROCESS and there are 5
-     * BusinessWorkers, so the id must NEVER be shared through GlobalData —
-     * Timer::del() from another process would delete an unrelated timer (e.g.
-     * one of the onWorkerStart queue timers). GlobalData only carries the
-     * OWNER pid (dc_bot_timer:<location>) so other processes can tell that a
-     * bot exists without being able to (mis)delete its timer.
+     * BusinessWorkers, so the id must NEVER be shared — Timer::del() from
+     * another process would delete an unrelated timer (e.g.
+     * one of the onWorkerStart queue timers). Cross-process ownership moved
+     * from the old GlobalData owner-pid marker to a SharedState Redis lock
+     * (dc:lock:bot_owner:<location>, BOT_OWNER_LOCK_TTL): the lock IS the
+     * marker now, and only its holder may renew or release it.
      *
      * @var array<string,int>
      */
     private static $botTimers = [];
 
     /**
+     * Process-local map of location => ownership token for the SharedState bot
+     * owner lock, exactly like $processingLockToken. Null/absent means this
+     * process does not drive that location's bot; every renew/unlock of
+     * dc:lock:bot_owner:<location> is token-checked so a worker that lost the
+     * lock (TTL lapsed, another instance took over) can never extend or delete
+     * the new owner's hold.
+     *
+     * @var array<string,string>
+     */
+    private static $botLockTokens = [];
+
+    /**
      * Process-local map of session id => Workerman timer id for the 15s
      * duplicate-session prune one-shot armed by trackSessionClient().
      *
      * REVIEW-FIX: exactly the same per-process constraint as self::$botTimers —
-     * dc_timer:<sessionId> used to hold the raw timer id and was Timer::del()'d
-     * from whichever BusinessWorker happened to receive the next connection for
-     * that session, silently destroying an unrelated timer in that process.
-     * GlobalData now carries only the owning pid.
+     * dc:presence:timer:<sessionId> used to hold the raw timer id and was
+     * Timer::del()'d from whichever BusinessWorker happened to receive the next
+     * connection for that session, silently destroying an unrelated timer in
+     * that process. The shared key now carries only the owning pid.
      *
      * @var array<string,int>
      */
@@ -212,7 +316,7 @@ class Events
 
     /**
      * Cached gethostname(), identifying which of the three datacentered instances
-     * this process belongs to. See processMarker() / botOwnerAlive().
+     * this process belongs to. See processMarker().
      *
      * @var string|null
      */
@@ -352,16 +456,35 @@ class Events
         //$worker->maxSendBufferSize = 102400000;
         //$worker->sendToGatewayBufferSize = 102400000;
         /**
-         * @var \GlobalData\Client
+         * @var \Redis|null
+         *
+         * GlobalData→Redis migration Phase 1: make the $redis global available
+         * in every BusinessWorker process (same idiom as start_task.php's
+         * onWorkerStart) so the SharedState facade resolves it. Placed HERE and
+         * not in start_businessworker.php because BusinessWorker invokes
+         * Events::onWorkerStart once per process on its own — a second init
+         * site would resurrect the double-bootstrap defect pinned by
+         * BusinessWorkerBootstrapTest.
+         *
+         * The \GlobalData\Client that used to be constructed above this block
+         * is gone (migration A2): every former $global consumer in this file
+         * now reads/writes SharedState, so nothing here needs the client —
+         * including its old `$global->queuein = 0` scratch write, which the
+         * Redis queuein LISTs (Web/queue.php) never read.
          */
-        global $global;
-        $global = new \GlobalData\Client(GLOBALDATA_IP.':2207');     // initialize the GlobalData client
-        if (!($global instanceof \GlobalData\Client)) {
-            Worker::safeEcho("GlobalData client initialization failed\n");
-            $global = null;
-        }
-        if ($global !== null) {
-            $global->queuein = 0;
+        global $redis;
+        if (!($redis instanceof \Redis) && defined('USE_REDIS') && USE_REDIS === true && class_exists('\Redis')) {
+            $redis = null;
+            try {
+                $candidate = new \Redis();
+                if ($candidate->connect(REDIS_HOST, REDIS_PORT, 2)) {
+                    // No auth() — matches the existing $redis init idiom.
+                    $redis = $candidate;
+                }
+            } catch (\Exception $e) {
+                Worker::safeEcho('Caught Exception #'.$e->getCode().':'.$e->getMessage().' on '.__LINE__.'@'.__FILE__.PHP_EOL);
+                $redis = null;
+            }
         }
         /**
         * @var \Memcached
@@ -370,21 +493,40 @@ class Events
         $memcache = new \Memcached();
         $memcache->addServer('localhost', 11211);
         self::$db = self::createDbConnection();
-        if ($global !== null && $global->add('running', [])) {
-            // Fresh GlobalData == a full (cold) restart, not a graceful reload.
-            // Clear boardctl jobs orphaned by the restart so reruns aren't blocked.
-            self::boardctl_startup_reap();
-            $global->hosts = [];
-            $global->rooms = [
-                [
-                    'id' => 'room_1',
+        /*
+         * Cold-start gate (GlobalData→Redis migration, A2). The old code keyed
+         * "is this a fresh server?" off `$global->add('running', [])` winning —
+         * true only when the GlobalData store itself had just been created.
+         * Redis outlives datacentered restarts, so that premise is gone; the
+         * replacement semantic is "at most one reap per 60s window":
+         * SharedState::lock('startup_reap', 60). boardctl_startup_reap() is
+         * idempotent (it only fails rows whose runner pid is provably dead),
+         * and the room seed is hSetNx, so a duplicate fire inside the window
+         * is harmless anyway. Chosen release: unlock in `finally` on
+         * completion — the work is bounded and seconds long, while the 60s TTL
+         * stays purely as the crash guard (a boot that dies mid-reap must not
+         * block the next boot's reap for longer than a minute).
+         */
+        $reapToken = SharedState::lock('startup_reap', self::STARTUP_REAP_LOCK_TTL);
+        if ($reapToken !== null) {
+            try {
+                // Clear boardctl jobs orphaned by the restart so reruns aren't blocked.
+                self::boardctl_startup_reap();
+                // Idempotent default-room seed only. The old cold start ALSO
+                // blanked hosts / dc_active_clients here; with Redis persistence
+                // that would now CLOBBER live registries on every graceful
+                // restart, and an empty hash/set already reads as empty
+                // everywhere, so no seeding of those is either needed or safe.
+                SharedState::hSetNx(self::ROOMS_REGISTRY_KEY, self::DEFAULT_ROOM_ID, [
+                    'id' => self::DEFAULT_ROOM_ID,
                     'name' => 'General Chat',
                     'img' => 'https://upload.wikimedia.org/wikipedia/commons/thumb/a/a6/Rubik%27s_cube.svg/220px-Rubik%27s_cube.svg.png',
                     'members' => [],
                     'messages' => [],
-                ]
-            ];
-            $global->dc_active_clients = [];
+                ]);
+            } finally {
+                SharedState::unlock('startup_reap', $reapToken);
+            }
         }
         if ($worker->id == 0) {
             $args = [];
@@ -394,8 +536,8 @@ class Events
                 // Timers are registered only in worker id 0 (guarded above) so each fires
                 // exactly once across the BusinessWorker pool; GlobalTimer::add was a thin
                 // wrapper around Timer::add and provided no cross-process semantics itself.
-                // Registry shape (PROTOCOL_V1.md §2.9, step 2.8): each $global->timers
-                // entry is {interval, timer_id} recorded at registration time only —
+                // Registry shape (PROTOCOL_V1.md §2.9, step 2.8): each dc:state:timers
+                // hash field is {interval, timer_id} recorded at registration time only —
                 // NO callback bodies are touched and scheduling is byte-identical.
                 // live last_run tracking is deliberately deferred (safer-minimal option);
                 // the only reader is v1 handleAdminTimers (legacy msgTimers ignores it).
@@ -408,91 +550,48 @@ class Events
                         Worker::safeEcho("boardctl_queue_timer error: {$e->getMessage()}\n");
                     }
                 }, $args)];
-                $timers['vps_queue_queue_timer'] = ['interval' => 30, 'timer_id' => Timer::add(30, ['Events', 'vps_queue_timer'], $args)];
+                $timers['vps_queue_timer'] = ['interval' => 30, 'timer_id' => Timer::add(30, ['Events', 'vps_queue_timer'], $args)];
                 $timers['memcache_queue_timer'] = ['interval' => 30, 'timer_id' => Timer::add(30, ['Events', 'memcache_queue_timer'], $args)];
                 $timers['map_queue_timer'] = ['interval' => 60, 'timer_id' => Timer::add(60, ['Events', 'map_queue_timer'], $args)];
                 //$timers[] = Timer::add(60, ['Events', 'queue_queue_timer'], $args);
                 //$timer_id = Timer::add(1, function() use (&$timer_id, $timers) { echo "worker[0] tick timer_id:$timer_id:'".print_r($timers,true)."\n"; });
 
-                $rows = self::$db->select('vps_id')->from('vps_masters')->where('vps_type=11')->query();
-                foreach ($rows as $row) {
-                    $var = 'vps_host_'.$row['vps_id'];
-                    $global->$var = 0;
+                // GlobalData→Redis migration (A1): per-host VPS dispatch locks now
+                // live in SharedState (dc:lock:vps_host_<id>). Cold-start pre-clean
+                // drops the lock plus its debug sibling; Redis TTLs already cap any
+                // leak at 900s (frozen contract with the Tasks track), this just
+                // keeps the first post-restart tick from waiting on a dead holder.
+                // createDbConnection() never throws — a dead DB at boot leaves self::$db
+                // null — so guard it the same is_null/is_array way the neighbouring timer
+                // methods do and skip this best-effort sweep rather than fatal the worker.
+                // Deliberately no early return: the hyperv timers + registry seed below
+                // must still register; a leaked vps_host lock just waits out its 900s TTL.
+                if (self::$db !== null) {
+                    $rows = self::$db->select('vps_id')->from('vps_masters')->where('vps_type=11')->query();
+                    if (is_array($rows)) {
+                        foreach ($rows as $row) {
+                            $lockKey = SharedState::PREFIX_LOCK.'vps_host_'.$row['vps_id'];
+                            SharedState::del($lockKey, $lockKey.':request');
+                        }
+                    }
                 }
                 $timers['hyperv_update_list_timer'] = ['interval' => 3600, 'timer_id' => Timer::add(3600, ['Events', 'hyperv_update_list_timer'], $args)];
                 $timers['hyperv_queue_timer'] = ['interval' => 30, 'timer_id' => Timer::add(30, ['Events', 'hyperv_queue_timer'], $args)];
 
-                // Reaper: clean stale sysinfos entries every 5 minutes (MAJOR-10)
-                // Each entry has form: ['host' => $host, 'ts' => timestamp, ...]
-                Timer::add(300, function() use ($global) {
-                    $cutoff = microtime(true) - 60; // entries older than 60 seconds
-                    if (!isset($global->sysinfos)) return;
-                    $oldValue = $global->sysinfos;
-                    if (!is_array($oldValue)) return;
-                    $newValue = $oldValue;
-                    $changed = false;
-                    foreach ($newValue as $k => $v) {
-                        if (is_array($v) && isset($v['ts']) && $v['ts'] < $cutoff) {
-                            unset($newValue[$k]);
-                            $changed = true;
-                        }
-                    }
-                    if ($changed) {
-                        $attempts = 0;
-                        do {
-                            $oldValue = $global->sysinfos;
-                            if (!is_array($oldValue)) break;
-                            $newValue = $oldValue;
-                            foreach ($oldValue as $k => $v) {
-                                if (is_array($v) && isset($v['ts']) && $v['ts'] < $cutoff) {
-                                    unset($newValue[$k]);
-                                }
-                            }
-                        } while (!$global->cas('sysinfos', $oldValue, $newValue) && $attempts++ < 5 && usleep(1000));
-                        if ($attempts >= 5 && !$global->cas('sysinfos', $oldValue, $newValue)) {
-                            Worker::safeEcho("sysinfos_reaper: CAS failed after all retries, stale entries remain\n");
-                        }
-                    }
-                });
+                // The sysinfos (MAJOR-10) and channel-messages (MAJOR-11) reaper
+                // Timers that lived here are DELETED: both registries now carry
+                // real Redis TTLs (dc:state:sysinfo:* expires at SYSINFO_TTL,
+                // idle dc:chat:* tails are swept by score window inside
+                // handleChannelList), which is exactly what those CAS-spinning
+                // closure sweeps existed to emulate.
 
-                // Reaper: clean stale channel messages entries every 60 seconds (MAJOR-11)
-                // Remove channels from channel_msgs_channels if no activity for 1 hour
-                Timer::add(60, function() use ($global) {
-                    $cutoff = time() - 3600; // 1 hour inactivity threshold
-                    if (!isset($global->channel_msgs_channels)) return;
-                    $oldChannels = $global->channel_msgs_channels;
-                    if (!is_array($oldChannels)) return;
-                    $newChannels = [];
-                    foreach ($oldChannels as $channel) {
-                        $tsKey = 'channel_msgs_ts:' . $channel;
-                        $ts = $global->$tsKey;
-                        if ($ts !== null && $ts > $cutoff) {
-                            $newChannels[] = $channel;
-                        } else {
-                            // Channel is stale - unset its timestamp key
-                            unset($global->$tsKey);
-                        }
-                    }
-                    if (count($newChannels) !== count($oldChannels)) {
-                        $attempts = 0;
-                        while ($attempts < 5) {
-                            if ($global->cas('channel_msgs_channels', $oldChannels, $newChannels)) {
-                                break;
-                            }
-                            $attempts++;
-                            usleep(1000);
-                        }
-                    }
-                });
-
-                $global->timers = $timers;
+                // Registry seed: name => {interval, timer_id}, one hash field each.
+                foreach ($timers as $timerName => $timerInfo) {
+                    SharedState::hSet(self::TIMERS_REGISTRY_KEY, (string) $timerName, $timerInfo);
+                }
                 Events::memcache_queue_timer();
                 Events::hyperv_update_list_timer();
             } elseif (gethostname() == 'my-web-2.interserver.net') {
-                /*
-                $timers = $global->timers;
-                $global->timers = $timers;
-                */
             }
         }
     }
@@ -530,10 +629,6 @@ class Events
      */
     public static function onMessage($client_id, $message)
     {
-        /**
-         * @var \GlobalData\Client
-         */
-        global $global;
         //Worker::safeEcho("[{$client_id}] client:{$_SERVER['REMOTE_ADDR']}:{$_SERVER['REMOTE_PORT']} gateway:{$_SERVER['GATEWAY_ADDR']}:{$_SERVER['GATEWAY_PORT']} session:".json_encode($_SESSION)."\n onMessage:".serialize($message).PHP_EOL); // debug
         $message_data = json_decode($message, true); // Client is passed json data
         if (!is_array($message_data)) {
@@ -649,8 +744,9 @@ class Events
     /**
      * Protocol v1 envelope router (docs/PROTOCOL_V1.md §1–2; plan step 2.1).
      *
-     * Gated by Flag A `WS_NEW_HANDLING` (plan B8) via FeatureFlags::useNewHandling():
-     * with the flag OFF (the default) v1 envelopes are inert — no business logic
+     * Gated by Flag A `WS_NEW_HANDLING` (plan B8) via FeatureFlags::useNewHandling()
+     * (unset default is ON since 9eabb50 — see docs/FEATURE_FLAGS.md): with the flag
+     * explicitly OFF v1 envelopes are inert — no business logic
      * runs and no reply is sent, so deploying this router is a runtime no-op.
      * With the flag ON, only the `ping` op is implemented at this step (replied
      * with a v1 pong: {"v":1,"re":"<id>","ok":true,"data":{}}); every other op
@@ -674,19 +770,6 @@ class Events
      */
     public static function dispatchV1($client_id, $envelope)
     {
-        /**
-         * REVIEW-FIX (critical): this declaration was MISSING while the `pong`
-         * case below writes $global->{dc_ping:<client_id>}. Without it $global
-         * is an undefined local, and on PHP 8 "assign property on null" is a
-         * fatal Error — so every pong a dc client sent killed the
-         * BusinessWorker (Workerman catches the Throwable in the read handler
-         * and stopAll()s the process), i.e. a restart per keepalive round.
-         * `global` is function-scoped: onMessage()'s declaration does NOT carry
-         * into this function.
-         *
-         * @var \GlobalData\Client
-         */
-        global $global;
         if (!FeatureFlags::useNewHandling()) {
             // Flag A OFF: new handling is dormant — parse but do not act (plan B8 state 1).
             return;
@@ -844,12 +927,18 @@ class Events
             // that compares dc_ping against (now - threshold), so answering the
             // health ping was what got you disconnected.
             case 'pong':
-                // REVIEW-FIX: guard the null case too — onWorkerStart() sets
-                // $global = null when the GlobalData client fails to init, and
-                // a dropped pong must never be able to take the worker down.
-                if ($global !== null) {
-                    $global->{self::DC_PONG_KEY_PREFIX . $client_id} = time();
-                }
+                // Record the receipt in Redis: dc:presence:ping:<client_id>
+                // (TTL-capped) replaced the GlobalData dc_ping: key. SharedState
+                // is fail-safe when no client resolves, so the old `$global !==
+                // null` guard that kept a dropped pong from taking the worker
+                // down is no longer needed.
+                SharedState::set(self::DC_PONG_KEY_PREFIX . $client_id, time(), self::PRESENCE_PING_TTL);
+                // The pong doubles as the presence heartbeat: a member that is
+                // alive but idle (no moves) must not be swept out of the scene
+                // by the 90s index/record TTLs. Refreshing the record and the
+                // index score here is the TTL-native replacement for the old
+                // heartbeat staleness bookkeeping.
+                self::touchPresence($client_id);
                 return;
             // ping: server responding to a client-initiated ping
             case 'ping':
@@ -946,10 +1035,6 @@ class Events
      */
     public static function handleAuthHello($client_id, $envelope)
     {
-        /**
-         * @var \GlobalData\Client
-         */
-        global $global;
         $data = is_array($envelope['data']) ? $envelope['data'] : [];
         $re = $envelope['id'];
         $role = isset($data['role']) && is_string($data['role']) ? $data['role'] : '';
@@ -1175,12 +1260,13 @@ class Events
         $_SESSION['v1_authed'] = true;
         $_SESSION['v1_session'] = $hub_session;
         if ($role === 'host' && $module === 'vps') {
-            // Same CAS update of the shared hosts map legacy msgLogin performs
+            // Registry update the shared hosts map legacy msgLogin performs
             // (keyed by vps_id; qs/bot identities have no legacy equivalent).
-            do {
-                $old_value = $new_value = $global->hosts;
-                $new_value[$row['vps_id']] = $row;
-            } while (!$global->cas('hosts', $old_value, $new_value));
+            // Migration A2: the whole-map CAS loop collapses to a single HSET —
+            // hash fields are individually atomic, so two hosts authenticating
+            // on different workers cannot clobber each other's rows anymore.
+            SharedState::hSet(self::HOSTS_REGISTRY_KEY, (string) $row['vps_id'], $row);
+            SharedState::del(self::ADMIN_HOSTS_CACHE_KEY);
         }
         Gateway::setSession($client_id, $_SESSION);
         // Track client_id → session_id for dc-ws session health & deduplication
@@ -1347,11 +1433,14 @@ class Events
      * (it also keys hosts as "vps<id>"): parity with legacy, NOT a v1
      * regression. Revisit when v1 cmd routing learns the qs uid namespace.
      *
-     * Registers the run in the SAME shared $global->running GlobalData
-     * registry the legacy path uses (same CAS do/while pattern as
-     * run_command), keyed by the unique run_id, so cmd.stdin/output/exit/kill
-     * can route and so onClose cleanup + (later, step 2.8) admin.running see
-     * v1 runs too. Legacy md5 keys and v1 uuid keys coexist without collision.
+     * Registers the run in the SAME shared running registry the legacy path
+     * uses — migration A2 moved it from the GlobalData whole-map CAS to one
+     * Redis STRING key per run (dc:state:running:<run_id>, JSON value,
+     * RUNNING_ENTRY_TTL) plus a dc:state:running_ids SET index for the
+     * admin.running enumeration — keyed by the unique run_id, so
+     * cmd.stdin/output/exit/kill can route and so onClose cleanup + (later,
+     * step 2.8) admin.running see v1 runs too. Legacy md5 keys and v1 uuid
+     * keys coexist without collision.
      * The entry also carries 'id' (legacy field name for the run id) so
      * pre-existing consumers of registry entries (e.g. onClose's stop_run
      * sweep) read it without notices.
@@ -1364,10 +1453,6 @@ class Events
      */
     public static function handleCmdExec($client_id, $envelope)
     {
-        /**
-         * @var \GlobalData\Client
-         */
-        global $global;
         $re = $envelope['id'];
         if (($_SESSION['ima'] ?? '') !== 'admin') {
             self::sendV1Error($client_id, $re, 'forbidden', 'cmd.exec origination requires role admin');
@@ -1418,17 +1503,21 @@ class Events
         ];
         // Reject run_id reuse: overwriting an in-flight registry entry would
         // hijack the original run's output/exit routing and orphan its process.
-        $running = $global->running;
-        if (is_array($running) && isset($running[$run_id])) {
+        // Migration A2: add() (SET NX) makes the check-and-seed a single atomic
+        // command — strictly stronger than the old read-then-CAS-loop, which
+        // raced a duplicate between the check and the write.
+        $runningKey = self::RUNNING_KEY_PREFIX . $run_id;
+        if (!SharedState::add($runningKey, $entry, self::RUNNING_ENTRY_TTL)) {
             self::sendV1Error($client_id, $re, 'bad_request', "cmd.exec data.run_id \"{$run_id}\" is already in use by an in-flight run");
             return;
         }
-        // Same CAS read-modify-write loop as legacy run_command; concurrent
-        // legacy md5-keyed entries are preserved (whole-map compare-and-swap).
-        do {
-            $old_value = $new_value = $global->running;
-            $new_value[$run_id] = $entry;
-        } while (!$global->cas('running', $old_value, $new_value));
+        // add() (SET NX) and sAdd() are two separate commands: a crash in the gap
+        // leaves the entry set but absent from the index (invisible to sMembers
+        // enumeration) — a bounded orphan that self-reclaims when RUNNING_ENTRY_TTL
+        // (EX3600) expires the key. Accepted eventuality under the eventual-consistency
+        // model (mirrors the reverse: an index member whose entry already expired is
+        // skipped on the onClose sweep).
+        SharedState::sAdd(self::RUNNING_INDEX_KEY, $run_id);
         $relay = self::v1Envelope('cmd.exec', [
             'run_id' => $run_id,
             'command' => $command,
@@ -1467,10 +1556,6 @@ class Events
      */
     public static function handleCmdStdin($client_id, $envelope)
     {
-        /**
-         * @var \GlobalData\Client
-         */
-        global $global;
         $re = $envelope['id'];
         if (($_SESSION['ima'] ?? '') !== 'admin') {
             self::sendV1Error($client_id, $re, 'forbidden', 'cmd.stdin origination requires role admin');
@@ -1482,8 +1567,8 @@ class Events
             self::sendV1Error($client_id, $re, 'bad_request', 'cmd.stdin requires data.run_id and string data.data');
             return;
         }
-        $running = $global->running;
-        if (!isset($running[$run_id])) {
+        $run = SharedState::get(self::RUNNING_KEY_PREFIX . $run_id);
+        if (!is_array($run)) {
             // Mirror legacy msgRunning: silently drop input racing a finished run.
             return;
         }
@@ -1491,7 +1576,7 @@ class Events
             'run_id' => $run_id,
             'data' => $data['data']
         ]);
-        Gateway::sendToUid($running[$run_id]['host'], json_encode($relay));
+        Gateway::sendToUid($run['host'], json_encode($relay));
     }
 
     /**
@@ -1511,10 +1596,6 @@ class Events
      */
     public static function handleCmdOutput($client_id, $envelope)
     {
-        /**
-         * @var \GlobalData\Client
-         */
-        global $global;
         $re = $envelope['id'];
         if (($_SESSION['ima'] ?? '') !== 'host') {
             self::sendV1Error($client_id, $re, 'forbidden', 'cmd.output comes from role host');
@@ -1527,12 +1608,11 @@ class Events
             self::sendV1Error($client_id, $re, 'bad_request', 'cmd.output requires data.run_id, data.stream ("stdout"|"stderr") and string data.data');
             return;
         }
-        $running = $global->running;
-        if (!isset($running[$run_id])) {
+        $run = SharedState::get(self::RUNNING_KEY_PREFIX . $run_id);
+        if (!is_array($run)) {
             // Output racing the exit cleanup — drop silently, like legacy msgRunning.
             return;
         }
-        $run = $running[$run_id];
         if (($_SESSION['uid'] ?? '') !== $run['host']) {
             self::sendV1Error($client_id, $re, 'forbidden', 'sender does not own this run');
             return;
@@ -1564,22 +1644,18 @@ class Events
      * the spec; the hub forwards whatever the agent reported. Optional
      * trailing stdout/stderr are carried through when present.
      *
-     * CAS registry removal: on success the finished run is removed from the
-     * shared $global->running registry using the same whole-map CAS
-     * read-modify-write loop as the legacy paths (run_command registration /
-     * onClose sweep), so concurrent legacy md5-keyed entries are never
-     * clobbered — the v1 equivalent of msgRan's unset + write-back, made
-     * CAS-safe. A forbidden/unknown-run_id path removes nothing.
+     * Registry removal (migration A2): on success the finished run's own key
+     * (dc:state:running:<run_id>) is deleted and its id removed from the
+     * dc:state:running_ids index — the per-key equivalent of the retired
+     * whole-map CAS loop, where a concurrent legacy md5-keyed run can no
+     * longer be clobbered because nothing shares a payload with this one.
+     * A forbidden/unknown-run_id path removes nothing.
      *
      * @param string $client_id gateway client id
      * @param array $envelope validated v1 request envelope
      */
     public static function handleCmdExit($client_id, $envelope)
     {
-        /**
-         * @var \GlobalData\Client
-         */
-        global $global;
         $re = $envelope['id'];
         if (($_SESSION['ima'] ?? '') !== 'host') {
             self::sendV1Error($client_id, $re, 'forbidden', 'cmd.exit comes from role host');
@@ -1591,12 +1667,11 @@ class Events
             self::sendV1Error($client_id, $re, 'bad_request', 'cmd.exit requires data.run_id, data.code (int|null) and data.term (int|null)');
             return;
         }
-        $running = $global->running;
-        if (!isset($running[$run_id])) {
+        $run = SharedState::get(self::RUNNING_KEY_PREFIX . $run_id);
+        if (!is_array($run)) {
             // Already cleaned up (duplicate exit / restart race) — drop silently.
             return;
         }
-        $run = $running[$run_id];
         if (($_SESSION['uid'] ?? '') !== $run['host']) {
             self::sendV1Error($client_id, $re, 'forbidden', 'sender does not own this run');
             return;
@@ -1619,11 +1694,9 @@ class Events
         } else {
             Gateway::sendToUid($run['for'], json_encode($relay));
         }
-        // Remove the finished run — CAS loop so concurrent legacy entries survive.
-        do {
-            $old_value = $new_value = $global->running;
-            unset($new_value[$run_id]);
-        } while (!$global->cas('running', $old_value, $new_value));
+        // Remove the finished run: its own key plus its id from the index.
+        SharedState::del(self::RUNNING_KEY_PREFIX . $run_id);
+        SharedState::sRem(self::RUNNING_INDEX_KEY, $run_id);
     }
 
     /**
@@ -1647,10 +1720,6 @@ class Events
      */
     public static function handleCmdKill($client_id, $envelope)
     {
-        /**
-         * @var \GlobalData\Client
-         */
-        global $global;
         $re = $envelope['id'];
         if (($_SESSION['ima'] ?? '') !== 'admin') {
             self::sendV1Error($client_id, $re, 'forbidden', 'cmd.kill origination requires role admin');
@@ -1662,14 +1731,14 @@ class Events
             self::sendV1Error($client_id, $re, 'bad_request', 'cmd.kill data.run_id is required');
             return;
         }
-        $running = $global->running;
-        if (!isset($running[$run_id])) {
+        $run = SharedState::get(self::RUNNING_KEY_PREFIX . $run_id);
+        if (!is_array($run)) {
             // Kill racing a natural exit — nothing to do.
             return;
         }
         $relay = self::v1Envelope('cmd.kill', ['run_id' => $run_id]);
-        Gateway::sendToUid($running[$run_id]['host'], json_encode($relay));
-        Worker::safeEcho("[{$client_id}] v1 cmd.kill relayed for run {$run_id} to {$running[$run_id]['host']}".PHP_EOL);
+        Gateway::sendToUid($run['host'], json_encode($relay));
+        Worker::safeEcho("[{$client_id}] v1 cmd.kill relayed for run {$run_id} to {$run['host']}".PHP_EOL);
     }
 
     /**
@@ -1696,6 +1765,26 @@ class Events
     }
 
     /**
+     * Presence heartbeat touch (migration A2). A pong proves the client is
+     * alive even when it is standing still, so refresh its record TTL and both
+     * index scores without mutating the position payload. No-op for sockets
+     * that never joined the scene (no record).
+     *
+     * @param string $client_id
+     */
+    private static function touchPresence(string $client_id): void
+    {
+        $key = self::dcPresenceKey($client_id);
+        $entry = SharedState::get($key);
+        if (!is_array($entry)) {
+            return;
+        }
+        $entry['ts'] = time();
+        SharedState::set($key, $entry, self::PRESENCE_STALE_TTL);
+        self::presenceIndexAdd($client_id, $entry['ts']);
+    }
+
+    /**
      * Track a client_id → session_id mapping for dc-ws session health and
      * deduplication. Sends pings to existing clients when a duplicate session
      * connection is detected and schedules a timer to prune non-responsive clients.
@@ -1709,33 +1798,32 @@ class Events
      */
     private static function trackSessionClient($client_id, string $sessionId): void
     {
-        global $global;
         if ($sessionId === '') {
             return;
         }
-        // REVIEW-FIX (unvalidated client input reaching GlobalData KEYS):
+        // REVIEW-FIX (unvalidated client input reaching shared cache KEYS):
         // $sessionId is auth.hello's data['session'] with nothing but an
         // is_string() check on it, and it is concatenated into the
-        // dc_session_clients:<id> / dc_timer:<id> key names. A client could
-        // therefore create arbitrarily long (megabyte) or arbitrary-byte keys in
-        // the shared store and grow it without bound. Real clients send
-        // window.DC_SESSION_ID, a 32-char PHP session id, so constrain the key
-        // component to that shape and ignore anything else.
+        // dc:presence:session_clients:<id> / dc:presence:timer:<id> key names.
+        // A client could therefore create arbitrarily long (megabyte) or
+        // arbitrary-byte keys in the shared store and grow it without bound.
+        // Real clients send window.DC_SESSION_ID, a 32-char PHP session id, so
+        // constrain the key component to that shape and ignore anything else.
         if (!preg_match('/^[A-Za-z0-9,_.:-]{1,128}$/', $sessionId)) {
             Worker::safeEcho("[dc_presence] rejecting malformed session id from {$client_id}\n");
             return;
         }
-        $global->{'dc_client_session:' . $client_id} = $sessionId;
-        $listKey = 'dc_session_clients:' . $sessionId;
-        $clients = $global->$listKey ?? [];
+        $sessionKey = 'dc:presence:client_session:' . $client_id;
+        $listKey = 'dc:presence:session_clients:' . $sessionId;
+        SharedState::set($sessionKey, $sessionId, self::PRESENCE_SESSION_TTL);
+        $clients = SharedState::get($listKey);
         if (!is_array($clients)) {
             $clients = [];
         }
         // Filter out any stale (already-closed) client_ids
         $activeClients = [];
         foreach ($clients as $cid) {
-            $ck = 'dc_client_session:' . $cid;
-            if (($global->$ck ?? null) === $sessionId) {
+            if (SharedState::get('dc:presence:client_session:' . $cid) === $sessionId) {
                 $activeClients[] = $cid;
             }
         }
@@ -1752,25 +1840,24 @@ class Events
                     'data' => ['reason' => 'session_duplicate', 'count' => count($activeClients) + 1]
                 ]));
                 // BUG-B3: record when the ping was SENT under its own key.
-                // dc_ping: is reserved for the last pong RECEIVED (see
+                // dc:presence:ping: is reserved for the last pong RECEIVED (see
                 // self::DC_PONG_KEY_PREFIX docs) — writing the send time there
                 // made answering the ping look identical to never answering it.
-                $global->{self::DC_PING_SENT_KEY_PREFIX . $cid} = $pingedAt;
+                SharedState::set(self::DC_PING_SENT_KEY_PREFIX . $cid, $pingedAt, self::PRESENCE_PING_TTL);
             }
             // Cancel any existing timer for this session to prevent duplicates (MAJOR-5).
             //
-            // REVIEW-FIX (same cross-process hazard THE BOT #4 fixed for
-            // dc_bot_timer, still live here): dc_timer:<sessionId> used to hold a
-            // raw Workerman timer id. Timer ids are PER-PROCESS and a duplicate
-            // session connection lands on whichever of the 5 BusinessWorkers the
-            // Gateway picked, so Timer::del($idFromAnotherProcess) deleted an
-            // unrelated timer in THIS process — including, realistically, this
-            // process's bot move timer (which would freeze the bot permanently,
-            // since botOwnerAlive() would still report its owner alive) or a
-            // pending presence flush. The marker is now the OWNING PID and the
-            // real id stays process-local, so a process only ever deletes a timer
-            // it created itself.
-            $timerOwner = $global->{"dc_timer:".$sessionId} ?? null;
+            // REVIEW-FIX (same cross-process hazard THE BOT #4 fixed for bot
+            // ownership, still live here): dc:presence:timer:<sessionId> holds
+            // the OWNING PID, never a raw Workerman timer id. Timer ids are
+            // PER-PROCESS and a duplicate session connection lands on whichever
+            // of the 5 BusinessWorkers the Gateway picked, so
+            // Timer::del($idFromAnotherProcess) deleted an unrelated timer in
+            // THIS process — including, realistically, this process's bot move
+            // timer (which would freeze the bot permanently) or a pending
+            // presence flush. A process only ever deletes a timer it created.
+            $timerKey = 'dc:presence:timer:' . $sessionId;
+            $timerOwner = SharedState::get($timerKey);
             if (isset(self::$sessionPruneTimers[$sessionId])) {
                 \Workerman\Timer::del(self::$sessionPruneTimers[$sessionId]);
                 unset(self::$sessionPruneTimers[$sessionId]);
@@ -1784,38 +1871,39 @@ class Events
             // The old call passed `false` as $args (a TypeError: bool is never
             // ?array) and left $persistent at its default TRUE, which would have
             // leaked a repeating 15s timer per session. $args must be [].
-            self::$sessionPruneTimers[$sessionId] = \Workerman\Timer::add(15, function () use ($sessionId, $global, $pingedAt, $pingedClients) {
+            self::$sessionPruneTimers[$sessionId] = \Workerman\Timer::add(15, function () use ($sessionId, $pingedAt, $pingedClients) {
                 // REVIEW-FIX: the one-shot has fired, so drop both the local id
                 // and the shared marker (the latter only if it is still ours).
-                // dc_timer:<sessionId> previously survived forever — one permanent
-                // GlobalData key per distinct session the hub ever saw twice.
+                // The marker previously survived forever — one permanent key per
+                // distinct session the hub ever saw twice.
                 unset(self::$sessionPruneTimers[$sessionId]);
-                if (($global->{"dc_timer:".$sessionId} ?? null) === getmypid()) {
-                    unset($global->{"dc_timer:".$sessionId});
+                $timerKey = 'dc:presence:timer:' . $sessionId;
+                if (SharedState::get($timerKey) === getmypid()) {
+                    SharedState::del($timerKey);
                 }
-                $listKey = 'dc_session_clients:' . $sessionId;
-                $clients = $global->$listKey ?? [];
+                $listKey = 'dc:presence:session_clients:' . $sessionId;
+                $clients = SharedState::get($listKey);
                 if (!is_array($clients)) {
                     $clients = [];
                 }
                 $stillActive = [];
                 $toDrop = [];
                 foreach ($clients as $cid) {
-                    $ck = 'dc_client_session:' . $cid;
-                    if (($global->$ck ?? null) !== $sessionId) {
+                    $ck = 'dc:presence:client_session:' . $cid;
+                    if (SharedState::get($ck) !== $sessionId) {
                         continue;
                     }
                     // BUG-B3: responsive == a pong arrived at or after the
                     // session_check ping we sent 15s ago.
                     //
                     // REVIEW-FIX: compare against $pingedAt (the ping THIS closure
-                    // sent), not the shared dc_ping_sent: key. The 30s health
-                    // timer rewrites dc_ping_sent for every client, so a client
+                    // sent), not the shared ping-sent key. The 30s health
+                    // timer rewrites ping_sent for every client, so a client
                     // that had answered our session_check could still be seen as
                     // "pong older than last ping sent" purely because the health
                     // timer had pinged it 1s ago — and got closed for it. Clients
                     // we did not ping in this round are never candidates.
-                    $lastPong = (int) ($global->{self::DC_PONG_KEY_PREFIX . $cid} ?? 0);
+                    $lastPong = (int) (SharedState::get(self::DC_PONG_KEY_PREFIX . $cid) ?? 0);
                     if (!in_array($cid, $pingedClients, true) || $lastPong >= $pingedAt) {
                         $stillActive[] = ['cid' => $cid, 'pong' => $lastPong];
                     } else {
@@ -1828,29 +1916,31 @@ class Events
                     $toDrop[] = $k['cid'];
                 }
                 foreach ($toDrop as $cid) {
-                    $ck = 'dc_client_session:' . $cid;
-                    unset($global->$ck);
-                    unset($global->{self::DC_PONG_KEY_PREFIX . $cid});
-                    unset($global->{self::DC_PING_SENT_KEY_PREFIX . $cid});
-                    $clients = $global->$listKey ?? [];
-                    $clients = array_values(array_filter($clients, fn($c) => $c !== $cid));
-                    $global->$listKey = $clients;
+                    SharedState::del(
+                        'dc:presence:client_session:' . $cid,
+                        self::DC_PONG_KEY_PREFIX . $cid,
+                        self::DC_PING_SENT_KEY_PREFIX . $cid
+                    );
+                    $live = SharedState::get($listKey);
+                    if (is_array($live)) {
+                        SharedState::set($listKey, array_values(array_filter($live, fn($c) => $c !== $cid)), self::PRESENCE_SESSION_TTL);
+                    }
                     Gateway::closeClient($cid, 'session_pruned');
                     Worker::safeEcho("[dc_presence] pruned non-responsive client {$cid} from session {$sessionId}\n");
                 }
             }, [], false);
-            $global->{"dc_timer:".$sessionId} = getmypid();
+            SharedState::set($timerKey, getmypid(), self::PRESENCE_SESSION_TTL);
         }
         $clients[] = $client_id;
-        $global->$listKey = $clients;
+        SharedState::set($listKey, $clients, self::PRESENCE_SESSION_TTL);
     }
 
     /**
      * v1 `pty.open` handler (docs/PROTOCOL_V1.md §2.3 + §5; plan step 2.4) —
      * admin-originated C→H, relayed H→A. HUB-SIDE relay only: the hub
      * validates/authorizes, tracks the pty session in the SEPARATE
-     * $global->ptys registry (decoupled from the cmd $global->running
-     * registry), and relays the v1 envelope to the target host. The actual
+     * dc:state:ptys Redis HASH (decoupled from the cmd running registry), and
+     * relays the v1 envelope to the target host. The actual
      * PTY allocation happens on the host (Phase 3 agent). Only reachable via
      * dispatchV1 (Flag A on + v1-authed) — fully dormant with Flag A off.
      *
@@ -1898,10 +1988,6 @@ class Events
      */
     public static function handlePtyOpen($client_id, $envelope)
     {
-        /**
-         * @var \GlobalData\Client
-         */
-        global $global;
         $re = $envelope['id'];
         if (($_SESSION['ima'] ?? '') !== 'admin') {
             self::sendV1Error($client_id, $re, 'forbidden', 'pty.open origination requires role admin');
@@ -1956,16 +2042,6 @@ class Events
             self::sendV1Error($client_id, $re, 'not_online', "host {$hostUid} is not online");
             return;
         }
-        // Lazily create the separate pty registry (no-op when it already
-        // exists); kept out of onWorkerStart so no legacy method is touched.
-        $global->add('ptys', []);
-        // Collision guard: reuse of an in-flight pty_id would hijack the
-        // original session's duplex routing (same rationale as cmd.exec).
-        $ptys = $global->ptys;
-        if (is_array($ptys) && isset($ptys[$pty_id])) {
-            self::sendV1Error($client_id, $re, 'bad_request', "pty.open data.pty_id \"{$pty_id}\" is already in use by an open pty");
-            return;
-        }
         $entry = [
             'pty_id' => $pty_id,
             'host' => $hostUid,
@@ -1976,15 +2052,16 @@ class Events
             'rows' => $rows,
             'started' => time()
         ];
-        // CAS-safe whole-map registration, same pattern as $global->running
-        // but in the separate ptys registry so pty and cmd stay decoupled.
-        do {
-            $old_value = $new_value = $global->ptys;
-            if (!is_array($new_value)) {
-                $old_value = $new_value = [];
-            }
-            $new_value[$pty_id] = $entry;
-        } while (!$global->cas('ptys', $old_value, $new_value));
+        // Collision guard + registration in one atomic HSETNX: reuse of an
+        // in-flight pty_id would hijack the original session's duplex routing
+        // (same rationale as cmd.exec). Migration A2 replaced the separate
+        // read-check + whole-map CAS loop — the hash field is created exactly
+        // once, so two racing opens on different workers cannot both win, and
+        // every other pty session stays untouched.
+        if (!SharedState::hSetNx(self::PTYS_REGISTRY_KEY, $pty_id, $entry)) {
+            self::sendV1Error($client_id, $re, 'bad_request', "pty.open data.pty_id \"{$pty_id}\" is already in use by an open pty");
+            return;
+        }
         // §5 structured audit: who/host/scope/command/pty_id/timestamp.
         self::ptyAudit('open', [
             'pty_id' => $pty_id,
@@ -2030,10 +2107,6 @@ class Events
      */
     public static function handlePtyData($client_id, $envelope)
     {
-        /**
-         * @var \GlobalData\Client
-         */
-        global $global;
         $re = $envelope['id'];
         $data = is_array($envelope['data']) ? $envelope['data'] : [];
         $pty_id = isset($data['pty_id']) && is_string($data['pty_id']) ? $data['pty_id'] : '';
@@ -2041,12 +2114,11 @@ class Events
             self::sendV1Error($client_id, $re, 'bad_request', 'pty.data requires data.pty_id and base64 string data.data');
             return;
         }
-        $ptys = $global->ptys;
-        if (!is_array($ptys) || !isset($ptys[$pty_id])) {
+        $pty = SharedState::hGet(self::PTYS_REGISTRY_KEY, $pty_id);
+        if (!is_array($pty)) {
             // Data racing the close cleanup — drop silently.
             return;
         }
-        $pty = $ptys[$pty_id];
         $sender = $_SESSION['uid'] ?? '';
         if ($sender === $pty['for']) {
             $target = $pty['host'];
@@ -2077,10 +2149,6 @@ class Events
      */
     public static function handlePtyResize($client_id, $envelope)
     {
-        /**
-         * @var \GlobalData\Client
-         */
-        global $global;
         $re = $envelope['id'];
         if (($_SESSION['ima'] ?? '') !== 'admin') {
             self::sendV1Error($client_id, $re, 'forbidden', 'pty.resize origination requires role admin');
@@ -2094,12 +2162,11 @@ class Events
         }
         $cols = intval($data['cols']);
         $rows = intval($data['rows']);
-        $ptys = $global->ptys;
-        if (!is_array($ptys) || !isset($ptys[$pty_id])) {
+        $pty = SharedState::hGet(self::PTYS_REGISTRY_KEY, $pty_id);
+        if (!is_array($pty)) {
             // Resize racing the close cleanup — drop silently.
             return;
         }
-        $pty = $ptys[$pty_id];
         if (($_SESSION['uid'] ?? '') !== $pty['for']) {
             self::sendV1Error($client_id, $re, 'forbidden', 'only the pty session owner may resize it');
             return;
@@ -2109,16 +2176,16 @@ class Events
             'cols' => $cols,
             'rows' => $rows
         ])));
-        // Keep the registry geometry current (CAS-safe whole-map update; the
-        // entry may already be gone if a close raced us — that is fine).
-        do {
-            $old_value = $new_value = $global->ptys;
-            if (!is_array($new_value) || !isset($new_value[$pty_id])) {
-                break;
-            }
-            $new_value[$pty_id]['cols'] = $cols;
-            $new_value[$pty_id]['rows'] = $rows;
-        } while (!$global->cas('ptys', $old_value, $new_value));
+        // Keep the registry geometry current. Migration A2: a single-field HSET
+        // replaces the whole-map CAS loop — concurrent resizes of OTHER pty
+        // sessions can no longer collide with this one; a same-session resize
+        // race is last-write-wins, and the entry may already be gone because a
+        // close raced us, which hGet returning null above already tolerated.
+        if (SharedState::hGet(self::PTYS_REGISTRY_KEY, $pty_id) !== null) {
+            $pty['cols'] = $cols;
+            $pty['rows'] = $rows;
+            SharedState::hSet(self::PTYS_REGISTRY_KEY, $pty_id, $pty);
+        }
     }
 
     /**
@@ -2127,7 +2194,7 @@ class Events
      * allocated host 'host') may close; anyone else gets `forbidden`. The
      * close (with the optional exit `code` when the PTY child exited) is
      * relayed to the OTHER party, the entry is removed from the separate
-     * $global->ptys registry via the CAS whole-map loop, and a §5 structured
+     * dc:state:ptys hash with one HDEL, and a §5 structured
      * audit line records pty_id / who closed / code / timestamp. Unknown
      * pty_id is silently dropped (duplicate close / restart race).
      *
@@ -2136,10 +2203,6 @@ class Events
      */
     public static function handlePtyClose($client_id, $envelope)
     {
-        /**
-         * @var \GlobalData\Client
-         */
-        global $global;
         $re = $envelope['id'];
         $data = is_array($envelope['data']) ? $envelope['data'] : [];
         $pty_id = isset($data['pty_id']) && is_string($data['pty_id']) ? $data['pty_id'] : '';
@@ -2147,12 +2210,11 @@ class Events
             self::sendV1Error($client_id, $re, 'bad_request', 'pty.close data.pty_id is required');
             return;
         }
-        $ptys = $global->ptys;
-        if (!is_array($ptys) || !isset($ptys[$pty_id])) {
+        $pty = SharedState::hGet(self::PTYS_REGISTRY_KEY, $pty_id);
+        if (!is_array($pty)) {
             // Already cleaned up (duplicate close / restart race) — drop silently.
             return;
         }
-        $pty = $ptys[$pty_id];
         $sender = $_SESSION['uid'] ?? '';
         if ($sender === $pty['for']) {
             $target = $pty['host'];
@@ -2167,14 +2229,9 @@ class Events
             $relayData['code'] = $data['code'];
         }
         Gateway::sendToUid($target, json_encode(self::v1Envelope('pty.close', $relayData)));
-        // CAS remove from the separate ptys registry.
-        do {
-            $old_value = $new_value = $global->ptys;
-            if (!is_array($new_value)) {
-                break;
-            }
-            unset($new_value[$pty_id]);
-        } while (!$global->cas('ptys', $old_value, $new_value));
+        // Remove the session's field from the separate ptys hash (one HDEL —
+        // the per-field equivalent of the retired whole-map CAS loop).
+        SharedState::hDel(self::PTYS_REGISTRY_KEY, $pty_id);
         // §5 structured audit: pty_id / who closed / code / timestamp.
         self::ptyAudit('close', [
             'pty_id' => $pty_id,
@@ -2797,8 +2854,9 @@ class Events
      * CORRELATION (per the §2.5 diff note — the legacy `for` field disappears
      * from the wire): the hub relays the request to the host as a fresh
      * envelope (id = relay id) and records {relay id → requesting admin uid +
-     * the admin's original envelope id} in the GlobalData `sysinfos` registry
-     * (lazily created, CAS-maintained like $global->ptys — BusinessWorker
+     * the admin's original envelope id} at one Redis key per relay
+     * (dc:state:sysinfo:<relay-id>, JSON value, SYSINFO_TTL)
+     * (BusinessWorker
      * processes are independent, so a process-local map cannot route the
      * reply). The host answers with a request-shaped envelope (op
      * telemetry.sysinfo, its own fresh id) carrying `re` = the relay id; the
@@ -2818,10 +2876,6 @@ class Events
      */
     public static function handleTelemetrySysinfo($client_id, $envelope)
     {
-        /**
-         * @var \GlobalData\Client
-         */
-        global $global;
         $re = $envelope['id'];
         $ima = $_SESSION['ima'] ?? '';
         $data = is_array($envelope['data']) ? $envelope['data'] : [];
@@ -2849,25 +2903,19 @@ class Events
                 'params' => $data['params']
             ]);
             // Record the pending request so the host's correlated response can
-            // be routed back from ANY BusinessWorker process (CAS whole-map,
-            // same pattern as $global->ptys; lazily created).
-            // KNOWN FOLLOW-UP (carried forward from step 2.6 review): this
-            // registry has NO reaper/expiry — a host that never answers leaks
-            // its entry forever and the waiting admin gets no timeout error.
-            $global->add('sysinfos', []);
-            $entry = [
+            // be routed back from ANY BusinessWorker process. Migration A2:
+            // one TTL'd key per relay (dc:state:sysinfo:<relay-id> @ SYSINFO_TTL)
+            // replaces the lazily-created GlobalData `sysinfos` map, its CAS
+            // whole-map loops, AND the 5-minute reaper Timer — the "KNOWN
+            // FOLLOW-UP" (no expiry, leaked entries for never-answering hosts)
+            // is what the TTL now solves natively: the entry lapses and the
+            // reply that arrives afterwards simply finds nothing and drops.
+            SharedState::set(self::SYSINFO_KEY_PREFIX . $relay['id'], [
                 'for' => $_SESSION['uid'],
                 're' => $re,
                 'host' => $hostUid,
                 'ts' => time()
-            ];
-            do {
-                $old_value = $new_value = $global->sysinfos;
-                if (!is_array($new_value)) {
-                    $old_value = $new_value = [];
-                }
-                $new_value[$relay['id']] = $entry;
-            } while (!$global->cas('sysinfos', $old_value, $new_value));
+            ], self::SYSINFO_TTL);
             Gateway::sendToUid($hostUid, json_encode($relay));
             // No immediate reply — the ok reply is sent when the host responds.
             return;
@@ -2879,12 +2927,12 @@ class Events
                 self::sendV1Error($client_id, $re, 'bad_request', 'telemetry.sysinfo responses must set envelope re to the relayed request id');
                 return;
             }
-            $sysinfos = $global->sysinfos;
-            if (!is_array($sysinfos) || !isset($sysinfos[$relayId])) {
-                // Response racing a restart/expiry — drop silently.
+            $sysinfoKey = self::SYSINFO_KEY_PREFIX . $relayId;
+            $entry = SharedState::get($sysinfoKey);
+            if (!is_array($entry)) {
+                // Response racing a restart/TTL expiry — drop silently.
                 return;
             }
-            $entry = $sysinfos[$relayId];
             if (($_SESSION['uid'] ?? '') !== $entry['host']) {
                 self::sendV1Error($client_id, $re, 'forbidden', 'sender is not the host this sysinfo request was addressed to');
                 return;
@@ -2893,13 +2941,7 @@ class Events
             // host comes from the authed session, never the payload (legacy
             // msgPhpsysinfo parity: response leg sets host from $_SESSION['uid']).
             $replyData['host'] = intval(str_replace('vps', '', $_SESSION['uid']));
-            do {
-                $old_value = $new_value = $global->sysinfos;
-                if (!is_array($new_value)) {
-                    break;
-                }
-                unset($new_value[$relayId]);
-            } while (!$global->cas('sysinfos', $old_value, $new_value));
+            SharedState::del($sysinfoKey);
             Gateway::sendToUid($entry['for'], json_encode([
                 'v' => 1,
                 're' => $entry['re'],
@@ -3190,35 +3232,27 @@ class Events
 
     /**
      * Append a message to the bounded per-channel hot cache (docs/
-     * PROTOCOL_V1.md §4; plan step 2.7). The cache is the GlobalData
-     * `channels` map — channel id → array of §2.10 channel.message objects,
-     * capped at the last CHAT_HISTORY_MAX (100) entries — maintained with the
-     * same lazily-created + CAS whole-map read-modify-write convention as the
-     * $global->ptys/$global->sysinfos registries. This is what serves
-     * channel.join history and the live tail WITHOUT re-querying the DB;
-     * unlike legacy rooms[0]['messages'] it is bounded and evicts (OQ5).
+     * PROTOCOL_V1.md §4; plan step 2.7). Migration A2 moved the cache from the
+     * GlobalData per-channel lists (whole-map CAS read-modify-write) to one
+     * Redis LIST per channel, dc:chat:msgs:<channel>, trimmed in the same
+     * pipeline as the push (rPushLtrim keeps the NEWEST CHAT_HISTORY_MAX=100
+     * entries), plus a dc:chat:activity ZSET index scored by last-activity ts.
+     * The index makes the 60-second channel reaper Timer (MAJOR-11) and the
+     * channel_msgs_channels list / channel_msgs_ts:* keys unnecessary:
+     * enumeration and staleness are both one score-range query (see
+     * handleChannelList, which sweeps idle tails on read).
+     * This is what serves channel.join history and the live tail WITHOUT
+     * re-querying the DB; unlike legacy rooms[0]['messages'] it is bounded and
+     * evicts (OQ5).
      *
-     * KNOWN SCALABILITY FOLLOW-UP (documented, not addressed this step — more
-     * substantive than a routine LOW note):
-     *   The per-channel MESSAGE list is capped (CHAT_HISTORY_MAX=100) and
-     *   evicts, but the NUMBER of channel KEYS in this single GlobalData map is
-     *   NOT capped and there is NO idle eviction. Two growth vectors compound:
-     *     (a) Unbounded dm:* key minting. chat.send's DM form (handleChatSend)
-     *         does NOT validate the `to` uid for existence/format, so any authed
-     *         user can mint an unlimited number of distinct `dm:<me>:<random>`
-     *         keys, each of which lands here as a permanent map entry (and a
-     *         chat_messages row) — a cheap way to inflate the map indefinitely.
-     *     (b) CAS round-trip cost. Every append (and thus every channel.publish
-     *         / chat.send at "chat"/"info"/"warn"/"error" level, and every
-     *         log-level fan-out) reads and CAS-writes the ENTIRE all-channels
-     *         map, not just the one channel — so per-op GlobalData payload size
-     *         grows linearly with the total channel count across the whole fleet.
-     *   The already-solved per-channel 100-message cap does NOT bound either of
-     *   these. Suggested follow-up: move to per-channel GlobalData keys (one key
-     *   per channel id, so an append touches only its own channel) instead of
-     *   one giant map, and/or add a channel-count cap + idle-eviction policy,
-     *   and validate the DM `to` uid so junk dm:* keys cannot be minted. Tracked
-     *   as a Phase 2 follow-up; harmless at current channel counts.
+     * RESIDUAL SCALABILITY NOTE (reduced, not eliminated): the per-channel
+     * LIST is hard-bounded at CHAT_HISTORY_MAX, and an idled channel's TAIL is
+     * reclaimed the next time any client lists channels (the sweep deletes
+     * tails outside the CHAT_CHANNEL_IDLE_TTL window and drops them from the
+     * index). A channel that is only ever published to — never listed — can
+     * still accumulate keys; the DM `to` uid remains unvalidated, so junk
+     * dm:* minting is still possible. Bounding that (validate `to`, cap the
+     * index) stays the documented Phase 2 follow-up.
      *
      * @param string $channel channel id
      * @param array $message §2.10 channel.message object (channel/from/
@@ -3226,48 +3260,8 @@ class Events
      */
     private static function chatCacheAppend($channel, $message)
     {
-        /**
-         * @var \GlobalData\Client
-         */
-        global $global;
-        // SCALABILITY (see docblock): per-channel key eliminates CAS contention
-        // on a single shared map. Key pattern 'channel_msgs:' . $channel stores
-        // each channel's message list independently.
-        $channelKey = 'channel_msgs:' . $channel;
-        $global->add($channelKey, []);
-
-        // Track channels that have data for cleanup/enumeration (MAJOR-11)
-        $channelsKey = 'channel_msgs_channels';
-        $global->add($channelsKey, []);
-        $timestampKey = 'channel_msgs_ts:' . $channel;
-        $now = time();
-        $global->$timestampKey = $now;
-
-        // MAJOR-12: REMOVED the CAS loop that updated channel_msgs_channels here.
-        // The per-channel timestamp keys (channel_msgs_ts:<channel>) already track
-        // which channels are active for the reaper; the shared channel list was a
-        // contention point where all channels competed on a single key.
-        // do {
-        //     $old_channels = $new_channels = $global->$channelsKey;
-        //     if (!is_array($old_channels)) {
-        //         $old_channels = $new_channels = [];
-        //     }
-        //     if (!in_array($channel, $old_channels, true)) {
-        //         $new_channels[] = $channel;
-        //     }
-        // } while (!$global->cas($channelsKey, $old_channels, $new_channels));
-
-        do {
-            $old_value = $new_value = $global->$channelKey;
-            if (!is_array($new_value)) {
-                $old_value = $new_value = [];
-            }
-            $new_value[] = $message;
-            if (count($new_value) > self::CHAT_HISTORY_MAX) {
-                self::logStructured('chat.cache.overflow', ['channel' => $channel]);
-                $new_value = array_slice($new_value, -self::CHAT_HISTORY_MAX);
-            }
-        } while (!$global->cas($channelKey, $old_value, $new_value));
+        SharedState::rPushLtrim(self::CHAT_MSGS_KEY_PREFIX . $channel, $message, self::CHAT_HISTORY_MAX);
+        SharedState::zAdd(self::CHAT_ACTIVITY_KEY, time(), $channel);
     }
 
     /**
@@ -3472,16 +3466,19 @@ class Events
      *
      * CHANNEL-SOURCE DESIGN (documented decision): the hub has no standalone
      * channel table; the list is derived from the union of (a) the
-     * $global->channel_meta registry — explicit channel.create'd channels
-     * with {type,topic,created_by,created_at}, lazily created + CAS-
-     * maintained like $global->ptys — and (b) every channel id that has
-     * traffic in the $global->channels hot cache (so host:* / job:* log
-     * channels appear once something is published to them). The list is
+     * dc:state:channel_meta Redis registry — explicit channel.create'd
+     * channels with {type,topic,created_by,created_at} — and (b) every
+     * channel id that has traffic in the dc:chat:activity index (so host:* /
+     * job:* log channels appear once something is published to them). The list is
      * filtered by the caller's ACL (chatChannelAllowed), so hosts see only
      * their own channels and bots only chat:*. `members` counts the
      * channel's live Gateway group connections (connection count, not unique
      * uids — documented approximation); `topic` is "" for channels without
      * registry metadata.
+     *
+     * Read-side sweep (migration A2, replaces the deleted 60s reaper Timer):
+     * activity older than CHAT_CHANNEL_IDLE_TTL is dropped from the index and
+     * its hot-cache LIST deleted here, on the one call that enumerates.
      *
      * Reply: {channels:[{id,type,topic,members}]} per the frozen §2.10 list.
      *
@@ -3490,16 +3487,15 @@ class Events
      */
     public static function handleChannelList($client_id, $envelope)
     {
-        /**
-         * @var \GlobalData\Client
-         */
-        global $global;
         $re = $envelope['id'];
-        $meta = $global->channel_meta;
-        if (!is_array($meta)) {
-            $meta = [];
-        }
+        self::sweepIdleChatChannels();
+        $meta = SharedState::hGetAll(self::CHANNEL_META_REGISTRY_KEY);
         $ids = array_keys($meta);
+        foreach (SharedState::zRangeByScore(self::CHAT_ACTIVITY_KEY, time() - self::CHAT_CHANNEL_IDLE_TTL, 'inf') as $activeChannel) {
+            if (is_string($activeChannel) && !in_array($activeChannel, $ids, true)) {
+                $ids[] = $activeChannel;
+            }
+        }
         $channels = [];
         foreach ($ids as $id) {
             $id = (string) $id;
@@ -3522,6 +3518,29 @@ class Events
     }
 
     /**
+     * Reclaim idle per-channel hot caches (migration A2 — the Redis equivalent
+     * of the retired 60-second channel reaper Timer closure). Channels whose
+     * dc:chat:activity score fell outside the CHAT_CHANNEL_IDLE_TTL window have
+     * their LIST deleted and themselves dropped from the index; the index IS
+     * the activity ledger, so there is no separate ts-key set to prune.
+     * Idempotent and cheap: one range read plus a delete per stale member, and
+     * a no-op when the window is empty.
+     */
+    private static function sweepIdleChatChannels(): void
+    {
+        $staleBefore = time() - self::CHAT_CHANNEL_IDLE_TTL;
+        $stale = SharedState::zRangeByScore(self::CHAT_ACTIVITY_KEY, 0, $staleBefore);
+        foreach ($stale as $channel) {
+            if (is_string($channel) && $channel !== '') {
+                SharedState::del(self::CHAT_MSGS_KEY_PREFIX . $channel);
+            }
+        }
+        if ($stale !== []) {
+            SharedState::zRem(self::CHAT_ACTIVITY_KEY, ...$stale);
+        }
+    }
+
+    /**
      * v1 `channel.join` handler (docs/PROTOCOL_V1.md §2.10 + §4; plan step
      * 2.7) — C→H request/reply. Only reachable via dispatchV1 (Flag A on +
      * v1-authed).
@@ -3535,7 +3554,7 @@ class Events
      * Gateway::sendToGroup($channel, ...).
      *
      * Reply: {history:[<§2.10 channel.message obj>]} — the last N≤100
-     * messages from the bounded GlobalData hot cache ONLY (never a DB query
+     * messages from the bounded Redis hot cache ONLY (never a DB query
      * on join, per §4's "hot cache serves channel.join history"; deeper
      * scrollback via msg_id pagination against chat_messages is a later
      * client-driven step). A best-effort channel.presence broadcast follows.
@@ -3545,10 +3564,6 @@ class Events
      */
     public static function handleChannelJoin($client_id, $envelope)
     {
-        /**
-         * @var \GlobalData\Client
-         */
-        global $global;
         $re = $envelope['id'];
         $data = is_array($envelope['data']) ? $envelope['data'] : [];
         $channel = $data['channel'] ?? null;
@@ -3561,9 +3576,9 @@ class Events
             return;
         }
         Gateway::joinGroup($client_id, $channel);
-        $channelKey = 'channel_msgs:' . $channel;
-        $cached = $global->$channelKey;
-        $history = is_array($cached) ? array_values($cached) : [];
+        // LRANGE 0..-1 on the trimmed tail: oldest-first, exactly the order the
+        // retired GlobalData list carried (rPushLtrim bounded it on write).
+        $history = SharedState::lRange(self::CHAT_MSGS_KEY_PREFIX . $channel, 0, -1);
         Gateway::sendToClient($client_id, json_encode([
             'v' => 1,
             're' => $re,
@@ -3614,9 +3629,10 @@ class Events
      * [A-Za-z0-9][A-Za-z0-9_.-]{0,80} slug so the composed id passes
      * chatValidChannelId and fits chat_messages.channel), topic (optional
      * str). Writes {type,topic,created_by,created_at} into the
-     * $global->channel_meta registry (lazily created + CAS whole-map loop,
-     * same convention as $global->ptys); a duplicate id — checked INSIDE the
-     * CAS loop so two racing creates cannot both win — is rejected with
+     * dc:state:channel_meta Redis hash (migration A2: a duplicate id is
+     * rejected by HSETNX returning false — creation is atomic, so two racing
+     * creates cannot both win, replacing the old lazily-created + CAS
+     * whole-map loop convention); is rejected with
      * bad_request (NO silent overwrite: an existing channel's
      * type/topic/created_by/created_at are never clobbered). Pinned by
      * tests/EventsV1ChatTest.php::testChannelCreateDuplicateRejectedBadRequest.
@@ -3627,10 +3643,6 @@ class Events
      */
     public static function handleChannelCreate($client_id, $envelope)
     {
-        /**
-         * @var \GlobalData\Client
-         */
-        global $global;
         $re = $envelope['id'];
         if (($_SESSION['ima'] ?? '') !== 'admin') {
             self::sendV1Error($client_id, $re, 'forbidden', 'channel.create requires role admin');
@@ -3644,26 +3656,13 @@ class Events
         }
         $topic = isset($data['topic']) && is_string($data['topic']) ? $data['topic'] : '';
         $channel = 'chat:'.$name;
-        $global->add('channel_meta', []);
-        $duplicate = false;
-        do {
-            $old_value = $new_value = $global->channel_meta;
-            if (!is_array($new_value)) {
-                $old_value = $new_value = [];
-            }
-            if (isset($new_value[$channel])) {
-                // Checked inside the CAS loop: two racing creates cannot both win.
-                $duplicate = true;
-                break;
-            }
-            $new_value[$channel] = [
-                'type' => 'chat',
-                'topic' => $topic,
-                'created_by' => $_SESSION['uid'] ?? '',
-                'created_at' => time()
-            ];
-        } while (!$global->cas('channel_meta', $old_value, $new_value));
-        if ($duplicate) {
+        $created = SharedState::hSetNx(self::CHANNEL_META_REGISTRY_KEY, $channel, [
+            'type' => 'chat',
+            'topic' => $topic,
+            'created_by' => $_SESSION['uid'] ?? '',
+            'created_at' => time()
+        ]);
+        if (!$created) {
             self::sendV1Error($client_id, $re, 'bad_request', "channel {$channel} already exists");
             return;
         }
@@ -3755,22 +3754,13 @@ class Events
      */
     private static function handleStatusCommand($client_id, $re, $channel, $level)
     {
-        /**
-         * @var \GlobalData\Client
-         */
-        global $global;
-
         $clientCount = 0;
         $sessions = Gateway::getAllClientSessions();
         if (is_array($sessions)) {
             $clientCount = count($sessions);
         }
 
-        $channelCount = 0;
-        $meta = $global->channel_meta ?? [];
-        if (is_array($meta)) {
-            $channelCount = count($meta);
-        }
+        $channelCount = count(SharedState::hGetAll(self::CHANNEL_META_REGISTRY_KEY));
 
         $timestamp = date('Y-m-d H:i:s');
         $statusText = "Status: {$timestamp} | Clients: {$clientCount} | Channels: {$channelCount}";
@@ -3789,8 +3779,8 @@ class Events
      * Handles the ping command — returns "pong" with bot coordinates to the
      * requesting client only (not broadcast to the channel).
      *
-     * Reads the bot position from GlobalData dc_bot_state:<location> (falling
-     * back to the bot's presence entry dc_presence:client:bot_<location>).
+     * Reads the bot position from Redis dc:presence:bot_state:<location> (falling
+     * back to the bot's presence entry dc:presence:client:bot_<location>).
      * If no bot state exists, returns "pong - no bot present".
      *
      * THE BOT #5: this used to read 'dc_presence:bot_main', a key nothing ever
@@ -3805,15 +3795,10 @@ class Events
      */
     private static function handlePingCommand($client_id, $re, $channel, $level)
     {
-        /**
-         * @var \GlobalData\Client
-         */
-        global $global;
-
         $location = self::BOT_DEFAULT_LOCATION;
-        $botState = $global->{'dc_bot_state:' . $location} ?? null;
+        $botState = SharedState::get(self::BOT_STATE_KEY_PREFIX . $location);
         if (!is_array($botState)) {
-            $botState = $global->{'dc_presence:client:bot_' . $location} ?? null;
+            $botState = SharedState::get(self::DC_PRESENCE_KEY_PREFIX . 'bot_' . $location);
         }
         if (!$botState || !is_array($botState)) {
             $body = 'pong - no bot present';
@@ -3926,13 +3911,13 @@ class Events
      * identity-derived. Same data-gathering as legacy msgClients (iterate
      * Gateway::getAllClientSessions(), split host-ish vs admin sessions),
      * reshaped to the frozen §2.9 field lists, minus the chat-room noise
-     * ($global->rooms) and minus the mandatory gzcompress legacy applies
+     * (the dc:state:rooms hash) and minus the mandatory gzcompress legacy applies
      * (a client wanting compression uses envelope enc:"gzip" instead).
      *
      * hosts entries: {id (uid str), host_id (int, parsed from the uid the
      * hub itself bound at auth), name, ima, type, ip, online ("Y-m-d H:i:s"),
      * module}. Missing type/ip on older sessions fall back to the
-     * $global->hosts registry row (vps module only — the registry is keyed
+     * dc:state:hosts registry row (vps module only — the registry is keyed
      * by vps_id with vps_masters rows). Bot sessions appear in hosts with
      * their real ima ("bot") per the §2.9 ima:str field. admins entries:
      * {id (str), name, ima:"admin", img, online}.
@@ -3953,20 +3938,15 @@ class Events
      */
     public static function handleAdminHosts($client_id, $envelope)
     {
-        /**
-         * @var \GlobalData\Client
-         */
-        global $global;
         $re = $envelope['id'];
         if (($_SESSION['ima'] ?? '') !== 'admin') {
             self::sendV1Error($client_id, $re, 'forbidden', 'admin.hosts requires role admin');
             return;
         }
-        $cacheKey = 'admin_hosts_cache';
-        $ttlKey = 'admin_hosts_cache_ttl';
-        $cached = $global->$cacheKey;
-        $ttl = $global->$ttlKey;
-        if ($cached !== null && $ttl !== null && (microtime(true) - $ttl) < 5) {
+        // Cache-aside (migration A2): one Redis key with a real TTL replaces the
+        // old admin_hosts_cache + admin_hosts_cache_ttl GlobalData sibling pair.
+        $cached = SharedState::get(self::ADMIN_HOSTS_CACHE_KEY);
+        if (is_array($cached)) {
             Gateway::sendToClient($client_id, json_encode([
                 'v' => 1,
                 're' => $re,
@@ -3975,10 +3955,7 @@ class Events
             ]));
             return;
         }
-        $registry = $global->hosts;
-        if (!is_array($registry)) {
-            $registry = [];
-        }
+        $registry = SharedState::hGetAll(self::HOSTS_REGISTRY_KEY);
         $hosts = [];
         $admins = [];
         $admin_sessions = Gateway::getClientSessionsByGroup('admins');
@@ -4018,8 +3995,7 @@ class Events
             ];
         }
         $data = ['hosts' => $hosts, 'admins' => $admins];
-        $global->$cacheKey = $data;
-        $global->$ttlKey = microtime(true);
+        SharedState::set(self::ADMIN_HOSTS_CACHE_KEY, $data, self::ADMIN_HOSTS_CACHE_TTL);
         Gateway::sendToClient($client_id, json_encode([
             'v' => 1,
             're' => $re,
@@ -4035,9 +4011,11 @@ class Events
      * payload — v1 returns the real registry). Only reachable via dispatchV1
      * (Flag A on + v1-authed) — fully dormant with Flag A off.
      *
-     * Requires role admin (§2.9/§3). Reads the $global->timers registry that
-     * onWorkerStart populates on the timer-hosting server (myadmin1, worker
-     * id 0) at Timer::add() registration time: name → {interval, timer_id}
+     * Requires role admin (§2.9/§3). Reads the SharedState dc:state:timers
+     * Redis HASH that onWorkerStart populates on the timer-hosting server
+     * (myadmin1, worker
+     * id 0) at Timer::add() registration time: field name → JSON {interval,
+     * timer_id}
      * for each of processing_queue_timer, processing_queue_reaper,
      * boardctl_queue_timer, vps_queue_timer, memcache_queue_timer,
      * map_queue_timer, hyperv_update_list_timer, hyperv_queue_timer.
@@ -4067,17 +4045,16 @@ class Events
      */
     public static function handleAdminTimers($client_id, $envelope)
     {
-        /**
-         * @var \GlobalData\Client
-         */
-        global $global;
         $re = $envelope['id'];
         if (($_SESSION['ima'] ?? '') !== 'admin') {
             self::sendV1Error($client_id, $re, 'forbidden', 'admin.timers requires role admin');
             return;
         }
-        $registry = isset($global->timers) ? $global->timers : [];
+        $registry = SharedState::hGetAll(self::TIMERS_REGISTRY_KEY);
         $timers = [];
+        // Defensive only: Redis HGETALL always replies with an array (empty for a
+        // missing key), so this guard can no longer trip — kept to make the shape
+        // explicit and to survive a non-SharedState stub.
         if (is_array($registry)) {
             foreach ($registry as $name => $info) {
                 if (is_array($info)) {
@@ -4112,15 +4089,17 @@ class Events
      * reachable via dispatchV1 (Flag A on + v1-authed) — fully dormant with
      * Flag A off.
      *
-     * Requires role admin (§2.9/§3). Reads the SAME shared $global->running
-     * registry both run paths write (v1 handleCmdExec entries keyed by uuid
+     * Requires role admin (§2.9/§3). Reads the SAME shared running registry
+     * both run paths write (migration A2: enumerate the dc:state:running_ids
+     * SET, one GET per id; v1 handleCmdExec entries keyed by uuid
      * run_id carrying run_id/id/host/for/command/interact/update_after/rows/
      * cols/started/v; legacy run_command entries keyed by md5($cmd) carrying
      * type/command/id/interact/update_after/host/rows/cols/for) and reshapes
      * every entry to the frozen §2.9 record: {run_id, host (uid), command,
      * interact, update_after, for, rows, cols, started}. Legacy `type` is
      * dropped; run_id falls back to the legacy `id` field / registry key for
-     * legacy entries.
+     * legacy entries. Ids whose entry has expired (RUNNING_ENTRY_TTL lapsed
+     * with a dead agent) are pruned from the index while enumerating.
      *
      * started:0 SENTINEL: only step-2.3 v1 handleCmdExec entries set `started`.
      * A legacy run_command entry (md5-keyed, no `started` field) is reported
@@ -4128,9 +4107,10 @@ class Events
      * tracking" — NOT "started at unix epoch". Consumers must treat started:0
      * as "start time unknown", not as a real timestamp.
      *
-     * READ-ONLY GUARANTEE: this handler only reads $global->running and never
-     * writes/CAS-updates it — introspection cannot perturb in-flight run
-     * routing (unlike handleCmdExec/handleCmdExit, which mutate the registry).
+     * READ-ONLY GUARANTEE: beyond pruning ids whose value is already gone,
+     * this handler never writes run entries — introspection cannot perturb
+     * in-flight run routing (unlike handleCmdExec/handleCmdExit, which mutate
+     * the registry).
      *
      * Reply: {ok:true,data:{running:arr<obj>}} ([] when nothing is in flight).
      *
@@ -4139,37 +4119,41 @@ class Events
      */
     public static function handleAdminRunning($client_id, $envelope)
     {
-        /**
-         * @var \GlobalData\Client
-         */
-        global $global;
         $re = $envelope['id'];
         if (($_SESSION['ima'] ?? '') !== 'admin') {
             self::sendV1Error($client_id, $re, 'forbidden', 'admin.running requires role admin');
             return;
         }
-        $registry = $global->running;
         $running = [];
-        if (is_array($registry)) {
-            foreach ($registry as $key => $run) {
-                if (!is_array($run)) {
-                    continue;
-                }
-                $run_id = isset($run['run_id']) && is_string($run['run_id']) && $run['run_id'] !== ''
-                    ? $run['run_id']
-                    : (isset($run['id']) && is_string($run['id']) && $run['id'] !== '' ? $run['id'] : (string) $key);
-                $running[] = [
-                    'run_id' => $run_id,
-                    'host' => isset($run['host']) ? $run['host'] : '',
-                    'command' => isset($run['command']) ? $run['command'] : '',
-                    'interact' => !empty($run['interact']),
-                    'update_after' => !empty($run['update_after']),
-                    'for' => isset($run['for']) ? $run['for'] : null,
-                    'rows' => isset($run['rows']) ? intval($run['rows']) : 0,
-                    'cols' => isset($run['cols']) ? intval($run['cols']) : 0,
-                    'started' => isset($run['started']) ? intval($run['started']) : 0
-                ];
+        $prune = [];
+        foreach (SharedState::sMembers(self::RUNNING_INDEX_KEY) as $run_id) {
+            if (!is_string($run_id) || $run_id === '') {
+                continue;
             }
+            $run = SharedState::get(self::RUNNING_KEY_PREFIX . $run_id);
+            if (!is_array($run)) {
+                // Entry expired or was deleted without its id leaving the index
+                // (crashed worker) — collect for pruning below.
+                $prune[] = $run_id;
+                continue;
+            }
+            $run_id = isset($run['run_id']) && is_string($run['run_id']) && $run['run_id'] !== ''
+                ? $run['run_id']
+                : (isset($run['id']) && is_string($run['id']) && $run['id'] !== '' ? $run['id'] : $run_id);
+            $running[] = [
+                'run_id' => $run_id,
+                'host' => isset($run['host']) ? $run['host'] : '',
+                'command' => isset($run['command']) ? $run['command'] : '',
+                'interact' => !empty($run['interact']),
+                'update_after' => !empty($run['update_after']),
+                'for' => isset($run['for']) ? $run['for'] : null,
+                'rows' => isset($run['rows']) ? intval($run['rows']) : 0,
+                'cols' => isset($run['cols']) ? intval($run['cols']) : 0,
+                'started' => isset($run['started']) ? intval($run['started']) : 0
+            ];
+        }
+        if ($prune !== []) {
+            SharedState::sRem(self::RUNNING_INDEX_KEY, ...$prune);
         }
         Gateway::sendToClient($client_id, json_encode([
             'v' => 1,
@@ -4186,7 +4170,7 @@ class Events
      *
      * @param float $moverX  world X of the moving client
      * @param float $moverZ  world Z of the moving client
-     * @param array $peerViewport peer viewport data from $global (x, z, viewDist)
+     * @param array $peerViewport peer viewport data from Redis (x, z, viewDist)
      * @return bool true if in viewport or viewport unknown (broadcast), false if out of range
      */
     /**
@@ -4261,66 +4245,94 @@ class Events
     }
 
     /**
-     * Guarantee a shared list index EXISTS before anyone CAS-updates it.
+     * Redis key for one presence member's record (real client or bot id).
      *
-     * GlobalData's server reports an absent key as NULL and compares
-     * md5(serialize($old)) (vendor/workerman/globaldata/src/Server.php, case 'cas').
-     * Every index CAS here passes [] as the expected old value, and
-     * md5(serialize(null)) !== md5(serialize([])) — so while the key does not exist
-     * the CAS can NEVER succeed. Combined with a `while (true)` retry that had no
-     * ceiling, the first dc.presence.join after a GlobalData cold start spun a
-     * BusinessWorker forever at 100% CPU. onWorkerStart() seeds dc_active_clients in
-     * its cold-start block but NOTHING seeded dc_presence_clients, so that key was
-     * the live trigger.
-     *
-     * add() is the right primitive: it is atomic set-if-absent, so with the THREE
-     * datacentered instances sharing this GlobalData store, whichever host calls it
-     * first creates the key and the others get false and carry on. It never
-     * overwrites an existing list, so it cannot disturb presence state another
-     * instance is maintaining.
-     *
-     * @param string $key shared index key (dc_presence_clients / dc_active_clients)
+     * @param string $clientId
+     * @return string
      */
-    private static function seedClientIndex(string $key): void
+    private static function dcPresenceKey(string $clientId): string
     {
-        global $global;
-        if ($global === null) {
-            return;
-        }
-        $global->add($key, []);
+        return self::DC_PRESENCE_KEY_PREFIX . $clientId;
     }
 
     /**
-     * Should a contended index CAS be retried? Bounds every index CAS loop.
+     * Index membership maintenance — add/refresh one presence member in BOTH
+     * dc:presence:* ZSETs at once (the full-membership index and the
+     * recipient-enumeration index), scored by the given last-seen ts.
      *
-     * Contention is real (5 BusinessWorkers per host x 3 hosts all mutating the same
-     * lists), so retrying is correct — but unbounded retrying turns any unexpected
-     * CAS mismatch into a wedged worker that also floods GlobalData. Losing one
-     * client from an index degrades that client's broadcasts; spinning takes the
-     * whole worker (and every connection on it) down, so bounded-and-noisy beats
-     * infinite-and-silent.
+     * Migration A2 note (replaces seedClientIndex()/casShouldRetry() and every
+     * bounded index CAS loop that used them): Redis zAdd CREATES the index on
+     * first write, so the GlobalData failure mode those helpers defended — an
+     * absent key reads back NULL server-side, and md5(serialize(null)) never
+     * equals md5(serialize([])), so cas(absentKey, [], next) livelocked the
+     * first join after a cold start at 100% CPU — has no Redis analog. There
+     * is no compare step to lose, nothing to seed, and no retry ceiling to
+     * bound.
      *
-     * @param string $key     index being updated, for the log line
-     * @param int    $attempt attempt number just completed
-     * @return bool true to retry
+     * @param string        $clientId presence member id (client_id or bot_<loc>)
+     * @param int           $ts       last-seen timestamp used as the score
      */
-    private static function casShouldRetry(string $key, int $attempt): bool
+    private static function presenceIndexAdd(string $clientId, int $ts): void
     {
-        if ($attempt < self::CAS_MAX_ATTEMPTS) {
-            return true;
+        SharedState::zAdd(self::DC_PRESENCE_INDEX_KEY, $ts, $clientId);
+        SharedState::zAdd(self::DC_ACTIVE_INDEX_KEY, $ts, $clientId);
+    }
+
+    /**
+     * Drop one presence member from BOTH index ZSETs (leave/close/cleanup).
+     *
+     * @param string $clientId
+     */
+    private static function presenceIndexRemove(string $clientId): void
+    {
+        SharedState::zRem(self::DC_PRESENCE_INDEX_KEY, $clientId);
+        SharedState::zRem(self::DC_ACTIVE_INDEX_KEY, $clientId);
+    }
+
+    /**
+     * Stale-eviction sweep for the presence ZSET indexes (migration A2).
+     *
+     * Members whose score (last-seen ts) is older than the PRESENCE_STALE_TTL
+     * window are removed from both indexes and their record keys deleted. The
+     * record keys carry the same TTL natively, so this primarily reclaims the
+     * INDEX side — the eventual-consistency backstop for members whose
+     * deterministic removal (leave/onClose/cleanup) raced a dead worker. No
+     * cross-key transaction is required: indexes are advisory membership
+     * hints, and every consumer re-reads the record before trusting one, so a
+     * window where the index lags a delete is inert.
+     *
+     * Called from the presence flush (150ms-scale moves) and the 30s health
+     * timer, i.e. only while the scene is live.
+     */
+    private static function sweepPresenceStale(): void
+    {
+        $staleBefore = time() - self::PRESENCE_STALE_TTL;
+        foreach ([self::DC_PRESENCE_INDEX_KEY, self::DC_ACTIVE_INDEX_KEY] as $indexKey) {
+            $stale = SharedState::zRangeByScore($indexKey, 0, $staleBefore);
+            if ($stale === []) {
+                continue;
+            }
+            SharedState::zRem($indexKey, ...$stale);
+            foreach ($stale as $clientId) {
+                if (!is_string($clientId) || $clientId === '') {
+                    continue;
+                }
+                // Bots are swept by their own lifecycle (lock/heartbeat TTL);
+                // never delete a bot record from here.
+                if (strpos($clientId, 'bot_') === 0) {
+                    continue;
+                }
+                SharedState::del(self::dcPresenceKey($clientId));
+            }
         }
-        Worker::safeEcho(
-            "[dc_presence] CAS on {$key} gave up after {$attempt} attempts; "
-            ."index may be missing an entry (this is a bug — it must not livelock)\n"
-        );
-        return false;
     }
 
     /**
      * Handle dc.presence.join — client entering the datacenter 3D scene.
      *
-     * Stores the member's position + metadata in $global->dc_presence[$uid]
-     * and broadcasts dc.presence.joined to the dc_presence channel so other
+     * Stores the member's position + metadata at dc:presence:client:<client_id>
+     * and indexes it in the dc:presence:* ZSETs, then broadcasts
+     * dc.presence.joined to the dc_presence channel so other
      * clients in the scene can render the new avatar.
      *
      * @param string $client_id
@@ -4328,10 +4340,6 @@ class Events
      */
     public static function handleDcPresenceJoin($client_id, $envelope)
     {
-        /**
-         * @var \GlobalData\Client
-         */
-        global $global;
         $re = $envelope['id'];
         $uid = $_SESSION['uid'] ?? null;
         if (empty($uid)) {
@@ -4350,66 +4358,30 @@ class Events
         // absent value simply leaves the previously-reported bounds in place.
         $reportedBounds = self::sanitiseRoomBounds($data['bounds'] ?? null);
         if ($reportedBounds !== null) {
-            $global->{self::DC_ROOM_BOUNDS_KEY_PREFIX . self::BOT_DEFAULT_LOCATION} = $reportedBounds;
+            SharedState::set(self::DC_ROOM_BOUNDS_KEY_PREFIX . self::BOT_DEFAULT_LOCATION, $reportedBounds, self::PRESENCE_SESSION_TTL);
         }
 
         // Per-client_id key so multiple tabs with same session/uid each get their own presence entry
-        $key = 'dc_presence:client:' . $client_id;
+        $key = self::dcPresenceKey($client_id);
+        $now = time();
         $newEntry = [
             'uid' => $uid,
             'name' => $name,
             'x' => $x,
             'z' => $z,
             'yaw' => $yaw,
-            'ts' => time(),
+            'ts' => $now,
             'client_id' => $client_id,
         ];
         // CRIT-9: If cleanup is in progress for this client_id, log and proceed anyway (onClose will clean up after us)
-        if ($client_id && $global->{'dc_cleanup:' . $client_id}) {
+        if ($client_id && SharedState::exists('dc:presence:cleanup:' . $client_id)) {
             Worker::safeEcho("dc.presence.join {$client_id}: cleanup in progress, overwriting anyway\n");
         }
-        $global->$key = $newEntry;
-
-        // Maintain client_id → key mapping for efficient iteration in setupSessionHealthTimer
-        // CAS loop to prevent concurrent joins on different workers losing client_id entries.
-        //
-        // seedClientIndex() FIRST — see its docblock. Without it this loop was an
-        // infinite spin that wedged a BusinessWorker at 100% CPU on the very first
-        // join after a GlobalData cold start (observed live: one worker stuck for
-        // 20+ minutes, hammering GlobalData, while the other four idled).
-        $clientIndexKey = 'dc_presence_clients';
-        self::seedClientIndex($clientIndexKey);
-        $attempts = 0;
-        do {
-            $currentList = $global->$clientIndexKey;
-            $clientList = is_array($currentList) ? array_values($currentList) : [];
-            if (!in_array($client_id, $clientList, true)) {
-                $clientList[] = $client_id;
-            }
-            $oldForCas = is_array($currentList) ? $currentList : [];
-            if ($currentList === $clientList || $global->cas($clientIndexKey, $oldForCas, $clientList)) {
-                break;
-            }
-        } while (self::casShouldRetry($clientIndexKey, ++$attempts));
-
-        // CRIT-8 fix: Add to active clients for viewport filtering (CAS loop for atomicity)
-        $activeClientsKey = 'dc_active_clients';
-        self::seedClientIndex($activeClientsKey);
-        $attempts = 0;
-        do {
-            $activeClients = $global->$activeClientsKey ?? [];
-            $activeClients = is_array($activeClients) ? $activeClients : [];
-            if (!in_array($client_id, $activeClients, true)) {
-                $activeClients[] = $client_id;
-            }
-            $oldActiveClients = $global->$activeClientsKey ?? null;
-            if ($oldActiveClients === $activeClients) {
-                break;
-            }
-            if ($global->cas($activeClientsKey, $oldActiveClients ?? [], $activeClients)) {
-                break;
-            }
-        } while (self::casShouldRetry($activeClientsKey, ++$attempts));
+        SharedState::set($key, $newEntry, self::PRESENCE_STALE_TTL);
+        // Index membership is two zAdds — no seed, no CAS loop, no retry
+        // ceiling (see presenceIndexAdd()'s migration note for why the
+        // GlobalData-era guards for those are gone).
+        self::presenceIndexAdd($client_id, $now);
 
         // Bot Presence System: spawn a bot avatar for this location if one doesn't exist.
         // The bot spawns NEAR the joining player (contract BOT-BOUNDS) so it is
@@ -4426,7 +4398,7 @@ class Events
             'data' => new \stdClass()
         ]));
         // Use the local entry that was just written — avoids race condition where
-        // another worker could have modified $global->$key between write and re-read
+        // another worker could have rewritten the key between write and re-read
         $broadcastEntry = $newEntry;
         // Frontend expects camelCase clientId, not snake_case client_id
         $broadcastEntry['clientId'] = $broadcastEntry['client_id'];
@@ -4439,7 +4411,8 @@ class Events
      *
      * Fire-and-forget: NO reply is sent to the sender (reduces server→client
      * traffic). If the member has not yet called dc.presence.join (i.e. they
-     * have no entry in $global->dc_presence), the update is silently ignored.
+     * have no live dc:presence:client:<id> record), the update is silently
+     * ignored.
      *
      * Also accepts the SAME optional `bounds` field dc.presence.join accepts
      * (contract BOT-BOUNDS): the browser only knows the real room extents after
@@ -4454,17 +4427,13 @@ class Events
      */
     public static function handleDcPresenceMove($client_id, $envelope)
     {
-        /**
-         * @var \GlobalData\Client
-         */
-        global $global;
         $data = is_array($envelope['data']) ? $envelope['data'] : [];
 
         // Contract BOT-BOUNDS on the move path. Deliberately handled BEFORE the
         // 150ms throttle: a bounds report is rare and one-shot, so letting the
         // throttle swallow it would put us straight back to "bounds never
         // arrive". The common no-bounds move pays ONE isset() and performs no
-        // extra GlobalData read or write.
+        // extra shared read or write.
         //
         // The <location> key component is the compile-time BOT_DEFAULT_LOCATION
         // constant, never anything the client sent — same as the join path — so
@@ -4472,22 +4441,23 @@ class Events
         // shared sanitiseRoomBounds(), and a rejected value leaves whatever
         // bounds are already stored untouched rather than overwriting good
         // bounds with garbage.
-        if (isset($data['bounds']) && $global !== null && !empty($_SESSION['uid'])) {
+        if (isset($data['bounds']) && !empty($_SESSION['uid'])) {
             $reportedBounds = self::sanitiseRoomBounds($data['bounds']);
             if ($reportedBounds !== null) {
-                $global->{self::DC_ROOM_BOUNDS_KEY_PREFIX . self::BOT_DEFAULT_LOCATION} = $reportedBounds;
+                SharedState::set(self::DC_ROOM_BOUNDS_KEY_PREFIX . self::BOT_DEFAULT_LOCATION, $reportedBounds, self::PRESENCE_SESSION_TTL);
             }
         }
 
-        // Per-client move rate limit: 150ms minimum between moves (matching client THROTTLE_MS)
-        if ($global !== null) {
-            $throttleKey = 'dc_move_throttle:'.$client_id;
-            $lastMove = $global->{$throttleKey} ?? 0;
-            if ($lastMove > 0 && (microtime(true) - $lastMove) < 0.15) {
-                return; // Throttled - less than 150ms since last move
-            }
-            $global->{$throttleKey} = microtime(true);
+        // Per-client move rate limit: 150ms minimum between moves (matching
+        // client THROTTLE_MS). The throttle key carries a TTL now, so a worker
+        // that dies between moves stops throttling air instead of leaking the
+        // key forever.
+        $throttleKey = 'dc:presence:move_throttle:' . $client_id;
+        $lastMove = SharedState::get($throttleKey);
+        if (is_numeric($lastMove) && $lastMove > 0 && (microtime(true) - (float) $lastMove) < 0.15) {
+            return; // Throttled - less than 150ms since last move
         }
+        SharedState::set($throttleKey, microtime(true), self::PRESENCE_MOVE_TTL);
         $uid = $_SESSION['uid'] ?? null;
         if (empty($uid)) {
             return;
@@ -4508,13 +4478,19 @@ class Events
         }
         $moveClientId = $client_id;
         // Per-client key: each browser tab has its own presence entry
-        $key = 'dc_presence:client:' . $moveClientId;
-        $entry = $global->$key;
+        $key = self::dcPresenceKey($moveClientId);
+        $entry = SharedState::get($key);
         if (!$entry || !is_array($entry)) {
             return;  // member not in scene — silent ignore per spec
         }
 
-        // CAS the individual key (only this uid's entry, no shared array)
+        // Migration A2: the record is this client's OWN key, so the retired
+        // GlobalData CAS (and its two-retry fallback) collapses to a plain
+        // SET. Concurrent same-tab moves come from one connection; a
+        // cross-worker lost update (two tabs never share a key) at worst
+        // rewrites x/z/yaw with a slightly older value, refreshed within
+        // 150ms by the next move — the same outcome the old code's documented
+        // "fall back to a direct write" branch accepted.
         $newEntry = $entry;
         $newEntry['x'] = $x ?? $entry['x'];
         $newEntry['z'] = $z ?? $entry['z'];
@@ -4523,30 +4499,17 @@ class Events
         if (!isset($newEntry['client_id'])) {
             $newEntry['client_id'] = $client_id;
         }
-        if (!$global->cas($key, $entry, $newEntry)) {
-            // CAS failed — retry once
-            $entry = $global->$key;
-            if (!$entry) return;
-            $newEntry = $entry;
-            $newEntry['x'] = $x ?? $entry['x'];
-            $newEntry['z'] = $z ?? $entry['z'];
-            $newEntry['yaw'] = $yaw ?? $entry['yaw'];
-            $newEntry['ts'] = time();
-            if (!isset($newEntry['client_id'])) $newEntry['client_id'] = $client_id;
-            if (!$global->cas($key, $entry, $newEntry)) {
-                // Note: on CAS failure after 2 retries, we fall back to a direct write.
-                // This may overwrite concurrent changes from another process. Acceptable
-                // for infrequently-updated presence fields (x/z/yaw).
-                $global->$key = $newEntry;
-                return;
-            }
-        }
+        SharedState::set($key, $newEntry, self::PRESENCE_STALE_TTL);
+        // Refresh the index scores so the move keeps the member inside the
+        // staleness sweep window (TTL on the record + score here == liveness).
+        self::presenceIndexAdd($moveClientId, $newEntry['ts']);
 
-        // Queue for batched broadcast — stores in GlobalData so timer on ANY worker can flush.
-        // Static $moveBatch is process-local; with N BusinessWorker processes the timer could
-        // fire on a different process that has an empty batch, silently dropping all moves.
-        $batchKey = 'dc_move_batch:' . $moveClientId;
-        $global->{$batchKey} = json_encode($newEntry);
+        // Queue for batched broadcast — stores in Redis so the flush timer on
+        // ANY worker can pick it up. Static $moveBatch is process-local; with
+        // N BusinessWorker processes the timer could fire on a different
+        // process that has an empty batch, silently dropping all moves.
+        $batchKey = 'dc:presence:move_batch:' . $moveClientId;
+        SharedState::set($batchKey, $newEntry, self::PRESENCE_MOVE_TTL);
 
         // Schedule flush if not already scheduled (one-shot timer, re-armed on next move)
         self::scheduleDcPresenceFlush();
@@ -4574,56 +4537,55 @@ class Events
     }
 
     /**
-     * Flush the pending dc_move_batch:* entries as one dc.presence.batch_updated
+     * Flush the pending dc:presence:move_batch:* entries as one
+     * dc.presence.batch_updated
      * event. Shared by handleDcPresenceMove() and moveBot() (BUG-B7).
      *
      * Viewport filtering (BUG-B5) is decided PER RECIPIENT, not globally: the
      * old code set one $hasAnyViewport flag and, as soon as ANY client had a
-     * dc_viewport entry, sent only to clients that had viewport data. dc.js
+     * dc:presence:viewport entry, sent only to clients that had viewport data. dc.js
      * reports its viewport only on location switch / GPU-context restore, so
      * every client that had done neither silently received zero movement
      * updates. Now a client with FRESH viewport data gets the filtered subset
      * and a client with no/stale viewport data (older than
      * DC_VIEWPORT_MAX_AGE) gets the unfiltered batch.
      *
-     * Note recipients are enumerated from the dc_active_clients index (kept in
-     * step with dc_presence_clients by join/leave/onClose); when NOBODY has
+     * Note recipients are enumerated from the dc:presence:active index (kept
+     * in step with dc:presence:index by join/leave/onClose); when NOBODY has
      * fresh viewport data we fall back to a single group broadcast, which also
      * covers any dc_presence group member missing from that index.
      */
     private static function flushPresenceBatch(): void
     {
-        global $global;
         // REVIEW-FIX: release the one-shot slot FIRST. The timer that scheduled us
         // has already fired, so the handle is stale by definition — but it used to
-        // be nulled only after the GlobalData batch read, and
+        // be nulled only after the batch read, and
         // scheduleDcPresenceFlush() early-returns while the field is non-null.
-        // Any Throwable before that assignment (a GlobalData read error is the
+        // Any Throwable before that assignment (a store read error is the
         // obvious one) therefore wedged the field non-null forever and NO further
         // presence flush could ever be armed in this worker again — all movement
         // broadcasting for its clients stops permanently, with no bot or player
         // ever recovering. Clearing it up front also means a move that lands
         // during this flush correctly arms the next one.
         self::$moveBatchTimer = null;
-        // Read ALL move batch entries from GlobalData (keys are dc_move_batch:{client_id})
+        // Crash-safety backstop (A2): reclaim index entries older than the
+        // staleness window whose deterministic removal raced a dead worker.
+        self::sweepPresenceStale();
+        // Read ALL move batch entries from Redis (keys are
+        // dc:presence:move_batch:<client_id>), enumerated via the index.
         $batch = [];
-        $clientIndexKey = 'dc_presence_clients';
-        $clientList = $global->$clientIndexKey ?? [];
-        if (is_array($clientList)) {
-            foreach ($clientList as $cid) {
-                $bk = 'dc_move_batch:' . $cid;
-                $encoded = $global->{$bk};
-                if ($encoded) {
-                    $decoded = json_decode($encoded, true);
-                    // REVIEW-FIX: require an ARRAY. `if ($decoded)` also accepts
-                    // a scalar (json_decode('5') === 5), and a scalar entry then
-                    // reaches isInPeerViewport($entry['x'], ...) below as null,
-                    // which is a TypeError against its float params — a fatal
-                    // inside a 50ms timer callback.
-                    if (is_array($decoded)) {
-                        $batch[$cid] = $decoded;
-                    }
-                }
+        foreach (SharedState::zRange(self::DC_PRESENCE_INDEX_KEY, 0, -1) as $cid) {
+            if (!is_string($cid) || $cid === '') {
+                continue;
+            }
+            $decoded = SharedState::get('dc:presence:move_batch:' . $cid);
+            // REVIEW-FIX: require an ARRAY. A scalar stored under the batch key
+            // (or a corrupt decode) used to reach
+            // isInPeerViewport($entry['x'], ...) below as null, which is a
+            // TypeError against its float params — a fatal inside the flush
+            // timer callback.
+            if (is_array($decoded)) {
+                $batch[$cid] = $decoded;
             }
         }
         if (empty($batch)) {
@@ -4631,24 +4593,23 @@ class Events
         }
 
         $vpCutoff = time() - self::DC_VIEWPORT_MAX_AGE;
-        $activeClients = $global->dc_active_clients ?? [];
-        if (!is_array($activeClients)) {
-            $activeClients = [];
-        }
+        $activeClients = SharedState::zRange(self::DC_ACTIVE_INDEX_KEY, 0, -1);
 
         // Pass 1: split recipients into "has fresh viewport" and "does not".
         $filtered = [];   // cid => visible subset of $batch
         $unfiltered = []; // cids that must receive the whole batch
         foreach ($activeClients as $cid) {
+            if (!is_string($cid) || $cid === '') {
+                continue;
+            }
             // Bots are presence entries, not sockets — never a send target.
-            if (is_string($cid) && strpos($cid, 'bot_') === 0) {
+            if (strpos($cid, 'bot_') === 0) {
                 continue;
             }
-            $ck = 'dc_client_session:' . $cid;
-            if (!($global->$ck ?? null)) {
+            if (!SharedState::get('dc:presence:client_session:' . $cid)) {
                 continue;
             }
-            $peerVp = $global->{'dc_viewport:' . $cid} ?? null;
+            $peerVp = SharedState::get('dc:presence:viewport:' . $cid);
             $vpFresh = is_array($peerVp) && (int) ($peerVp['ts'] ?? 0) >= $vpCutoff;
             if (!$vpFresh) {
                 $unfiltered[] = $cid;
@@ -4694,29 +4655,25 @@ class Events
             }
         }
 
-        // CRIT-7 fix: Clear batch entries from GlobalData after flush
-        foreach ($batch as $moverCid => $moverEntry) {
-            $bk = 'dc_move_batch:' . $moverCid;
-            unset($global->{$bk});
+        // CRIT-7 fix: Clear batch entries after flush
+        foreach (array_keys($batch) as $moverCid) {
+            SharedState::del('dc:presence:move_batch:' . $moverCid);
         }
     }
 
     /**
      * Handle dc.presence.leave — client exiting the datacenter 3D scene.
      *
-     * Removes the member's entry from $global->dc_presence[client:$client_id],
-     * broadcasts dc.presence.left to the dc_presence channel (using client_id
-     * so each browser tab is tracked independently), and replies with {ok: true}.
+     * Removes the member's dc:presence:client:<client_id> record and index
+     * entries, broadcasts dc.presence.left to the dc_presence channel (using
+     * client_id so each browser tab is tracked independently), and replies with
+     * {ok: true}.
      *
      * @param string $client_id
      * @param array $envelope v1 envelope
      */
     public static function handleDcPresenceLeave($client_id, $envelope)
     {
-        /**
-         * @var \GlobalData\Client
-         */
-        global $global;
         $re = $envelope['id'];
         $uid = $_SESSION['uid'] ?? null;
         if (empty($uid)) {
@@ -4724,70 +4681,43 @@ class Events
             return;
         }
         // Per-client key so each browser tab has its own presence entry
-        $key = 'dc_presence:client:' . $client_id;
-        $entry = $global->$key;
+        $key = self::dcPresenceKey($client_id);
+        $entry = SharedState::get($key);
         if (!$entry) {
             self::sendV1Error($client_id, $re, 'forbidden', 'dc.presence.leave: member not found');
             return;
         }
 
-        // Atomic delete: individual key deletion is inherently atomic (single key op)
-        $global->$key = null;
+        // Atomic delete: one record key + two index members, all exact-key ops.
+        SharedState::del($key);
 
-        // Clean up client_id index (CAS loop to prevent concurrent leaves on different workers losing entries)
-        $clientIndexKey = 'dc_presence_clients';
-
-        // Bot Presence System: check if this was the last real user at this location
-        // If so, clean up the bot for that location
-        $wasLastRealUser = false;
-        $clientListBefore = $global->$clientIndexKey ?? [];
-        if (is_array($clientListBefore)) {
-            $realUserCount = 0;
-            foreach ($clientListBefore as $cid) {
-                if (is_string($cid) && strpos($cid, 'bot_') === 0) {
-                    continue;  // Skip bot client IDs
-                }
-                if ($cid !== $client_id) {
-                    $realUserCount++;
-                }
-            }
-            if ($realUserCount === 0) {
-                $wasLastRealUser = true;
-            }
-        }
-
-        do {
-            $clientList = $global->$clientIndexKey ?? [];
-            if (!is_array($clientList)) { break; }
-            $newList = array_values(array_filter($clientList, fn($c) => $c !== $client_id));
-            if ($newList === $clientList) { break; }  // nothing changed
-            $oldList = $clientList;
-        } while (!$global->cas($clientIndexKey, $oldList, $newList));
-
+        // Drop ourselves from BOTH index ZSETs first, so the shared last-real-
+        // user predicate below sees the scene exactly as it will be after this
+        // leave, self included no longer.
+        //
         // REVIEW-FIX (index drift): dc.presence.leave used to remove the client
         // from dc_presence_clients ONLY, leaving it in dc_active_clients. The two
         // indexes then disagreed until the socket happened to close, and
-        // flushPresenceBatch() enumerates RECIPIENTS from dc_active_clients — so a
+        // flushPresenceBatch() enumerates RECIPIENTS from the active index — so a
         // client that had left the scene kept being sent batch_updated events and
         // kept rendering avatars for a scene it was no longer in. Unlike the
         // health-timer drop path this one never calls closeClient(), so onClose()
-        // does not clean up behind it.
-        $activeClientsKey = 'dc_active_clients';
-        do {
-            $activeClients = $global->$activeClientsKey ?? [];
-            $activeClients = is_array($activeClients) ? $activeClients : [];
-            $filteredActive = array_values(array_filter($activeClients, fn($c) => $c !== $client_id));
-            $oldActiveClients = $global->$activeClientsKey ?? null;
-            if ($oldActiveClients === $filteredActive) {
-                break;
-            }
-        } while (!$global->cas($activeClientsKey, $oldActiveClients ?? [], $filteredActive));
+        // does not clean up behind it. presenceIndexRemove() now drops BOTH
+        // indexes, which is exactly what that old comment demanded by hand.
+        self::presenceIndexRemove($client_id);
+
+        // Bot Presence System: was this the last real user at this location? If
+        // so, the bot for it is cleaned up below. Consolidation: this replaces
+        // the inline index count that duplicated Events::hasRealUsersAtLocation()
+        // — same index, same 'bot_' prefix skip — with self-exclusion now coming
+        // from the presenceIndexRemove() above instead of the old `!== $client_id`
+        // test, so the answer is identical to the shipped inline behavior.
+        $wasLastRealUser = !self::hasRealUsersAtLocation();
 
         // REVIEW-FIX: same orphaning as onClose() — once the client is out of
-        // dc_presence_clients nothing will ever read or delete a pending batch
-        // entry for it. The viewport entry is likewise scene-scoped.
-        unset($global->{'dc_move_batch:' . $client_id});
-        unset($global->{'dc_viewport:' . $client_id});
+        // the index nothing will ever read or delete a pending batch entry for
+        // it. The viewport entry is likewise scene-scoped.
+        SharedState::del('dc:presence:move_batch:' . $client_id, 'dc:presence:viewport:' . $client_id);
 
         // If this was the last real user, clean up the bot for this location
         if ($wasLastRealUser && FeatureFlags::dcBotPresenceEnabled()) {
@@ -4810,24 +4740,22 @@ class Events
 
     /**
      * IDEA-3: Handle dc.viewport.update — client reports its camera position + look direction.
-     * Stores viewport data in $global keyed by client_id for use in presence move filtering.
+     * Stores viewport data in Redis (dc:presence:viewport:<client_id>, TTL just
+     * past DC_VIEWPORT_MAX_AGE so expiry and freshness agree) for use in
+     * presence move filtering.
      *
      * @param string $client_id
      * @param array $envelope v1 envelope
      */
     public static function handleDcViewportUpdate($client_id, $envelope)
     {
-        /**
-         * @var \GlobalData\Client
-         */
-        global $global;
         // MAJOR-14: require session auth
         if (empty($_SESSION['uid']) || empty($_SESSION['login'])) {
             return;
         }
         $data = is_array($envelope['data']) ? $envelope['data'] : [];
         $vp = $data;  // $data IS the viewport object, not $data['data']
-        $global->{'dc_viewport:' . $client_id} = [
+        SharedState::set('dc:presence:viewport:' . $client_id, [
             'x' => (float)($vp['x'] ?? 0),
             'y' => (float)($vp['y'] ?? 0),
             'z' => (float)($vp['z'] ?? 0),
@@ -4836,7 +4764,7 @@ class Events
             'dirZ' => (float)($vp['dirZ'] ?? 0),
             'viewDist' => (float)($vp['viewDist'] ?? 50),
             'ts' => time(),
-        ];
+        ], self::PRESENCE_MOVE_TTL);
     }
 
     /**
@@ -4846,51 +4774,54 @@ class Events
     public static function setupSessionHealthTimer()
     {
         \Workerman\Timer::add(30, function () {
-            global $global;
             $now = time();
 
-            // Iterate via client_id index (dc_presence_clients) to avoid reading monolithic dc_presence array
-            $clientIndexKey = 'dc_presence_clients';
-            $clientList = $global->$clientIndexKey ?? [];
-            if (!is_array($clientList) || empty($clientList)) {
+            // Iterate via the presence index ZSET to avoid reading a monolithic
+            // presence map; the sweep first reclaims stale members whose
+            // deterministic removal raced a dead worker.
+            self::sweepPresenceStale();
+            $clientList = SharedState::zRange(self::DC_PRESENCE_INDEX_KEY, 0, -1);
+            if (empty($clientList)) {
                 return;
             }
 
             // CRIT-9 fix: Three-phase approach to avoid reading newly-written ping timestamps.
             // Phase 1: Snapshot every client's last pong + last ping-sent BEFORE pinging.
-            // Phase 2: Send this round's pings (writes dc_ping_sent AFTER the snapshot).
+            // Phase 2: Send this round's pings (writes ping-sent AFTER the snapshot).
             // Phase 3: Judge staleness from the Phase 1 snapshot, then drop.
             //
-            // BUG-B4: Phase 2 used to overwrite dc_ping (the value Phase 3 tests)
-            // for EVERY client on EVERY sweep, so the 90s check could never be
-            // true and this watchdog was dead. Ping-send times now live in
-            // dc_ping_sent: and staleness is measured only from the last pong
-            // RECEIVED (dc_ping:) — see dcPresenceIsStale().
-            $threshold = 90;  // 3 × 30s missed = stale
+            // BUG-B4: Phase 2 used to overwrite dc:presence:ping: (the value
+            // Phase 3 tests) for EVERY client on EVERY sweep, so the 90s check
+            // could never be true and this watchdog was dead. Ping-send times
+            // now live in dc:presence:ping_sent: and staleness is measured only
+            // from the last pong RECEIVED (dc:presence:ping:) — see
+            // dcPresenceIsStale().
+            $threshold = self::PRESENCE_STALE_TTL;  // 3 × 30s missed = stale
 
             $toDrop = [];  // collect {clientId} entries to drop after the ping phase
             $clientEntries = [];  // clientId => [entry, clientId, lastPong, lastPingSent]
 
             // Phase 1: Read all entries and their OLD liveness timestamps
             foreach ($clientList as $clientId) {
+                if (!is_string($clientId) || $clientId === '') {
+                    continue;
+                }
                 // Bots have a presence entry but no socket — never ping or drop
                 // them.
                 // REVIEW-FIX: this check has to come BEFORE the stale-entry check
                 // below. A bot whose presence entry has gone missing (the window
-                // inside cleanupBotForLocation() between nulling the entry and
-                // removing the index entry, or an early `break` out of that CAS
-                // loop) otherwise fell into the socket-drop path: closeClient() on
-                // a non-hex "bot_main" id, and the index/presence cleanup ran
-                // WITHOUT cleanupBotForLocation(), leaving dc_bot_state +
-                // dc_bot_timer alive. The owning worker then kept walking a bot
-                // that no longer appears in dc_presence_clients, so
-                // flushPresenceBatch() could never pick its moves up again — a
-                // permanently invisible bot with no path back.
-                if (is_string($clientId) && strpos($clientId, 'bot_') === 0) {
+                // inside cleanupBotForLocation() between deleting the entry and
+                // removing the index entry, or a crashed owner) otherwise fell
+                // into the socket-drop path: closeClient() on a non-hex
+                // "bot_main" id, and the index/presence cleanup ran WITHOUT
+                // cleanupBotForLocation(), leaving bot state alive. The owning
+                // worker then kept walking a bot that no longer appears in the
+                // presence index, so flushPresenceBatch() could never pick its
+                // moves up again — a permanently invisible bot with no path back.
+                if (strpos($clientId, 'bot_') === 0) {
                     continue;
                 }
-                $key = 'dc_presence:client:' . $clientId;
-                $entry = $global->$key;
+                $entry = SharedState::get(self::dcPresenceKey($clientId));
                 if (!$entry || !is_array($entry)) {
                     $toDrop[] = ['clientId' => $clientId];  // stale entry, mark for cleanup
                     continue;
@@ -4898,8 +4829,8 @@ class Events
                 $clientEntries[$clientId] = [
                     'entry' => $entry,
                     'clientId' => $clientId,
-                    'lastPong' => (int) ($global->{self::DC_PONG_KEY_PREFIX . $clientId} ?? 0),
-                    'lastPingSent' => (int) ($global->{self::DC_PING_SENT_KEY_PREFIX . $clientId} ?? 0)
+                    'lastPong' => (int) (SharedState::get(self::DC_PONG_KEY_PREFIX . $clientId) ?? 0),
+                    'lastPingSent' => (int) (SharedState::get(self::DC_PING_SENT_KEY_PREFIX . $clientId) ?? 0)
                 ];
             }
 
@@ -4909,12 +4840,12 @@ class Events
                     'v' => 1, 'op' => 'ping', 'id' => 'keepalive', 'ts' => $now,
                     'data' => new \stdClass()
                 ]));
-                // REVIEW-FIX: BUG-B4 was only half fixed. Rewriting dc_ping_sent
+                // REVIEW-FIX: BUG-B4 was only half fixed. Rewriting ping-sent
                 // on EVERY sweep reproduced the original defect for the
                 // never-ponged branch of dcPresenceIsStale(): Phase 1 always read
                 // a value ~30s old, so `lastPingSent < now - 90` could never be
                 // true and a client that never pongs at all was immune to the
-                // watchdog forever. dc_ping_sent must mark the START of the
+                // watchdog forever. The ping-sent key must mark the START of the
                 // current UNANSWERED streak, so only re-arm it once the previous
                 // ping has been answered (or none was ever sent). A client that
                 // has an outstanding ping keeps its original send time and is
@@ -4922,7 +4853,7 @@ class Events
                 // past the 90s threshold, so "pinged but not yet ponged" is never
                 // dropped prematurely.
                 if ($data['lastPingSent'] === 0 || $data['lastPong'] >= $data['lastPingSent']) {
-                    $global->{self::DC_PING_SENT_KEY_PREFIX . $clientId} = $now;
+                    SharedState::set(self::DC_PING_SENT_KEY_PREFIX . $clientId, $now, self::PRESENCE_PING_TTL);
                 }
             }
 
@@ -4933,61 +4864,63 @@ class Events
                 }
             }
 
-            // Drop stale clients AFTER the loop (avoids modifying clientList during iteration)
-            // CRIT-9 fix: Two-phase approach — mark cleanup before CAS removal to prevent orphaned entries
+            // Drop stale clients AFTER the loop (avoids modifying the list during iteration)
+            // CRIT-9 fix: Two-phase approach — mark cleanup before removal to prevent orphaned entries
             foreach ($toDrop as $dropInfo) {
                 $clientId = $dropInfo['clientId'];
                 if (!$clientId) {
                     continue;
                 }
-                $presenceKey = 'dc_presence:client:' . $clientId;
-                $entry = $global->$presenceKey;
+                $presenceKey = self::dcPresenceKey($clientId);
+                $cleanupKey = 'dc:presence:cleanup:' . $clientId;
 
                 // Phase 1: Mark client as being cleaned up (prevents race with handleDcPresenceJoin)
-                // Write a sentinel value so concurrent joins can detect cleanup-in-progress
-                $global->{'dc_cleanup:' . $clientId} = $now;
+                // Write a TTL'd sentinel so concurrent joins can detect cleanup-in-progress
+                SharedState::set($cleanupKey, $now, self::PRESENCE_MOVE_TTL);
 
                 // CRIT-9: If this client's cleanup has already been handled by onClose, skip
-                // Only skip if sentinel is set AND key is already null (onClose completed cleanup)
-                // If sentinel set but key is not null, timer should still proceed (onClose in progress)
-                if ($global->{'dc_cleanup:' . $clientId} && $global->$presenceKey === null) {
-                    // REVIEW-FIX (leak): this `continue` used to jump over the
-                    // unset() further down, so every already-cleaned client left
-                    // a dc_cleanup:<client_id> sentinel behind permanently — and
-                    // this is the branch taken by EVERY stale index entry that
-                    // Phase 1 queued (those have a null presence key by
-                    // definition). Drop our own marker before bailing out.
-                    unset($global->{'dc_cleanup:' . $clientId});
+                // Only skip if sentinel is set AND the record is already gone
+                // (onClose completed cleanup).
+                if (SharedState::get($presenceKey) === null) {
+                    // REVIEW-FIX (ghost-index leak): this branch is taken by
+                    // EVERY record-less index member that Phase 1 queued (a
+                    // stale index entry has no presence record by definition),
+                    // and the old `continue` jumped over the loop-tail
+                    // presenceIndexRemove() — so ghosts stayed in the
+                    // dc:presence:* ZSETs forever, re-queued by every 30s sweep
+                    // with unbounded growth. Drop the member from BOTH indexes
+                    // first, then release our own cleanup marker (an earlier
+                    // fix: the old code leaked the sentinel on this path too)
+                    // and skip only the record-delete/closeClient work that
+                    // onClose() already did.
+                    self::presenceIndexRemove($clientId);
+                    SharedState::del($cleanupKey);
                     continue;
                 }
 
-                // Phase 2: Delete per-client presence key atomically
-                $global->$presenceKey = null;
+                // Phase 2: Delete per-client presence record + index entries
+                SharedState::del($presenceKey);
 
                 // Clean up session mapping
-                $ck = 'dc_client_session:' . $clientId;
-                $sessionId = $global->$ck ?? null;
+                $ck = 'dc:presence:client_session:' . $clientId;
+                $sessionId = SharedState::get($ck);
                 if ($sessionId) {
-                    $listKey = 'dc_session_clients:' . $sessionId;
-                    $clients = $global->$listKey ?? [];
-                    $clients = array_values(array_filter($clients, fn($c) => $c !== $clientId));
-                    $global->$listKey = $clients;
-                    unset($global->$ck);
+                    $listKey = 'dc:presence:session_clients:' . $sessionId;
+                    $clients = SharedState::get($listKey);
+                    if (is_array($clients)) {
+                        SharedState::set($listKey, array_values(array_filter($clients, fn($c) => $c !== $clientId)), self::PRESENCE_SESSION_TTL);
+                    }
+                    SharedState::del($ck);
                 }
-                unset($global->{self::DC_PONG_KEY_PREFIX . $clientId});
-                unset($global->{self::DC_PING_SENT_KEY_PREFIX . $clientId});
-                unset($global->{'dc_cleanup:' . $clientId});
+                SharedState::del(
+                    self::DC_PONG_KEY_PREFIX . $clientId,
+                    self::DC_PING_SENT_KEY_PREFIX . $clientId,
+                    $cleanupKey
+                );
                 Gateway::closeClient($clientId, 'missed_keepalive');
 
-                // Remove clientId from dc_presence_clients index (CAS loop)
-                $clientIndexKey = 'dc_presence_clients';
-                do {
-                    $currentList = $global->$clientIndexKey ?? [];
-                    if (!is_array($currentList)) break;
-                    $newList = array_values(array_filter($currentList, fn($c) => $c !== $clientId));
-                    if ($newList === $currentList) break;
-                    $oldList = $currentList;
-                } while (!$global->cas($clientIndexKey, $oldList, $newList));
+                // Remove clientId from both presence index ZSETs (exact-member ZREM).
+                self::presenceIndexRemove($clientId);
 
                 Worker::safeEcho("[dc_presence] dropped {$clientId} — missed keepalive\n");
             }
@@ -5057,11 +4990,7 @@ class Events
      */
     private static function dcRoomBounds(string $location): array
     {
-        global $global;
-        $bounds = null;
-        if ($global !== null) {
-            $bounds = self::sanitiseRoomBounds($global->{self::DC_ROOM_BOUNDS_KEY_PREFIX . $location} ?? null);
-        }
+        $bounds = self::sanitiseRoomBounds(SharedState::get(self::DC_ROOM_BOUNDS_KEY_PREFIX . $location));
         if ($bounds === null) {
             $bounds = [
                 'minX' => self::BOT_BOUNDS_X_MIN,
@@ -5118,20 +5047,12 @@ class Events
      */
     private static function randomRealClientPosition(): ?array
     {
-        global $global;
-        if ($global === null) {
-            return null;
-        }
-        $clientList = $global->dc_presence_clients ?? [];
-        if (!is_array($clientList) || empty($clientList)) {
-            return null;
-        }
         $positions = [];
-        foreach ($clientList as $cid) {
-            if (is_string($cid) && strpos($cid, 'bot_') === 0) {
+        foreach (SharedState::zRange(self::DC_PRESENCE_INDEX_KEY, 0, -1) as $cid) {
+            if (!is_string($cid) || strpos($cid, 'bot_') === 0) {
                 continue;  // not a real player
             }
-            $entry = $global->{'dc_presence:client:' . $cid};
+            $entry = SharedState::get(self::dcPresenceKey($cid));
             if (!is_array($entry) || !isset($entry['x'], $entry['z'])
                 || !is_numeric($entry['x']) || !is_numeric($entry['z'])) {
                 continue;
@@ -5145,61 +5066,8 @@ class Events
     }
 
     /**
-     * Is the BusinessWorker process that owns a location's bot timer still alive?
-     *
-     * The owner marker (dc_bot_timer:<location>) is a pid. When that process is
-     * gone its timers died with it, so the bot must be respawned elsewhere
-     * instead of sitting frozen. Non-numeric markers (legacy/test values) are
-     * treated as alive so existing behaviour is preserved.
-     *
-     * THREE-HOST CORRECTNESS. datacentered runs on three systems that share ONE
-     * GlobalData store, so a marker may name a process on a different machine —
-     * and pids are not unique across machines. A bare `is_dir('/proc/<pid>')` is a
-     * purely LOCAL check, so it was wrong in both directions:
-     *   - foreign pid that happens to exist locally  -> "alive" -> a bot whose real
-     *     owner died is never respawned; it just sits frozen (indistinguishable from
-     *     "the bot is broken");
-     *   - foreign pid that does not exist locally    -> "gone"  -> this host spawns a
-     *     second bot over one another host is still driving.
-     * Markers are therefore host-qualified ("<host>:<pid>", see processMarker()). For
-     * a marker owned by ANOTHER host we cannot inspect the process, so liveness comes
-     * from the bot's own heartbeat: moveBot() rewrites dc_bot_state:<location>.ts every
-     * BOT_MOVE_INTERVAL (0.5s), so a fresh ts proves the remote driver is running. We
-     * only take over once that heartbeat has gone stale, which means we never steal a
-     * bot another instance is actively walking.
-     *
-     * @param mixed      $owner value stored in dc_bot_timer:<location>
-     * @param array|null $state current dc_bot_state:<location>, for the heartbeat check
-     * @return bool
-     */
-    private static function botOwnerAlive($owner, ?array $state = null): bool
-    {
-        // Legacy/test marker: a bare pid, always same-host by definition.
-        if (is_int($owner) || (is_string($owner) && ctype_digit($owner))) {
-            $pid = (int) $owner;
-            return $pid === getmypid() ? true : is_dir('/proc/' . $pid);
-        }
-        if (!is_string($owner) || strpos($owner, ':') === false) {
-            return true;  // unrecognised marker — nothing we can assert
-        }
-        [$host, $pidPart] = explode(':', $owner, 2);
-        if (!ctype_digit($pidPart)) {
-            return true;
-        }
-        $pid = (int) $pidPart;
-        if ($host === self::localHostName()) {
-            return $pid === getmypid() ? true : is_dir('/proc/' . $pid);
-        }
-        // Owned by another instance: trust the heartbeat, not our /proc.
-        $ts = is_array($state) && isset($state['ts']) && is_numeric($state['ts'])
-            ? (int) $state['ts']
-            : 0;
-        return $ts >= time() - self::BOT_OWNER_HEARTBEAT_MAX_AGE;
-    }
-
-    /**
      * Cached hostname. Identifies which of the three datacentered instances a
-     * shared-GlobalData marker belongs to.
+     * shared ownership marker belongs to.
      */
     private static function localHostName(): string
     {
@@ -5211,8 +5079,12 @@ class Events
     }
 
     /**
-     * Ownership marker for a process-local resource recorded in shared GlobalData:
-     * "<host>:<pid>". Host-qualified because pids collide across the three instances.
+     * Ownership marker for a process-local resource recorded in shared state:
+     * "<host>:<pid>". Host-qualified because pids collide across the three
+     * instances that share one Redis. SharedState::lock() tokens already carry
+     * the same host:pid:hex shape; this is the human-readable form used in the
+     * bot lifecycle log lines so a "[dc_bot] ... owned by" message names the
+     * actual instance, not just a number that only means something locally.
      */
     private static function processMarker(): string
     {
@@ -5220,26 +5092,29 @@ class Events
     }
 
     /**
-     * Does an ownership marker name THIS process? Tolerates the legacy bare-pid form
-     * so a marker written by an instance that has not been reloaded yet is still
-     * recognised during a rolling restart across the three hosts — otherwise the
-     * owning process would fail to match its own marker and retire its own timer,
-     * killing the bot on its first tick.
+     * Redis lock name for one location's bot ownership.
      *
-     * @param mixed $marker value stored in dc_bot_timer:<location>
+     * @param string $location
+     * @return string
      */
-    private static function markerIsSelf($marker): bool
+    private static function botOwnerLockName(string $location): string
     {
-        if (is_int($marker) || (is_string($marker) && ctype_digit((string) $marker))) {
-            return (int) $marker === getmypid();   // legacy bare pid
-        }
-        return is_string($marker) && $marker === self::processMarker();
+        return 'bot_owner:' . $location;
     }
 
     /**
      * Spawn a bot avatar for a given datacenter location if one doesn't exist.
      * The bot walks around the datacenter building, simulating a real user.
-     * Uses GlobalData to store bot state so multiple BusinessWorkers can access it.
+     * Bot state lives in Redis so multiple BusinessWorkers can access it.
+     *
+     * Ownership (migration A2): the retired GlobalData dc_bot_timer:<location>
+     * owner marker + dc_bot_state heartbeat staleness dance (botOwnerAlive()
+     * reading /proc across three hosts sharing one store) is replaced by one
+     * SharedState lock: dc:lock:bot_owner:<location> @ BOT_OWNER_LOCK_TTL.
+     * Acquiring it IS taking ownership; a crashed owner's lock lapses and the
+     * next join takes over, which is exactly what the pid/heartbeat liveness
+     * probing emulated — with a real, enforced TTL. The process-local
+     * Workerman timer id stays process-local (THE BOT #4 unchanged).
      *
      * @param string                          $location Datacenter location name (default: 'main')
      * @param array{x:float,z:float}|null     $near     joining player's position; the bot spawns
@@ -5253,45 +5128,37 @@ class Events
             return;
         }
 
-        global $global;
-
         $botId = 'bot_' . $location;
-        $botTimerKey = 'dc_bot_timer:' . $location;
-        $botStateKey = 'dc_bot_state:' . $location;
+        $botStateKey = self::BOT_STATE_KEY_PREFIX . $location;
 
         // Contract BOT-BOUNDS: record any freshly reported room bounds first so
         // the spawn position below is computed inside the REAL room.
         $reportedBounds = self::sanitiseRoomBounds($bounds);
         if ($reportedBounds !== null) {
-            $global->{self::DC_ROOM_BOUNDS_KEY_PREFIX . $location} = $reportedBounds;
+            SharedState::set(self::DC_ROOM_BOUNDS_KEY_PREFIX . $location, $reportedBounds, self::PRESENCE_SESSION_TTL);
         }
 
-        // Check for a stale owner marker from lost state.
-        // THE BOT #4: dc_bot_timer:<location> holds the OWNING PID, never a
-        // timer id — Workerman timer ids are per-process and Timer::del() from
-        // another BusinessWorker would kill an unrelated timer. The real id
-        // lives in the process-local self::$botTimers.
-        $existingOwner = $global->{$botTimerKey} ?? null;
-        $existingState = $global->{$botStateKey} ?? null;
-        if ($existingOwner !== null) {
-            if ($existingState !== null && self::botOwnerAlive($existingOwner, $existingState)) {
-                return; // Bot already exists for this location and its driver is alive
-            }
-            if ($existingState !== null) {
-                // Owner process is gone (worker reload/crash) — its timer died with
-                // it, so the bot would sit frozen forever. Take ownership here.
-                Worker::safeEcho("[dc_bot] bot '{$location}' owner pid {$existingOwner} is gone; respawning in pid ".getmypid()."\n");
-                unset($global->{$botStateKey});
-            }
-            // Stale marker with no state — only the creating process may delete
-            // the timer; from anywhere else just drop the marker and respawn here.
-            if (isset(self::$botTimers[$location])) {
+        // Take ownership. A null token means a live owner holds the lock (its
+        // TTL has not lapsed) — the bot already exists and is being driven, by
+        // us or by another instance. Either way, nothing to do here.
+        $token = SharedState::lock(self::botOwnerLockName($location), self::BOT_OWNER_LOCK_TTL);
+        if ($token === null) {
+            if (isset(self::$botTimers[$location]) && !isset(self::$botLockTokens[$location])) {
+                // We hold a move timer for a bot we no longer own (our lock
+                // lapsed and someone else took over): retire OUR timer only —
+                // a Workerman id is meaningless in any other process.
                 Timer::del(self::$botTimers[$location]);
                 unset(self::$botTimers[$location]);
-            } elseif ($existingOwner !== self::processMarker()) {
-                Worker::safeEcho("[dc_bot] stale bot marker for '{$location}' owned by {$existingOwner}; not deleting its timer from ".self::processMarker()."\n");
+                Worker::safeEcho("[dc_bot] retiring duplicate bot timer for '{$location}' in ".self::processMarker()." (lock held by another process)\n");
             }
-            unset($global->{$botTimerKey});
+            return;
+        }
+        self::$botLockTokens[$location] = $token;
+        if (isset(self::$botTimers[$location])) {
+            // A timer we armed before losing the lock (crash-window takeover
+            // that came back to us): drop it, the spawn below re-arms cleanly.
+            Timer::del(self::$botTimers[$location]);
+            unset(self::$botTimers[$location]);
         }
 
         // Pick a random bot name
@@ -5323,50 +5190,12 @@ class Events
             'bounds' => $roomBounds,
         ];
         Worker::safeEcho('[dc_bot] spawn x=' . $botState['x'] . ' z=' . $botState['z'] . "\n");
-        $global->$botStateKey = $botState;
+        SharedState::set($botStateKey, $botState, self::BOT_STATE_TTL);
 
-        // Write bot presence entry to GlobalData (same format as real users)
-        $presenceKey = 'dc_presence:client:' . $botId;
-        $global->$presenceKey = $botState;
-
-        // Add bot to active clients list (CRIT-8 pattern for atomicity).
-        // seedClientIndex() + bounded retry for the same reason as the join path:
-        // an absent key makes cas([], …) unsatisfiable forever. Reachable here only
-        // via a join (which now seeds first), but this loop must not be the one that
-        // wedges a worker if that ever stops being true.
-        $activeClientsKey = 'dc_active_clients';
-        self::seedClientIndex($activeClientsKey);
-        $attempts = 0;
-        do {
-            $activeClients = $global->$activeClientsKey ?? [];
-            $activeClients = is_array($activeClients) ? $activeClients : [];
-            if (!in_array($botId, $activeClients, true)) {
-                $activeClients[] = $botId;
-            }
-            $oldActiveClients = $global->$activeClientsKey ?? null;
-            if ($oldActiveClients === $activeClients) {
-                break;
-            }
-            if ($global->cas($activeClientsKey, $oldActiveClients ?? [], $activeClients)) {
-                break;
-            }
-        } while (self::casShouldRetry($activeClientsKey, ++$attempts));
-
-        // Add bot to client index so it's included in batch broadcasts
-        $clientIndexKey = 'dc_presence_clients';
-        self::seedClientIndex($clientIndexKey);
-        $attempts = 0;
-        do {
-            $currentList = $global->$clientIndexKey;
-            $clientList = is_array($currentList) ? array_values($currentList) : [];
-            if (!in_array($botId, $clientList, true)) {
-                $clientList[] = $botId;
-            }
-            $oldForCas = is_array($currentList) ? $currentList : [];
-            if ($currentList === $clientList || $global->cas($clientIndexKey, $oldForCas, $clientList)) {
-                break;
-            }
-        } while (self::casShouldRetry($clientIndexKey, ++$attempts));
+        // Write bot presence entry to Redis (same format as real users)
+        $presenceKey = self::dcPresenceKey($botId);
+        SharedState::set($presenceKey, $botState, self::BOT_STATE_TTL);
+        self::presenceIndexAdd($botId, $botState['ts']);
 
         // Broadcast bot presence to the dc_presence group so frontends create avatars
         // Frontend expects camelCase clientId, not snake_case client_id
@@ -5383,19 +5212,24 @@ class Events
             [$location],
             true  // repeating
         );
-        // THE BOT #4: keep the (process-local) timer id process-local, and publish
-        // only the owning pid so other workers can see a bot exists.
+        // THE BOT #4: the (process-local) timer id stays process-local; the
+        // host:pid:hex token in dc:lock:bot_owner:<location> names the owner
+        // instance across all three datacentered hosts.
         self::$botTimers[$location] = $timerId;
-        // Host-qualified: three instances share this GlobalData store and pids are not
-        // unique across them. See processMarker() / botOwnerAlive().
-        $global->{$botTimerKey} = self::processMarker();
 
-        Worker::safeEcho("[dc_bot] spawned bot '{$botName}' ({$botId}) at location '{$location}' at ({$spawnX}, {$spawnZ})\n");
+        Worker::safeEcho("[dc_bot] spawned bot '{$botName}' ({$botId}) at location '{$location}' at ({$spawnX}, {$spawnZ}) owned by {$token}\n");
     }
 
     /**
      * Move the bot for a given location - called every BOT_MOVE_INTERVAL seconds.
      * Implements realistic wandering: picks a target point and walks toward it.
+     *
+     * Ownership heartbeat (migration A2): every tick renews the location's
+     * owner lock and refreshes the state/presence TTLs — that renew IS the
+     * BOT_OWNER heartbeat the old BOT_OWNER_HEARTBEAT_MAX_AGE staleness window
+     * measured. A renew that fails means the TTL lapsed while this process was
+     * stalled and someone else legitimately took the bot over: retire OUR
+     * timer, never touch the new owner's state.
      *
      * @param string $location Datacenter location name
      */
@@ -5406,25 +5240,25 @@ class Events
             return;
         }
 
-        global $global;
-
         $botId = 'bot_' . $location;
-        $botStateKey = 'dc_bot_state:' . $location;
-        $botTimerKey = 'dc_bot_timer:' . $location;
+        $botStateKey = self::BOT_STATE_KEY_PREFIX . $location;
 
-        // THE BOT #4: only the marker-owning process drives the bot. If another
-        // BusinessWorker has taken ownership (e.g. it respawned the bot after our
-        // state was lost), retire OUR timer rather than double-driving the shared
-        // state. A process only ever deletes a timer it created itself.
-        $owner = $global->{$botTimerKey} ?? null;
-        if (isset(self::$botTimers[$location]) && $owner !== null && !self::markerIsSelf($owner)) {
+        // THE BOT #4 (A2 form): only the lock-owning process drives the bot.
+        if (!isset(self::$botTimers[$location])) {
+            return; // no timer here; nothing to drive
+        }
+        $token = self::$botLockTokens[$location] ?? null;
+        if ($token === null || !SharedState::renew(self::botOwnerLockName($location), $token, self::BOT_OWNER_LOCK_TTL)) {
+            // We no longer own it (expired + taken over, or Redis blipped).
+            // Stop driving; the current owner's state keys survive untouched.
+            unset(self::$botLockTokens[$location]);
             Timer::del(self::$botTimers[$location]);
             unset(self::$botTimers[$location]);
-            Worker::safeEcho("[dc_bot] retiring duplicate bot timer for '{$location}' in ".self::processMarker()." (owner is {$owner})\n");
+            Worker::safeEcho("[dc_bot] retiring bot timer for '{$location}' in ".self::processMarker()." (owner lock lost)\n");
             return;
         }
 
-        $botState = $global->{$botStateKey};
+        $botState = SharedState::get($botStateKey);
 
         if (!$botState || !is_array($botState)) {
             // Bot state missing - try to recover or stop
@@ -5487,8 +5321,17 @@ class Events
             $botState['yaw'] = $yaw;
             $botState['ts'] = time();
 
-            // Update bot state in GlobalData
-            $global->$botStateKey = $botState;
+            // Update bot state in Redis (TTL refresh == the heartbeat).
+            // Contract note: plan said bot presence EX300; BOT_STATE_TTL=30s here is a
+            // deliberate deviation, not an oversight — each BOT_MOVE_INTERVAL=0.5s tick
+            // refreshes state+presence while the owner is alive, and the
+            // BOT_OWNER_LOCK_TTL=10 owner lock lapses first, so a dead-owner ghost
+            // self-clears within ~30s rather than the ~300s EX300 would leave it up. A
+            // >30s stall without a refresh tick is impossible while the owner lives
+            // (see the moveBot owner renew at :5256).
+            SharedState::set($botStateKey, $botState, self::BOT_STATE_TTL);
+            SharedState::set(self::dcPresenceKey($botId), $botState, self::BOT_STATE_TTL);
+            self::presenceIndexAdd($botId, $botState['ts']);
 
             // NO per-tick position log here. moveBot() runs on a BOT_MOVE_INTERVAL
             // timer for every location with a bot, so a safeEcho() here is one
@@ -5498,8 +5341,7 @@ class Events
             // above, which fire once per event instead of once per tick.
 
             // Write to batch key so batch timer broadcasts this move
-            $batchKey = 'dc_move_batch:' . $botId;
-            $global->{$batchKey} = json_encode($botState);
+            SharedState::set('dc:presence:move_batch:' . $botId, $botState, self::PRESENCE_MOVE_TTL);
 
             // BUG-B7: schedule the ONE shared flush (this used to be a second,
             // drifted copy of handleDcPresenceMove()'s closure that skipped
@@ -5512,62 +5354,45 @@ class Events
      * Clean up (remove) the bot for a given datacenter location.
      * Called when the last real user leaves the location.
      *
+     * Cross-process rules kept from THE BOT #4: a Workerman timer id is only
+     * valid in the process that created it, so only that process may
+     * Timer::del() it; and (A2) the shared ownership lock may only be
+     * released by its token holder — a cleanup request from a non-owner
+     * deletes state (so the owner's next tick reaps its own timer) but never
+     * unlocks another instance's hold.
+     *
      * @param string $location Datacenter location name
      */
     public static function cleanupBotForLocation(string $location = self::BOT_DEFAULT_LOCATION): void
     {
-        global $global;
-
         $botId = 'bot_' . $location;
-        $botTimerKey = 'dc_bot_timer:' . $location;
-        $botStateKey = 'dc_bot_state:' . $location;
+        $botStateKey = self::BOT_STATE_KEY_PREFIX . $location;
 
-        // Stop and remove the timer.
-        // THE BOT #4: a Workerman timer id is only valid in the process that
-        // created it, so only that process may Timer::del() it. Everywhere else
-        // we clear the shared state and let the owner's next moveBot() tick find
-        // dc_bot_state gone, re-enter this function in ITS process and delete
-        // its own timer.
-        $owner = $global->{$botTimerKey} ?? null;
+        // Stop and remove the timer (ours only).
         if (isset(self::$botTimers[$location])) {
             Timer::del(self::$botTimers[$location]);
             unset(self::$botTimers[$location]);
-            unset($global->{$botTimerKey});
-        } elseif ($owner !== null) {
-            Worker::safeEcho("[dc_bot] cleanup for '{$location}' requested in ".self::processMarker().", timer owned by {$owner} — leaving marker for the owner to reap\n");
         }
 
-        // Remove bot state (this is what makes the owning process stop next tick)
-        unset($global->{$botStateKey});
+        $token = self::$botLockTokens[$location] ?? null;
+        if ($token !== null) {
+            // This process drove the bot: retire the lock token-checked. A
+            // failed unlock just means the TTL already lapsed — nothing to do.
+            SharedState::unlock(self::botOwnerLockName($location), $token);
+            unset(self::$botLockTokens[$location]);
+        }
 
-        // Remove bot presence entry
-        $presenceKey = 'dc_presence:client:' . $botId;
-        $global->$presenceKey = null;
+        // Remove bot state (this is what makes a still-running owner process
+        // stop next tick and self-reap its timer).
+        SharedState::del($botStateKey);
 
-        // Remove from active clients list (CRIT-8 pattern)
-        $activeClientsKey = 'dc_active_clients';
-        do {
-            $activeClients = $global->$activeClientsKey ?? [];
-            $activeClients = is_array($activeClients) ? $activeClients : [];
-            $filtered = array_values(array_filter($activeClients, fn($c) => $c !== $botId));
-            $oldActiveClients = $global->$activeClientsKey ?? null;
-            if ($oldActiveClients === $filtered) {
-                break;
-            }
-        } while (!$global->cas($activeClientsKey, $oldActiveClients ?? [], $filtered));
-
-        // Remove from client index
-        $clientIndexKey = 'dc_presence_clients';
-        do {
-            $currentList = $global->$clientIndexKey ?? [];
-            if (!is_array($currentList)) break;
-            $newList = array_values(array_filter($currentList, fn($c) => $c !== $botId));
-            if ($newList === $currentList) break;
-            $oldList = $currentList;
-        } while (!$global->cas($clientIndexKey, $oldList, $newList));
+        // Remove bot presence record + index entries.
+        SharedState::del(self::dcPresenceKey($botId));
+        SharedState::zRem(self::DC_PRESENCE_INDEX_KEY, $botId);
+        SharedState::zRem(self::DC_ACTIVE_INDEX_KEY, $botId);
 
         // Clean up any pending batch entries
-        unset($global->{'dc_move_batch:' . $botId});
+        SharedState::del('dc:presence:move_batch:' . $botId);
 
         // Tell the frontends to drop the bot avatar. spawnBotForLocation()
         // announces dc.presence.joined, so despawn must announce the matching
@@ -5592,21 +5417,11 @@ class Events
      */
     private static function hasRealUsersAtLocation(string $location = self::BOT_DEFAULT_LOCATION): bool
     {
-        global $global;
-
-        $clientIndexKey = 'dc_presence_clients';
-        $clientList = $global->$clientIndexKey ?? [];
-
-        if (!is_array($clientList) || empty($clientList)) {
-            return false;
-        }
-
-        foreach ($clientList as $clientId) {
-            // Skip bot client IDs
+        foreach (SharedState::zRange(self::DC_PRESENCE_INDEX_KEY, 0, -1) as $clientId) {
+            // Skip bot client IDs; anything else is a real user.
             if (is_string($clientId) && strpos($clientId, 'bot_') === 0) {
                 continue;
             }
-            // This is a real user
             Worker::safeEcho('[dc_bot] hasRealUsersAtLocation=true location=' . $location . "\n");
             return true;
         }
@@ -5622,10 +5437,6 @@ class Events
      */
     public static function onClose($client_id)
     {
-        /**
-         * @var \GlobalData\Client
-         */
-        global $global;
         self::logStructured('client.close', ['client_id' => $client_id, 'uid' => $_SESSION['uid'] ?? null]);
 
         // Broadcast dc.presence.left BEFORE cleaning up — proactively notify remaining
@@ -5634,157 +5445,109 @@ class Events
         $uid = $_SESSION['uid'] ?? null;
         if ($uid) {
             // Per-client presence key so each browser tab is tracked independently
-            $presenceKey = 'dc_presence:client:' . $client_id;
-            $presenceEntry = $global->$presenceKey;
+            $presenceKey = self::dcPresenceKey($client_id);
+            $presenceEntry = SharedState::get($presenceKey);
             if ($presenceEntry && is_array($presenceEntry)) {
                 self::broadcastDcPresence(
                     'dc.presence.left',
                     ['uid' => $uid, 'clientId' => $client_id],
                     "[{$client_id}] client.close"
                 );
-                // CRIT-9 fix: Two-phase cleanup — mark before CAS removal to prevent race with health timer
-                // Phase 1: Mark client as being cleaned up (so health timer can detect and skip)
-                $global->{'dc_cleanup:' . $client_id} = time();
+                // CRIT-9 fix: Two-phase cleanup — mark before removal so the
+                // health timer can detect and skip an in-flight cleanup.
+                SharedState::set('dc:presence:cleanup:' . $client_id, time(), self::PRESENCE_MOVE_TTL);
 
-                // Phase 2: Atomic delete of per-client key
-                $global->$presenceKey = null;
-                // Remove client_id from index (CAS loop)
-                $clientIndexKey = 'dc_presence_clients';
-                do {
-                    $clientList = $global->$clientIndexKey ?? [];
-                    if (!is_array($clientList)) {
-                        break;
-                    }
-                    $newList = array_values(array_filter($clientList, fn($c) => $c !== $client_id));
-                    if ($newList === $clientList) {
-                        break;
-                    }
-                    $oldList = $clientList;
-                } while (!$global->cas($clientIndexKey, $oldList, $newList));
-
-                unset($global->{'dc_cleanup:' . $client_id});
+                // Phase 2: delete the record, drop from both indexes, drop the marker.
+                SharedState::del($presenceKey);
+                self::presenceIndexRemove($client_id);
+                SharedState::del('dc:presence:cleanup:' . $client_id);
             }
         }
 
-        // Remove from active clients list (CRIT-8 fix: use CAS for atomicity)
-        $activeClientsKey = 'dc_active_clients';
-        do {
-            $activeClients = $global->$activeClientsKey ?? [];
-            $activeClients = is_array($activeClients) ? $activeClients : [];
-            $filtered = array_values(array_filter($activeClients, fn($c) => $c !== $client_id));
-            $oldActiveClients = $global->$activeClientsKey ?? null;
-            if ($oldActiveClients === $filtered) {
-                break;
-            }
-        } while (!$global->cas($activeClientsKey, $oldActiveClients ?? [], $filtered));
+        // Belt-and-braces: leave the recipient index even if the record was
+        // already gone (leave raced close, or a never-joined socket closing).
+        SharedState::zRem(self::DC_ACTIVE_INDEX_KEY, $client_id);
 
-        // Clean up dc_client_session and the liveness keys for this client
-        $sessionKey = 'dc_client_session:' . $client_id;
-        $sessionId = $global->$sessionKey ?? null;
+        // Clean up dc:presence:client_session and the liveness keys for this client
+        $sessionKey = 'dc:presence:client_session:' . $client_id;
+        $sessionId = SharedState::get($sessionKey);
         if ($sessionId) {
-            $listKey = 'dc_session_clients:' . $sessionId;
-            $clients = $global->$listKey ?? [];
+            $listKey = 'dc:presence:session_clients:' . $sessionId;
+            $clients = SharedState::get($listKey);
             if (is_array($clients)) {
-                $clients = array_filter($clients, fn($c) => $c !== $client_id);
-                $global->$listKey = array_values($clients);
+                SharedState::set($listKey, array_values(array_filter($clients, fn($c) => $c !== $client_id)), self::PRESENCE_SESSION_TTL);
             }
-            unset($global->$sessionKey);
+            SharedState::del($sessionKey);
         }
         // Unconditional: these are written by the health timer even for clients
         // whose session mapping has already gone away.
-        unset($global->{self::DC_PONG_KEY_PREFIX . $client_id});
-        unset($global->{self::DC_PING_SENT_KEY_PREFIX . $client_id});
-        // IDEA-3: clean up viewport data for this client
-        unset($global->{'dc_viewport:' . $client_id});
-        // MAJOR-13: clean up move throttle key for this client
-        unset($global->{'dc_move_throttle:' . $client_id});
+        SharedState::del(
+            self::DC_PONG_KEY_PREFIX . $client_id,
+            self::DC_PING_SENT_KEY_PREFIX . $client_id
+        );
+        // IDEA-3: clean up viewport data for this client.
+        // MAJOR-13: clean up move throttle key for this client.
         // REVIEW-FIX (unbounded growth): dc_move_batch:<client_id> had NO deletion
-        // path outside flushPresenceBatch(), and that flush only enumerates
-        // dc_presence_clients. A client that disconnects in the <=50ms between
+        // path outside flushPresenceBatch(), and that flush only enumerated the
+        // presence index. A client that disconnects in the <=50ms between
         // writing its move batch and the flush is removed from that index first,
-        // so its batch key was orphaned in GlobalData forever. With a 150ms move
-        // throttle against a 50ms flush the window is hit routinely, so the store
-        // grew by one permanent key per unlucky disconnect.
-        unset($global->{'dc_move_batch:' . $client_id});
+        // so its batch key was orphaned in the store forever. With a 150ms move
+        // throttle against a 50ms flush the window is hit routinely.
+        SharedState::del(
+            'dc:presence:viewport:' . $client_id,
+            'dc:presence:move_throttle:' . $client_id,
+            'dc:presence:move_batch:' . $client_id
+        );
 
         if (isset($_SESSION['uid'])) {
             $clientIds = Gateway::getClientIdByUid($_SESSION['uid']);
-            if (count($clientIds) == 1 && isset($global->rooms) && sizeof($global->rooms) > 0) {
+            if (count($clientIds) == 1) {
                 $logoutMessage = [
                     'type' => 'logout',
                     'id' => $_SESSION['uid'],
                     'time' => date('Y-m-d H:i:s')
                 ];
-                $rooms = $global->rooms;
-                if (!is_array($rooms)) $rooms = [];
-                $oldRooms = $rooms;
-                $updated = false;
-                foreach ($rooms as $idx => $room) {
-                    if (($key = array_search($_SESSION['uid'], $room['members'])) !== false) {
-                        $updated = true;
+                // Migration A2: each room is its own hash field, so the
+                // re-read + CAS retry loop the shared rooms array needed is
+                // gone — the HSETs above are per-field atomic and a racing
+                // join/leave on ANOTHER room can no longer lose to this one.
+                // Same-field RMW here is still last-writer-wins (no CAS): a concurrent
+                // join/leave on THIS room can drop the other's member, but the ghost
+                // self-heals on next reconcile — parity with join()/say() which were
+                // non-CAS at HEAD too, and rooms is legacy/retirement-flagged so
+                // locking is deliberately not reintroduced.
+                $rooms = SharedState::hGetAll(self::ROOMS_REGISTRY_KEY);
+                foreach ($rooms as $roomIdx => $room) {
+                    if (is_array($room) && ($key = array_search($_SESSION['uid'], $room['members'])) !== false) {
                         unset($room['members'][$key]);
+                        $room['members'] = array_values($room['members']);
                         Gateway::sendToGroup($room['id'], json_encode($logoutMessage));
-                        $rooms[$idx] = $room;
+                        SharedState::hSet(self::ROOMS_REGISTRY_KEY, (string) $roomIdx, $room);
                     }
-                }
-                if ($updated === true) {
-                    $attempts = 0;
-                    do {
-                        $oldRooms = $global->rooms;
-                        if (!is_array($oldRooms)) break;
-                        $rooms = $oldRooms;
-                        foreach ($oldRooms as $idx => $room) {
-                            if (($key = array_search($_SESSION['uid'], $room['members'])) !== false) {
-                                unset($rooms[$idx]['members'][$key]);
-                            }
-                        }
-                        $rooms = array_values($rooms);
-                    } while (!$global->cas('rooms', $oldRooms, $rooms) && $attempts++ < 5 && usleep(1000));
                 }
             }
             if (isset($_SESSION['ima'])) {
                 if ($_SESSION['ima'] == 'host') {
                     $id = str_replace('vps', '', $_SESSION['uid']);
-                    $casRetries = 0;
-                    do {
-                        $old_value = $new_value = $global->hosts;
-                        unset($new_value[$id]);
-                        $casRetries++;
-                        if ($casRetries > 100) {
-                            Worker::safeEcho("[{$client_id}] CAS loop exceeded max retries removing host {$id}".PHP_EOL);
-                            break;
-                        }
-                    } while (!$global->cas('hosts', $old_value, $new_value));
-                    $global->admin_hosts_cache = null;
-                    $global->admin_hosts_cache_ttl = null;
+                    SharedState::hDel(self::HOSTS_REGISTRY_KEY, (string) $id);
+                    SharedState::del(self::ADMIN_HOSTS_CACHE_KEY);
                 } else {
                     if (count($clientIds) == 1) {
                         // Send command to stop running any processes that were running and directed at this user
-                        $running = $global->running;
-                        if (sizeof($running) > 0) {
-                            $remove = false;
-                            foreach ($running as $run) {
-                                if ($run['for'] == $_SESSION['uid']) {
-                                    $remove = true;
-                                    Gateway::sendToUid($run['host'], json_encode(['type' => 'stop_run', 'id' => $run['id']]));
-                                }
+                        $remove = [];
+                        foreach (SharedState::sMembers(self::RUNNING_INDEX_KEY) as $run_id) {
+                            if (!is_string($run_id) || $run_id === '') {
+                                continue;
                             }
-                            if ($remove === true) {
-                                $casRetries = 0;
-                                do {
-                                    $old_value = $new_value = $global->running;
-                                    foreach ($new_value as $idx => $run) {
-                                        if ($run['for'] == $_SESSION['uid']) {
-                                            unset($new_value[$idx]);
-                                        }
-                                    }
-                                    $casRetries++;
-                                    if ($casRetries > 100) {
-                                        Worker::safeEcho("[{$client_id}] CAS loop exceeded max retries cleaning running tasks".PHP_EOL);
-                                        break;
-                                    }
-                                } while (!$global->cas('running', $old_value, $new_value));
+                            $run = SharedState::get(self::RUNNING_KEY_PREFIX . $run_id);
+                            if (is_array($run) && ($run['for'] ?? null) == $_SESSION['uid']) {
+                                $remove[] = $run_id;
+                                Gateway::sendToUid($run['host'], json_encode(['type' => 'stop_run', 'id' => $run['id'] ?? $run_id]));
                             }
+                        }
+                        foreach ($remove as $run_id) {
+                            SharedState::del(self::RUNNING_KEY_PREFIX . $run_id);
+                            SharedState::sRem(self::RUNNING_INDEX_KEY, $run_id);
                         }
                     }
                 }
@@ -5811,6 +5574,25 @@ class Events
     /**
      * timer function to check for payment processing queue items
      *
+     * GlobalData→Redis migration (A1): the `processing_queue` lock is a
+     * SharedState (Redis) lock with a real 900s TTL. The TTL replaces the old
+     * manual stale-reset branch — an abandoned lock now lapses on its own —
+     * and refreshProcessingLock()/releaseProcessingLock() extend/remove it
+     * token-checked, so a slow chain can never clobber a re-acquired lock.
+     *
+     * SharedState wraps every command, so a dead transport never throws out of
+     * lock(): it returns the same null as contention. transportFailed() tells
+     * the two apart, and this timer escalates ONLY the transport death — an
+     * operator nudging via Web/trigger_payment.php must get "unavailable", not
+     * a silent ok-noop, when the payment chain could not even reach Redis.
+     * Three consumers, three containments of that escalation:
+     *   - the 30s periodic tick (registered via Timer::add, run by Workerman's
+     *     Timer::tick): the tick handler safeCall()s everything a callback
+     *     throws, so escalating cannot kill a worker;
+     *   - Web/trigger_payment.php: catches \Throwable and answers the
+     *     documented "unavailable";
+     *   - legacy WS Events::msgPaymentprocess (onMessage): catches locally and
+     *     logs, so the adjacent boardctl_queue_timer() nudge still runs.
      */
     public static function processing_queue_timer()
     {
@@ -5818,63 +5600,57 @@ class Events
             self::$db = self::createDbConnection();
             if (is_null(self::$db)) return;
         }
-        /**
-         * @var \GlobalData\Client
-         */
-        global $global;
-        $var = 'processing_queue';
-        $lastVar = $var.'_last';
-        if (!isset($global->$var)) {
-            $global->$var = 0;
+        $token = SharedState::lock('processing_queue', 900);
+        if ($token === null) {
+            if (SharedState::transportFailed()) {
+                throw new \RuntimeException('processing_queue_timer: Redis transport failed acquiring the processing_queue lock — the nudge could not run');
+            }
+            // Held elsewhere — same no-op contract as a lost CAS.
+            return;
         }
-        $lockValue = $global->$var;
-        if ($lockValue !== 0 && (time() - (int)$lockValue) > 900) {
-            Worker::safeEcho("processing_queue_timer: stale lock held since ".date('c', (int)$lockValue).", force-resetting\n");
-            $global->$var = 0;
+        self::$processingLockToken = $token;
+        // NOTE: For performance, ensure queue_log has a compound index on (history_section, history_new_value).
+        // Verified in staging with: SHOW INDEX FROM queue_log WHERE Key_name = 'idx_boardctl_pending';
+        // If missing, run: ALTER TABLE queue_log ADD INDEX idx_boardctl_pending (history_section, history_new_value);
+        // This index also benefits similar queries at boardctl_queue_timer, boardctl_startup_reap,
+        // and processing_queue_reaper.
+        try {
+            $results = self::$db->select('*')->from('queue_log')->where("history_section='process_payment' and history_new_value='pending'")->query();
+        } catch (\Exception $e) {
+            Worker::safeEcho("processing_queue_timer DB error: {$e->getMessage()}\n");
+            self::$db = self::createDbConnection();
+            self::releaseProcessingLock();
+            return;
         }
-        if ($global->cas($var, 0, time())) {
-            // NOTE: For performance, ensure queue_log has a compound index on (history_section, history_new_value).
-            // Verified in staging with: SHOW INDEX FROM queue_log WHERE Key_name = 'idx_boardctl_pending';
-            // If missing, run: ALTER TABLE queue_log ADD INDEX idx_boardctl_pending (history_section, history_new_value);
-            // This index also benefits similar queries at boardctl_queue_timer (line ~4955), boardctl_startup_reap (line ~4210),
-            // and processing_queue_reaper (line ~4263).
-            try {
-                $results = self::$db->select('*')->from('queue_log')->where("history_section='process_payment' and history_new_value='pending'")->query();
-            } catch (\Exception $e) {
-                Worker::safeEcho("processing_queue_timer DB error: {$e->getMessage()}\n");
-                self::$db = self::createDbConnection();
-                self::releaseProcessingLock();
-                return;
-            }
-            if (!is_array($results)) {
-                Worker::safeEcho("processing_queue_timer: DB query returned non-array, reconnecting\n");
-                self::$db = self::createDbConnection();
-                self::releaseProcessingLock();
-                return;
-            }
-            if (sizeof($results) > 0) {
-                self::process_results($results);
-            } else {
-                self::releaseProcessingLock();
-            }
+        if (!is_array($results)) {
+            Worker::safeEcho("processing_queue_timer: DB query returned non-array, reconnecting\n");
+            self::$db = self::createDbConnection();
+            self::releaseProcessingLock();
+            return;
+        }
+        if (sizeof($results) > 0) {
+            self::process_results($results);
+        } else {
+            self::releaseProcessingLock();
         }
     }
 
     /**
      * Mark the processing queue lock as still alive.
      *
-     * The lock holds the acquisition time and processing_queue_timer() treats a
-     * lock older than 900s as abandoned. Long-but-healthy chains call this to
-     * push that deadline forward so their lock is not force-reset mid-run.
+     * The SharedState lock carries a 900s TTL and processing_queue_timer() can
+     * only take it once per lapse. Long-but-healthy chains call this to renew
+     * the deadline so their lock does NOT expire mid-run and get stolen. A
+     * renew is token-checked: if the TTL lapsed and another holder took the
+     * lock, this silently does nothing rather than resurrecting the old hold.
      */
     private static function refreshProcessingLock()
     {
-        global $global;
-        $var = 'processing_queue';
-        // Only refresh a lock we actually hold; never resurrect a released one.
-        if ((int)$global->$var !== 0) {
-            $global->$var = time();
+        // Only renew a lock we actually hold; never resurrect a released one.
+        if (self::$processingLockToken === null) {
+            return;
         }
+        SharedState::renew('processing_queue', self::$processingLockToken, 900);
     }
 
     /**
@@ -5882,11 +5658,15 @@ class Events
      */
     private static function releaseProcessingLock()
     {
-        global $global;
-        $var = 'processing_queue';
-        $lastVar = $var.'_last';
-        $global->$lastVar = time();
-        $global->$var = 0;
+        if (self::$processingLockToken === null) {
+            // Nothing held by this process. An unlock() with no token is the
+            // admin force-delete — a double release must never reach it.
+            return;
+        }
+        $token = self::$processingLockToken;
+        self::$processingLockToken = null;
+        SharedState::unlock('processing_queue', $token);
+        SharedState::set(SharedState::PREFIX_STATE.'processing_queue_last', time());
     }
 
     /**
@@ -5896,9 +5676,10 @@ class Events
      * refuses to queue a rerun for that asset (duplicate guard). This resets such
      * rows to 'failed' so an operator can re-queue.
      *
-     * Called ONLY from the GlobalData cold-start block in onWorkerStart (guarded by
-     * $global->add('running')), which fires when the GlobalData server is freshly
-     * created — i.e. a full restart, never a graceful reload. A long-running job
+     * Called ONLY from the onWorkerStart cold-start gate in
+     * Events (SharedState::lock('startup_reap') winning), which fires at most
+     * once per STARTUP_REAP_LOCK_TTL window — i.e. on a full restart, and
+     * never as a periodic sweep. A long-running job
      * (up to the 6h cap) that survives a reload is therefore never touched. NOT a
      * periodic timer on purpose: a time-based sweep cannot tell a 6h job that is
      * still running apart from one that died, and would kill live jobs.
@@ -6039,16 +5820,16 @@ class Events
     public static function process_results($results)
     {
         /*
-         * Refresh the lock before each result. The 900s stale-lock reset in
-         * processing_queue_timer() is not tied to any bound on how long this
-         * chain can run -- dispatchTask() has no timeout, and each result costs
-         * a task round trip plus up to 30 seconds of dbUpdateWithRetry backoff,
-         * so a large batch legitimately exceeds 900s. Without this heartbeat the
-         * timer steals the lock from a chain that is still working and starts a
-         * second one alongside it.
+         * Renew the lock's 900s TTL before each result. That TTL is not tied
+         * to any bound on how long this chain can run -- dispatchTask() has no
+         * timeout, and each result costs a task round trip plus up to 30
+         * seconds of dbUpdateWithRetry backoff, so a large batch legitimately
+         * exceeds 900s. Without this heartbeat the TTL lapses, the timer
+         * steals the lock from a chain that is still working, and a second
+         * chain starts alongside it.
          *
-         * Heartbeating keeps the stale reset meaningful: it now only fires for a
-         * chain that has genuinely stopped making progress, rather than for one
+         * Heartbeating keeps the TTL lapse meaningful: it now only strands a
+         * chain that has genuinely stopped making progress, rather than one
          * that is merely slow. (boardctl solves the same problem by pinning its
          * timeout above a known runner cap; there is no equivalent cap here.)
          */
@@ -6085,10 +5866,11 @@ class Events
             self::$db = self::createDbConnection();
             if (is_null(self::$db)) return;
         }
-        /**
-         * @var \GlobalData\Client
-         */
-        global $global;
+        // Snapshot of the shared hosts registry once per tick; field names of
+        // the Redis hash are the vps ids (migration A2 — the old live
+        // $global->hosts reads were whole-map fetches on every check).
+        $hostRegistry = SharedState::hGetAll(self::HOSTS_REGISTRY_KEY);
+        $hostIds = array_keys($hostRegistry);
         try {
             /*
              * The vpsqueuedone anti-join is what Tasks/vps_queue_task.php has always
@@ -6137,7 +5919,7 @@ class Events
                         continue;
                     }
                     $id = $row['vps_server'];
-                    if (in_array($id, array_keys($global->hosts))) {
+                    if (in_array($id, $hostIds)) {
                         if (!in_array($id, array_keys($queues))) {
                             $queues[$id] = [];
                         }
@@ -6145,7 +5927,7 @@ class Events
                     }
                 } else {
                     $id = str_replace('vps', '', $row['history_type']);
-                    if (in_array($id, array_keys($global->hosts))) {
+                    if (in_array($id, $hostIds)) {
                         if (!in_array($id, array_keys($queues))) {
                             $queues[$id] = [];
                         }
@@ -6155,21 +5937,35 @@ class Events
             }
             if (sizeof($queues) > 0) {
                 foreach ($queues as $server_id => $rows) {
-                    $server_data = $global->hosts[$server_id];
+                    $server_data = $hostRegistry[$server_id] ?? SharedState::hGet(self::HOSTS_REGISTRY_KEY, (string) $server_id);
+                    if (!is_array($server_data)) {
+                        $server_data = ['vps_name' => 'server'.$server_id];
+                    }
                     //if ($server_id != 467) {
                     //Worker::safeEcho('Wanted To Process Queues For Server '.$server_id.' '.$server_data['vps_name'].PHP_EOL);
                     //continue;
                     //} else {
                     Worker::safeEcho('Processing Queues For Server '.$server_id.' '.$server_data['vps_name'].PHP_EOL);
                     //}
-                    $var = 'vps_host_'.$server_id;
-                    if (!isset($global->$var)) {
-                        $global->$var = 0;
-                    }
-                    if ($global->cas($var, 0, 1)) {
-                        $releaseLock = function () use ($var) {
-                            global $global;
-                            $global->$var = 0;
+                    /*
+                     * GlobalData→Redis migration (A1): per-host dispatch lock via
+                     * SharedState. TTL 900s is a FROZEN CONTRACT with the Tasks
+                     * track (vps_queue_task contends on the same key). SET NX maps
+                     * the old cas($var, 0, 1) faithfully — a Tasks-side acquire
+                     * failing while Events holds the lock is correct behaviour, and
+                     * the token makes the release owner-checked.
+                     *
+                     * Ops decision: 900s TTL mirrors the old 900s GlobalData stale-reap
+                     * window because HyperV ops (esp. GetVMList) can take 10+ minutes —
+                     * a shorter TTL could expire mid-operation and let a second worker
+                     * race the same host. Cross-host parallelism is preserved (per-host
+                     * lock keys); this only guards ≤1 concurrent command per VPS host.
+                     */
+                    $lockName = 'vps_host_'.$server_id;
+                    $token = SharedState::lock($lockName, 900);
+                    if ($token !== null) {
+                        $releaseLock = function () use ($lockName, $token) {
+                            SharedState::unlock($lockName, $token);
                         };
                         self::dispatchTask('vps_queue_task', ['id' => $server_id], function ($task_result) use ($server_id, $releaseLock) {
                             $task_result = json_decode($task_result, true);
@@ -6249,10 +6045,6 @@ class Events
      */
     public static function run_command($host, $cmd, $interact = false, $for = null, $rows = 80, $cols = 24, $update_after = false)
     {
-        /**
-        * @var \GlobalData\Client
-        */
-        global $global;
         // we need to store the command locally so we can easily react proeprly if we get a response
         if (substr($host, 0, 3) == 'vps' && is_numeric(substr($host, 3))) {
             $host = substr($host, 3);
@@ -6271,10 +6063,11 @@ class Events
                 'cols' => $cols,
                 'for' => $for
             ];
-            do {
-                $old_value = $new_value = $global->running;
-                $new_value[$run_id] = $json;
-            } while (!$global->cas('running', $old_value, $new_value));
+            // Migration A2: the whole-map CAS loop becomes one per-key write
+            // (legacy md5 key semantics preserved: re-issuing the same command
+            // simply refreshes its entry, set() overwrites) plus an index add.
+            SharedState::set(self::RUNNING_KEY_PREFIX . $run_id, $json, self::RUNNING_ENTRY_TTL);
+            SharedState::sAdd(self::RUNNING_INDEX_KEY, $run_id);
             Gateway::sendToUid($uid, json_encode($json));
             Worker::safeEcho("Sending ".json_encode($json)." to {$uid}".PHP_EOL);
         } else {
@@ -6285,10 +6078,6 @@ class Events
 
     public static function say($from, $is, $to, $content, $from_name)
     {
-        /**
-        * @var \GlobalData\Client
-        */
-        global $global;
         Worker::safeEcho("Saying {$content} from {$from} to {$to} is {$is} name {$from_name}".PHP_EOL);
         if ($is == 'room') {
             $new_message = [
@@ -6299,14 +6088,23 @@ class Events
                 'content' => nl2br(htmlspecialchars($content)),
                 'time' => date('Y-m-d H:i:s'),
             ];
-            $rooms = $global->rooms;
-            $rooms[0]['messages'][] = [
-                'from_id' => $from,
-                'from_name' => $from_name,
-                'content' => nl2br(htmlspecialchars($content)),
-                'time' => date('Y-m-d H:i:s'),
-            ];
-            $global->rooms = $rooms;
+            // Legacy room message log lives on the default room's hash field
+            // (migration A2: the positional $rooms[0] of the GlobalData rooms
+            // array is the seeded DEFAULT_ROOM_ID entry in dc:state:rooms; the
+            // v1 path never reads messages from here — see chatCacheAppend).
+            $room = SharedState::hGet(self::ROOMS_REGISTRY_KEY, self::DEFAULT_ROOM_ID);
+            if (is_array($room)) {
+                if (!isset($room['messages']) || !is_array($room['messages'])) {
+                    $room['messages'] = [];
+                }
+                $room['messages'][] = [
+                    'from_id' => $from,
+                    'from_name' => $from_name,
+                    'content' => nl2br(htmlspecialchars($content)),
+                    'time' => date('Y-m-d H:i:s'),
+                ];
+                SharedState::hSet(self::ROOMS_REGISTRY_KEY, self::DEFAULT_ROOM_ID, $room);
+            }
             return Gateway::sendToGroup($to, json_encode($new_message));
         } else {
             $new_message = [
@@ -6422,10 +6220,6 @@ class Events
      */
     public static function msgClients($client_id, $message_data)
     {
-        /**
-        * @var \GlobalData\Client
-        */
-        global $global;
         if ($_SESSION['login'] === true && $_SESSION['ima'] == 'admin') {
             $admin_sessions = Gateway::getClientSessionsByGroup('admins');
             $host_sessions = Gateway::getClientSessionsByGroup('hosts');
@@ -6448,7 +6242,7 @@ class Events
                     $clients[] = $client;
                 }
             }
-            $rooms = $global->rooms;
+            $rooms = SharedState::hGetAll(self::ROOMS_REGISTRY_KEY);
             foreach ($rooms as $room) {
                 $members = [];
                 foreach ($room['members'] as $member) {
@@ -6476,52 +6270,12 @@ class Events
      */
     public static function msgTimers($client_id, $message_data)
     {
-        /**
-        * @var \GlobalData\Client
-        */
-        global $global;
         if ($_SESSION['login'] === true && $_SESSION['ima'] == 'admin') {
             $message_data = [
                 'type' => 'timers',
                 //'channel' => ChannelClient::getStatus(),
             ];
             Gateway::sendToCurrentClient(json_encode($message_data));
-            /*
-            $sessions = Gateway::getAllClientSessions();
-            $clients = [];
-            foreach ($sessions as $session_id => $session_data) {
-                if (isset($session_data['uid'])) {
-                    $client = [
-                        'id' => $session_data['uid'],
-                        'name' => $session_data['name'],
-                        'ima' => $session_data['ima'],
-                        'online' => $session_data['online'],
-                        'messages' => [],
-                    ];
-                    if ($session_data['ima'] == 'host') {
-                        $client['type'] = $session_data['type'];
-                    } else {
-                        $client['img'] = $session_data['img'];
-                    }
-                    $clients[] = $client;
-                }
-            }
-            $rooms = $global->rooms;
-            foreach ($rooms as $room) {
-                $members = [];
-                foreach ($room['members'] as $member) {
-                    $members[] = ['contact' => $member];
-                }
-                $room['members'] = $members;
-                $clients[] = $room;
-            }
-            $new_message = [ // Send the error response
-                'type' => 'clients',
-                'content' => base64_encode(gzcompress(json_encode($clients), 9)),
-            ];
-            Worker::safeEcho("[{$client_id}] Loaded Clients, Request Length:".strlen(json_encode($new_message)).PHP_EOL);
-            Gateway::sendToCurrentClient(json_encode($new_message));
-            */
         }
         return;
     }
@@ -6644,18 +6398,13 @@ class Events
      */
     public static function msgRunning($client_id, $message_data)
     {
-        /**
-        * @var \GlobalData\Client
-        */
-        global $global;
         Worker::safeEcho("[{$client_id}] Got Running Command ".json_encode($message_data).PHP_EOL);
         if ($_SESSION['login'] === true) {
             $id = $message_data['id'];
-            $running = $global->running;
-            if (!isset($running[$id])) {
+            $run = SharedState::get(self::RUNNING_KEY_PREFIX . $id);
+            if (!is_array($run)) {
                 return;
             }
-            $run = $running[$id];
             if ($_SESSION['ima'] == 'admin') {
                 // stdin to send to host/process
                 return Gateway::sendToUid($run['host'], json_encode($message_data));
@@ -6682,7 +6431,18 @@ class Events
     {
         //Gateway::sendToClient($client_id, json_encode('ok'));
         Gateway::closeClient($client_id, json_encode('ok'));
-        self::processing_queue_timer();
+        // processing_queue_timer() throws RuntimeException when the Redis
+        // transport is dead (see its docblock). This is the legacy WS nudge
+        // inside an onMessage dispatch — contain it HERE so an outage cannot
+        // kill a BusinessWorker mid-message and, crucially, cannot skip the
+        // adjacent boardctl_queue_timer() nudge. The timer's other consumers
+        // (Workerman's tick safeCall, trigger_payment's catch) already
+        // contain the escalation at their own boundaries.
+        try {
+            self::processing_queue_timer();
+        } catch (\Throwable $e) {
+            Worker::safeEcho('msgPaymentprocess: nudge failed: '.$e->getMessage()."\n");
+        }
         self::boardctl_queue_timer();
     }
 
@@ -6691,12 +6451,15 @@ class Events
      *
      * Concurrency model: one job in-flight per asset at a time, but multiple assets
      * may run concurrently (capped only by TaskWorker process count, currently 20).
-     * Per-asset locking uses GlobalData CAS on a key derived from the asset id; the
-     * mystage queue helper already prevents duplicate pending/processing rows per
-     * asset so the lock is mostly belt-and-braces against rare race windows.
+     * Per-asset locking uses a SharedState (Redis) lock named from the asset id
+     * (GlobalData→Redis migration, A1); the mystage queue helper already prevents
+     * duplicate pending/processing rows per asset so the lock is mostly
+     * belt-and-braces against rare race windows.
      *
      * history_type is encoded as "<action>:<assetId>" — we parse the asset id out
      * for the lock key so different actions on the same asset still serialize.
+     * On a successful acquire the ownership token rides to the consumer as
+     * args['lock_token'] so the detached runner can release exactly this hold.
      */
     public static function boardctl_queue_timer()
     {
@@ -6704,12 +6467,11 @@ class Events
             self::$db = self::createDbConnection();
             if (is_null(self::$db)) return;
         }
-        global $global;
         // NOTE: For performance, ensure queue_log has a compound index on (history_section, history_new_value).
         // Verified in staging with: SHOW INDEX FROM queue_log WHERE Key_name = 'idx_boardctl_pending';
         // If missing, run: ALTER TABLE queue_log ADD INDEX idx_boardctl_pending (history_section, history_new_value);
-        // This index also benefits similar queries at processing_queue_timer (line ~4130), boardctl_startup_reap (line ~4210),
-        // and processing_queue_reaper (line ~4263).
+        // This index also benefits similar queries at processing_queue_timer, boardctl_startup_reap,
+        // and processing_queue_reaper.
         try {
             $results = self::$db->select('*')->from('queue_log')->where("history_section='boardctl' and history_new_value='pending'")->query();
         } catch (\Exception $e) {
@@ -6727,42 +6489,37 @@ class Events
                 Worker::safeEcho("boardctl: skipping history_id={$row['history_id']} with unparseable type '{$row['history_type']}'\n");
                 continue;
             }
-            $lockVar = 'boardctl_asset_'.$assetId;
-            if (!isset($global->$lockVar)) {
-                $global->$lockVar = 0;
-            }
-            $lockValue = $global->$lockVar;
             // 22200s = 6hr task cap (boardctl_run_job BOARDCTL_MAX_RUNTIME_SECONDS) + 10min buffer.
             // Must stay >= the runner cap so a legitimately long-running job's lock
-            // is never reset mid-run (which would let a duplicate job start).
-            if ($lockValue !== 0 && (time() - (int)$lockValue) > 22200) {
-                Worker::safeEcho("boardctl: stale lock for asset {$assetId}, force-resetting\n");
-                $global->$lockVar = 0;
-            }
-            if (!$global->cas($lockVar, 0, time())) {
-                // another job for this asset is already in flight
+            // never lapses mid-run (which would let a duplicate job start); the TTL
+            // also replaces the old manual stale force-reset branch entirely.
+            $lockName = 'boardctl_asset_'.$assetId;
+            $token = SharedState::lock($lockName, 22200);
+            if ($token === null) {
+                // another job for this asset is already in flight (or Redis unavailable)
                 continue;
             }
             try {
                 self::$db->update('queue_log')->cols(['history_new_value' => 'processing'])->where('history_id='.intval($row['history_id']))->query();
             } catch (\Throwable $e) {
                 Worker::safeEcho("boardctl: failed to mark history_id={$row['history_id']} processing: {$e->getMessage()}\n");
-                $global->$lockVar = 0;
+                SharedState::unlock($lockName, $token);
                 continue;
             }
             Worker::safeEcho("boardctl spawning task for history_id={$row['history_id']} asset={$assetId} type={$row['history_type']}\n");
             // boardctl_task now only *spawns* a detached runner and returns at
-            // once (the runner owns the CAS lock for the job's lifetime and
-            // releases it on completion). So on a successful spawn we must NOT
+            // once (the runner owns the lock for the job's lifetime — it gets
+            // this hold's token via args['lock_token'] and releases token-
+            // checked on completion). So on a successful spawn we must NOT
             // release the lock here -- doing so would let a duplicate start. We
             // only release + mark failed when the spawn itself did not happen.
-            self::dispatchTask('boardctl_task', $row, function ($task_result) use ($row, $lockVar) {
-                global $global;
+            $taskArgs = array_merge((array) $row, ['lock_token' => $token]);
+            self::dispatchTask('boardctl_task', $taskArgs, function ($task_result) use ($row, $lockName, $token) {
                 $outer = json_decode((string)$task_result, true);
                 $return = is_array($outer) && array_key_exists('return', $outer) ? $outer['return'] : $task_result;
                 $decoded = is_string($return) ? json_decode($return, true) : $return;
                 if (is_array($decoded) && !empty($decoded['spawned'])) {
-                    // Runner launched; it will release $lockVar when the job ends.
+                    // Runner launched; it releases $lockName when the job ends.
                     return;
                 }
                 Worker::safeEcho("boardctl: runner did not spawn for history_id={$row['history_id']}, releasing lock\n");
@@ -6771,15 +6528,14 @@ class Events
                 } catch (\Throwable $e) {
                     Worker::safeEcho("boardctl: failed to mark history_id={$row['history_id']} failed: {$e->getMessage()}\n");
                 }
-                $global->$lockVar = 0;
-            }, function () use ($row, $lockVar) {
-                global $global;
+                SharedState::unlock($lockName, $token);
+            }, function () use ($row, $lockName, $token) {
                 try {
                     self::$db->update('queue_log')->cols(['history_new_value' => 'failed'])->where('history_id='.intval($row['history_id']))->query();
                 } catch (\Throwable $e) {
                     Worker::safeEcho("boardctl: failed to mark history_id={$row['history_id']} failed: {$e->getMessage()}\n");
                 }
-                $global->$lockVar = 0;
+                SharedState::unlock($lockName, $token);
             });
         }
     }
@@ -6792,25 +6548,22 @@ class Events
      */
     public static function msgRan($client_id, $message_data)
     {
-        /**
-        * @var \GlobalData\Client
-        */
-        global $global;
         //Worker::safeEcho("[{$client_id}] Got Ran Command ".json_encode($message_data).PHP_EOL);
         // indicates both completion of a run process and its final exit code or terminal signal
         // response(s) from a run command
         $id = $message_data['id'];
-        $running = $global->running;
-        if (!isset($running[$id])) {
+        $run = SharedState::get(self::RUNNING_KEY_PREFIX . $id);
+        if (!is_array($run)) {
             return;
         }
-        $run = $running[$id];
         if (!is_string($run['for'] ?? null)) {
             return;
         }
         $is = substr($run['for'], 0, 1) == '#' ? 'room' : 'client';
-        unset($running[$id]);
-        $global->running = $running;
+        // Migration A2: msgRan's read-modify-write of the whole running map is
+        // one key delete + index removal (the v1 cmd.exit equivalent, per-key).
+        SharedState::del(self::RUNNING_KEY_PREFIX . $id);
+        SharedState::sRem(self::RUNNING_INDEX_KEY, $id);
         $message = 'Finished Running'.PHP_EOL;
         if (isset($message_data['stdout']) && trim($message_data['stdout']) != '') {
             $message .= PHP_EOL.'StdOut:'.$message_data['stdout'];
@@ -6858,10 +6611,6 @@ class Events
      */
     public static function msgLogin($client_id, $message_data)
     {
-        /**
-        * @var \GlobalData\Client
-        */
-        global $global;
         $ima = isset($message_data['ima']) && in_array($message_data['ima'], ['host', 'admin']) ? $message_data['ima'] : 'admin';
         //Worker::safeEcho("[{$client_id}] client:{$_SERVER['REMOTE_ADDR']}:{$_SERVER['REMOTE_PORT']} gateway:{$_SERVER['GATEWAY_ADDR']}:{$_SERVER['GATEWAY_PORT']} session:".json_encode($_SESSION)." onMessage:".serialize($message).PHP_EOL); // debug
         switch ($ima) {
@@ -6877,10 +6626,6 @@ class Events
                     ];
                     return Gateway::sendToCurrentClient(json_encode($new_message));
                 }
-                /**
-                 * @var \GlobalData\Client
-                 */
-                global $global;
                 $uid = 'vps'.$row['vps_id'];
                 $_SESSION['uid'] = $uid;
                 $_SESSION['module'] = 'vps';
@@ -6890,12 +6635,8 @@ class Events
                 $_SESSION['type'] = $row['vps_type'];
                 $_SESSION['online'] = date('Y-m-d H:i:s');
                 $_SESSION['login'] = true;
-                do {
-                    $old_value = $new_value = $global->hosts;
-                    $new_value[$row['vps_id']] = $row;
-                } while (!$global->cas('hosts', $old_value, $new_value));
-                $global->admin_hosts_cache = null;
-                $global->admin_hosts_cache_ttl = null;
+                SharedState::hSet(self::HOSTS_REGISTRY_KEY, (string) $row['vps_id'], $row);
+                SharedState::del(self::ADMIN_HOSTS_CACHE_KEY);
                 Gateway::setSession($client_id, $_SESSION);
                 Gateway::bindUid($client_id, $uid);
                 Gateway::joinGroup($client_id, $ima.'s');
@@ -6950,11 +6691,26 @@ class Events
                 Gateway::setSession($client_id, $_SESSION);
                 Gateway::bindUid($client_id, $uid);
                 Worker::safeEcho("[{$client_id}] {$results[0]['account_lid']} has been successfully logged in from {$_SERVER['REMOTE_ADDR']}".PHP_EOL);
-                $rooms = $global->rooms;
-                if (!in_array($uid, $rooms[0]['members'])) {
-                    $rooms[0]['members'][] = $uid;
+                // Join the default room (migration A2: the hash field
+                // DEFAULT_ROOM_ID, the equivalent of the old positional
+                // $global->rooms[0]).
+                $room = SharedState::hGet(self::ROOMS_REGISTRY_KEY, self::DEFAULT_ROOM_ID);
+                if (!is_array($room)) {
+                    $room = [
+                        'id' => self::DEFAULT_ROOM_ID,
+                        'name' => 'General Chat',
+                        'img' => 'https://upload.wikimedia.org/wikipedia/commons/thumb/a/a6/Rubik%27s_cube.svg/220px-Rubik%27s_cube.svg.png',
+                        'members' => [],
+                        'messages' => [],
+                    ];
                 }
-                $global->rooms = $rooms;
+                if (!isset($room['members']) || !is_array($room['members'])) {
+                    $room['members'] = [];
+                }
+                if (!in_array($uid, $room['members'])) {
+                    $room['members'][] = $uid;
+                }
+                SharedState::hSet(self::ROOMS_REGISTRY_KEY, self::DEFAULT_ROOM_ID, $room);
                 $new_message = [ // Send the error response
                     'type' => 'login',
                     'id' => $uid,
