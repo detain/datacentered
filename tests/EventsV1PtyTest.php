@@ -12,14 +12,16 @@
  * *before* Events.php loads, capturing every reply, close, sendToUid, sendToGroup
  * and answering isUidOnline() from an in-memory online-uid set. The REAL handlers
  * run end to end (admin/party gates, pty_id validation, shell-scope elevation
- * gate, collision guard, CAS registry writes/removes, base64 pass-through) —
- * nothing is reimplemented here.
+ * gate, collision guard, HSETNX registration / HDEL removal, base64
+ * pass-through) — nothing is reimplemented here.
  *
- * The pty session state lives in the SEPARATE $global->ptys registry (decoupled
- * from the cmd $global->running registry), backed by the same in-memory
- * GlobalData client the other v1 tests use (extends \GlobalData\Client so the
- * FeatureFlags `instanceof` gate passes; array-backed store + a real CAS + the
- * `add(key,default)` init-if-absent the pty handler calls).
+ * The pty session state lives in the SEPARATE Events::PTYS_REGISTRY_KEY
+ * ('dc:state:ptys') Redis HASH — one field per pty_id, JSON entry value,
+ * registered atomically via HSETNX (the collision guard) — decoupled from the
+ * cmd running registry (Events::RUNNING_KEY_PREFIX per-run STRING keys plus
+ * the Events::RUNNING_INDEX_KEY SET). Both are driven through the SharedState
+ * facade onto the InMemoryRedis double injected in setUp(), so this suite
+ * seeds and asserts the REAL production keys via the REAL key constants.
  */
 
 namespace {
@@ -29,83 +31,33 @@ namespace {
     require_once __DIR__.'/V1TestSupport.php';
 
     /**
-     * In-memory GlobalData client with a working CAS + add(), reused for Flag A
-     * toggling AND for backing $global->ptys (the pty session registry the pty
-     * handlers read/write via the same whole-map CAS loop the cmd path uses).
-     */
-    if (!class_exists('PtyFakeGlobalDataClient')) {
-        class PtyFakeGlobalDataClient extends \GlobalData\Client
-        {
-            /** @var array<string,mixed> */
-            public $store = [];
-
-            public function __construct()
-            {
-            }
-
-            public function __get($key)
-            {
-                return $this->store[$key] ?? null;
-            }
-
-            public function __set($key, $value)
-            {
-                $this->store[$key] = $value;
-            }
-
-            public function __isset($key)
-            {
-                return isset($this->store[$key]);
-            }
-
-            public function __unset($key)
-            {
-                unset($this->store[$key]);
-            }
-
-            /**
-             * Init-if-absent, matching the real GlobalData add() semantics the
-             * pty handler relies on ($global->add('ptys', [])): only sets the key
-             * when it does not already exist, so an existing registry survives.
-             */
-            public function add($key, $value)
-            {
-                if (!array_key_exists($key, $this->store)) {
-                    $this->store[$key] = $value;
-                }
-                return true;
-            }
-
-            /** Whole-map compare-and-swap (strict value equality, like the real client). */
-            public function cas($key, $old, $new)
-            {
-                $current = $this->store[$key] ?? null;
-                if ($current === $old) {
-                    $this->store[$key] = $new;
-                    return true;
-                }
-                return false;
-            }
-        }
-    }
-
-    /**
      * Tests for the v1 pty.* handlers (WS-revamp Phase 2 step 2.4). Scope is
      * strictly the NEW step-2.4 code.
      */
     class EventsV1PtyTest extends TestCase
     {
-        /** @var PtyFakeGlobalDataClient */
-        private $global;
+        /** @var InMemoryRedis SharedState double injected by setUp() */
+        private $redis;
 
+        /**
+         * SharedState discipline copied from tests/SharedStateTest.php: no
+         * leaked shared connection, fresh in-memory keyspace per test, client
+         * dropped + facade reset on teardown so nothing bleeds across suites.
+         */
         protected function setUp(): void
         {
+            unset($GLOBALS['redis']);
+            $this->redis = new \InMemoryRedis();
+            \SharedState::setClient($this->redis);
             $this->resetState();
         }
 
         protected function tearDown(): void
         {
             $this->resetState();
+            \SharedState::setClient(null);
+            unset($GLOBALS['redis']);
+            \SharedState::reset();
         }
 
         private function resetState(): void
@@ -113,27 +65,29 @@ namespace {
             \GatewayWorker\Lib\Gateway::reset();
             $_SESSION = [];
             \Events::$db = null;
-            unset($GLOBALS['global']);
-
-            $ref = new ReflectionClass(FeatureFlags::class);
-            $prop = $ref->getProperty('client');
-            $prop->setAccessible(true);
-            $prop->setValue(null, null);
         }
 
         // ------------------------------------------------------------------
         // Fixtures / helpers
         // ------------------------------------------------------------------
 
-        /** Inject the in-memory GlobalData client and flip Flag A ON. */
-        private function flagAOn(): PtyFakeGlobalDataClient
+        /**
+         * Flip Flag A ON: int 1 at dc:flag:ws_new_handling via the facade.
+         * The ptys hash needs no init — HSETNX creates the key on first
+         * registration and hGetAll on an absent key reads [].
+         */
+        private function flagAOn(): void
         {
-            $client = new PtyFakeGlobalDataClient();
-            $client->store[FeatureFlags::VAR_NEW_HANDLING] = 1;
-            $client->store['ptys'] = [];
-            $GLOBALS['global'] = $client;
-            $this->global = $client;
-            return $client;
+            \SharedState::set(FeatureFlags::VAR_NEW_HANDLING, 1);
+        }
+
+        /**
+         * Flip Flag A OFF: int 0 stored explicitly — with a usable Redis
+         * client an UNSET flag reads ON (new handling is the default).
+         */
+        private function flagAOff(): void
+        {
+            \SharedState::set(FeatureFlags::VAR_NEW_HANDLING, 0);
         }
 
         /** Mark a uid online for isUidOnline(). */
@@ -177,9 +131,10 @@ namespace {
             return \GatewayWorker\Lib\Gateway::$closed;
         }
 
+        /** Full pty registry read: HGETALL on the real dc:state:ptys key. */
         private function ptys(): array
         {
-            return $this->global->store['ptys'] ?? [];
+            return \SharedState::hGetAll(\Events::PTYS_REGISTRY_KEY);
         }
 
         /** Decode the single client reply; assert exactly one was sent. */
@@ -204,7 +159,7 @@ namespace {
         /** Seed a registered pty session (owning admin 'for', allocated 'host'). */
         private function seedPty(string $ptyId, string $host, string $for, array $overrides = []): void
         {
-            $this->global->store['ptys'] = [$ptyId => array_merge([
+            \SharedState::hSet(\Events::PTYS_REGISTRY_KEY, $ptyId, array_merge([
                 'pty_id' => $ptyId,
                 'host' => $host,
                 'for' => $for,
@@ -213,7 +168,7 @@ namespace {
                 'cols' => 80,
                 'rows' => 24,
                 'started' => 1719700000
-            ], $overrides)];
+            ], $overrides));
         }
 
         // ================================================================
@@ -416,7 +371,8 @@ namespace {
                 'scope' => 'command', 'command' => 'sleep 999',
                 'cols' => 80, 'rows' => 24, 'started' => 111
             ];
-            $this->global->store['ptys'] = ['dup' => $existing];
+            // Field 'dup' exists in the hash, so the handler's HSETNX must lose.
+            \SharedState::hSet(\Events::PTYS_REGISTRY_KEY, 'dup', $existing);
 
             $this->dispatch('pty.open', ['pty_id' => 'dup', 'host' => 1234, 'command' => 'whoami']);
 
@@ -625,11 +581,8 @@ namespace {
 
         public function testPtyOpenDormantWhenFlagAOff(): void
         {
-            // Flag A OFF: client present but ws_new_handling unset.
-            $client = new PtyFakeGlobalDataClient();
-            $client->store['ptys'] = [];
-            $GLOBALS['global'] = $client;
-            $this->global = $client;
+            // Flag A OFF: usable client, dc:flag:ws_new_handling explicitly 0.
+            $this->flagAOff();
             $this->asAdmin();
             $this->online('vps1234');
 
@@ -657,7 +610,7 @@ namespace {
         }
 
         // ================================================================
-        // 8. Registry isolation — pty ops never touch $global->running (& vice versa)
+        // 8. Registry isolation — pty ops never touch the cmd running registry
         // ================================================================
 
         public function testPtyOpsDoNotLeakIntoCmdRunningRegistry(): void
@@ -666,22 +619,28 @@ namespace {
             $this->asAdmin('admin-9');
             $this->online('vps1234');
 
-            // Seed a cmd registry entry alongside the pty registry.
+            // Seed a cmd run alongside the pty registry, on the REAL cmd keys:
+            // one STRING entry at dc:state:running:<run_id> plus its id in the
+            // dc:state:running_ids SET index (migration A2 layout).
             $runEntry = [
                 'run_id' => 'run-x', 'id' => 'run-x', 'host' => 'vps1234', 'for' => 'admin-9',
                 'command' => 'sleep 5', 'interact' => false, 'update_after' => false,
                 'rows' => 24, 'cols' => 80, 'started' => 1, 'v' => 1
             ];
-            $this->global->store['running'] = ['run-x' => $runEntry];
+            $runKey = \Events::RUNNING_KEY_PREFIX.'run-x';
+            \SharedState::set($runKey, $runEntry, \Events::RUNNING_ENTRY_TTL);
+            \SharedState::sAdd(\Events::RUNNING_INDEX_KEY, 'run-x');
 
             // Full pty lifecycle: open, resize, close.
             $this->dispatch('pty.open', ['pty_id' => 'pty-iso', 'host' => 1234, 'command' => 'top'], 1, 'o1');
             $this->dispatch('pty.resize', ['pty_id' => 'pty-iso', 'cols' => 120, 'rows' => 40], 1, 'o2');
             $this->dispatch('pty.close', ['pty_id' => 'pty-iso'], 1, 'o3');
 
-            // $global->running is completely untouched by the pty handlers.
-            $this->assertArrayHasKey('running', $this->global->store);
-            $this->assertSame(['run-x' => $runEntry], $this->global->store['running'], 'cmd running registry must be byte-identical after pty ops');
+            // The cmd run entry and its index are completely untouched by the
+            // pty handlers — same value, same TTL-key, still a set member.
+            $this->assertNotNull(\SharedState::get($runKey), 'cmd run key must survive pty ops');
+            $this->assertSame($runEntry, \SharedState::get($runKey), 'cmd run entry must be value-identical after pty ops');
+            $this->assertSame(['run-x'], \SharedState::sMembers(\Events::RUNNING_INDEX_KEY), 'cmd run index must be untouched');
             // And the pty registry is empty again after close (its own lifecycle).
             $this->assertSame([], $this->ptys());
         }

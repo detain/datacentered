@@ -15,9 +15,11 @@
  * place avoids a duplicate-class fatal when PHPUnit loads every test file into
  * the same process.
  *
- * tests/TestBootstrap.php is required FIRST (see its docblock): it declares the
- * offline \GlobalData\Client and the \Channel\Client tripwire, both of which
- * must be in place before the composer autoloader could resolve the real ones.
+ * tests/TestBootstrap.php is required FIRST (see its docblock): only its
+ * \Channel\Client tripwire still needs to be in place before the composer
+ * autoloader could resolve the real one. (The offline \GlobalData\Client stub
+ * TestBootstrap once declared was deleted in wave 5.1 of the
+ * GlobalData→Redis migration.)
  */
 
 namespace {

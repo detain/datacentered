@@ -25,60 +25,10 @@ namespace {
 
     require_once __DIR__.'/V1TestSupport.php';
 
-    if (!class_exists('ConfigVpsFakeGlobalDataClient')) {
-        class ConfigVpsFakeGlobalDataClient extends \GlobalData\Client
-        {
-            /** @var array<string,mixed> */
-            public $store = [];
-
-            public function __construct()
-            {
-            }
-
-            public function __get($key)
-            {
-                return $this->store[$key] ?? null;
-            }
-
-            public function __set($key, $value)
-            {
-                $this->store[$key] = $value;
-            }
-
-            public function __isset($key)
-            {
-                return isset($this->store[$key]);
-            }
-
-            public function __unset($key)
-            {
-                unset($this->store[$key]);
-            }
-
-            public function add($key, $value)
-            {
-                if (!array_key_exists($key, $this->store)) {
-                    $this->store[$key] = $value;
-                }
-                return true;
-            }
-
-            public function cas($key, $old, $new)
-            {
-                $current = $this->store[$key] ?? null;
-                if ($current === $old) {
-                    $this->store[$key] = $new;
-                    return true;
-                }
-                return false;
-            }
-        }
-    }
-
     class EventsV1ConfigVpsTest extends TestCase
     {
-        /** @var ConfigVpsFakeGlobalDataClient */
-        private $global;
+        /** @var InMemoryRedis SharedState double injected by setUp() */
+        private $redis;
 
         /** @var array<int,array{type:string,args:array}> */
         private $dispatched = [];
@@ -89,8 +39,16 @@ namespace {
         /** @var bool */
         private $fakeTaskError = false;
 
+        /**
+         * SharedState discipline copied from tests/SharedStateTest.php: every
+         * test starts from "no leaked shared connection, fresh in-memory
+         * keyspace"; the facade client is dropped and reset on teardown.
+         */
         protected function setUp(): void
         {
+            unset($GLOBALS['redis']);
+            $this->redis = new \InMemoryRedis();
+            \SharedState::setClient($this->redis);
             $this->resetState();
             // Legacy fallthrough paths (onMessage) log via safeEcho with REMOTE_ADDR.
             $_SERVER['REMOTE_ADDR'] = '203.0.113.10';
@@ -99,6 +57,9 @@ namespace {
         protected function tearDown(): void
         {
             $this->resetState();
+            \SharedState::setClient(null);
+            unset($GLOBALS['redis']);
+            \SharedState::reset();
         }
 
         private function resetState(): void
@@ -107,36 +68,28 @@ namespace {
             $_SESSION = [];
             \Events::$db = null;
             \Events::$taskDispatcher = null;
-            unset($GLOBALS['global']);
             $this->dispatched = [];
             $this->fakeTaskReturn = null;
             $this->fakeTaskError = false;
-
-            $ref = new ReflectionClass(FeatureFlags::class);
-            $prop = $ref->getProperty('client');
-            $prop->setAccessible(true);
-            $prop->setValue(null, null);
         }
 
         // ------------------------------------------------------------------
         // Fixtures / helpers
         // ------------------------------------------------------------------
 
-        private function flagAOn(): ConfigVpsFakeGlobalDataClient
+        /** Flip Flag A ON: int 1 stored at dc:flag:ws_new_handling via the facade. */
+        private function flagAOn(): void
         {
-            $client = new ConfigVpsFakeGlobalDataClient();
-            $client->store[FeatureFlags::VAR_NEW_HANDLING] = 1;
-            $GLOBALS['global'] = $client;
-            $this->global = $client;
-            return $client;
+            \SharedState::set(FeatureFlags::VAR_NEW_HANDLING, 1);
         }
 
-        private function flagAOff(): ConfigVpsFakeGlobalDataClient
+        /**
+         * Flip Flag A OFF: int 0 stored explicitly — with a usable Redis client
+         * an UNSET flag reads ON (new handling is the default).
+         */
+        private function flagAOff(): void
         {
-            $client = new ConfigVpsFakeGlobalDataClient();
-            $GLOBALS['global'] = $client;
-            $this->global = $client;
-            return $client;
+            \SharedState::set(FeatureFlags::VAR_NEW_HANDLING, 0);
         }
 
         private function installTaskCapture(): void

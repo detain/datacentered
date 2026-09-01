@@ -17,9 +17,15 @@
  *    ($type,$args) and INJECT a fake task result, exercising the real hub-side
  *    handlers end-to-end. This also lets us assert the level:"log" DB-skip
  *    (ZERO dispatch) and the persist-then-fanout ordering.
- *  - CAS-capable GlobalData: an in-memory client with a working add()/cas()
- *    (same convention as the other EventsV1<Area>Test fakes) backs the
- *    $global->channels hot cache and the $global->channel_meta registry.
+ *  - SharedState Redis facade (GlobalData retired, migration A2): the chat hot
+ *    cache is one LIST per channel, dc:chat:msgs:<channel>, written via
+ *    rPushLtrim (keeps the NEWEST CHAT_HISTORY_MAX=100 entries; lRange reads
+ *    OLDEST-first) plus the dc:chat:activity ZSET index scored by last-activity
+ *    ts; the channel_meta registry is the dc:state:channel_meta HASH. Every
+ *    seed below goes through the same SharedState wrappers production uses
+ *    (Events::chatCacheAppend / handleChannelCreate), so the fixtures are
+ *    byte-identical to the real write shape, and assertions read the raw
+ *    InMemoryRedis keyspace.
  *  - Fake Gateway group state: getClientSessionsByGroup /
  *    getClientIdCountByGroup / leaveGroup live on the shared fake Gateway
  *    (tests/V1TestSupport.php) so presence + list members can be asserted.
@@ -28,61 +34,9 @@
 namespace {
     use PHPUnit\Framework\TestCase;
 
-    // Declares the shared fake Gateway seam, then requires FeatureFlags + Events.
+    // Declares the shared fake Gateway seam (and with it TestBootstrap's
+    // InMemoryRedis double), then requires FeatureFlags + SharedState + Events.
     require_once __DIR__.'/V1TestSupport.php';
-
-    /** In-memory GlobalData client with add-if-absent + whole-map CAS. */
-    if (!class_exists('ChatFakeGlobalDataClient')) {
-        class ChatFakeGlobalDataClient extends \GlobalData\Client
-        {
-            /** @var array<string,mixed> */
-            public $store = [];
-
-            public function __construct()
-            {
-            }
-
-            public function __get($key)
-            {
-                return $this->store[$key] ?? null;
-            }
-
-            public function __set($key, $value)
-            {
-                $this->store[$key] = $value;
-            }
-
-            public function __isset($key)
-            {
-                return isset($this->store[$key]);
-            }
-
-            public function __unset($key)
-            {
-                unset($this->store[$key]);
-            }
-
-            /** Add-if-absent, like the real GlobalData add(). */
-            public function add($key, $value)
-            {
-                if (!array_key_exists($key, $this->store)) {
-                    $this->store[$key] = $value;
-                }
-                return true;
-            }
-
-            /** Whole-map compare-and-swap (strict value equality, like the real client). */
-            public function cas($key, $old, $new)
-            {
-                $current = $this->store[$key] ?? null;
-                if ($current === $old) {
-                    $this->store[$key] = $new;
-                    return true;
-                }
-                return false;
-            }
-        }
-    }
 
     /**
      * Tests for the v1 channel / chat handlers (WS-revamp Phase 2 step 2.7).
@@ -90,8 +44,8 @@ namespace {
      */
     class EventsV1ChatTest extends TestCase
     {
-        /** @var ChatFakeGlobalDataClient */
-        private $global;
+        /** @var InMemoryRedis the SharedState double injected by setUp() */
+        private $redis;
 
         /** @var array<int,array{type:string,args:array}> captured dispatchTask calls */
         private $dispatched = [];
@@ -109,11 +63,22 @@ namespace {
         protected function setUp(): void
         {
             $this->resetState();
+
+            // SharedState contract (identical to tests/SharedStateTest.php):
+            // $GLOBALS['redis'] must not leak in from another suite — the facade
+            // prefers it over any injected client — so every test starts from
+            // the "no shared connection" baseline, then gets a fresh double.
+            unset($GLOBALS['redis']);
+            $this->redis = new \InMemoryRedis();
+            \SharedState::setClient($this->redis);
         }
 
         protected function tearDown(): void
         {
             $this->resetState();
+            \SharedState::setClient(null);
+            unset($GLOBALS['redis']);
+            \SharedState::reset();
         }
 
         private function resetState(): void
@@ -122,38 +87,68 @@ namespace {
             $_SESSION = [];
             \Events::$db = null;
             \Events::$taskDispatcher = null;
-            unset($GLOBALS['global']);
             $this->dispatched = [];
             $this->fakeTaskReturn = null;
             $this->fakeTaskError = false;
-
-            $ref = new ReflectionClass(FeatureFlags::class);
-            $prop = $ref->getProperty('client');
-            $prop->setAccessible(true);
-            $prop->setValue(null, null);
         }
 
         // ------------------------------------------------------------------
         // Fixtures / helpers
         // ------------------------------------------------------------------
 
-        /** Inject the in-memory GlobalData client and flip Flag A ON. */
-        private function flagAOn(): ChatFakeGlobalDataClient
+        /** Flag A ON — the same write FeatureFlags::setNewHandling(null, true) makes. */
+        private function flagAOn(): void
         {
-            $client = new ChatFakeGlobalDataClient();
-            $client->store[FeatureFlags::VAR_NEW_HANDLING] = 1;
-            $GLOBALS['global'] = $client;
-            $this->global = $client;
-            return $client;
+            \SharedState::set(FeatureFlags::VAR_NEW_HANDLING, 1);
         }
 
-        /** Inject the client WITHOUT setting Flag A (dormant). */
-        private function flagAOff(): ChatFakeGlobalDataClient
+        /** Flag A explicitly OFF (dormant) — unset would mean ON with a live client. */
+        private function flagAOff(): void
         {
-            $client = new ChatFakeGlobalDataClient();
-            $GLOBALS['global'] = $client;
-            $this->global = $client;
-            return $client;
+            \SharedState::set(FeatureFlags::VAR_NEW_HANDLING, 0);
+        }
+
+        /**
+         * Seed the per-channel hot cache in the exact production write shape:
+         * Events::chatCacheAppend() rPushLtrims each §2.10 message onto
+         * dc:chat:msgs:<channel> (NEWEST CHAT_HISTORY_MAX kept) and scores the
+         * channel into the dc:chat:activity ZSET. Seeding appends $messages in
+         * order (oldest first), then registers activity once — an identical
+         * keyspace to N sequential production appends at the same second.
+         *
+         * @param array<int,array<string,mixed>> $messages
+         */
+        private function seedCachedHistory(string $channel, array $messages): void
+        {
+            foreach ($messages as $message) {
+                \SharedState::rPushLtrim(\Events::CHAT_MSGS_KEY_PREFIX.$channel, $message, \Events::CHAT_HISTORY_MAX);
+            }
+            \SharedState::zAdd(\Events::CHAT_ACTIVITY_KEY, time(), $channel);
+        }
+
+        /** Seed one dc:state:channel_meta registry field (handleChannelCreate's shape). */
+        private function seedChannelMeta(string $channel, array $meta): void
+        {
+            \SharedState::hSet(\Events::CHANNEL_META_REGISTRY_KEY, $channel, $meta);
+        }
+
+        /** @return array<int,array<string,mixed>> hot-cache tail, OLDEST-first (what channel.join serves) */
+        private function cachedHistory(string $channel): array
+        {
+            return \SharedState::lRange(\Events::CHAT_MSGS_KEY_PREFIX.$channel, 0, -1);
+        }
+
+        /** Assert nothing landed in the chat hot cache or the channel_meta registry. */
+        private function assertNoChatStateWrites(string $context): void
+        {
+            $touched = array_values(array_filter(
+                $this->redis->allKeys(),
+                static function (string $key): bool {
+                    return strpos($key, \SharedState::PREFIX_CHAT) === 0
+                        || strpos($key, \SharedState::PREFIX_STATE) === 0;
+                }
+            ));
+            $this->assertSame([], $touched, $context.': the dc:chat:/dc:state: keyspace must be untouched');
         }
 
         private function installTaskCapture(): void
@@ -308,8 +303,7 @@ namespace {
             $this->assertCount(0, $this->sentToUid(), 'Flag A OFF: no DM delivery');
             $this->assertCount(0, $this->closed());
             // Neither the hot cache nor the channel registry was touched.
-            $this->assertArrayNotHasKey('channels', $this->global->store);
-            $this->assertArrayNotHasKey('channel_meta', $this->global->store);
+            $this->assertNoChatStateWrites('Flag A OFF');
         }
 
         // ================================================================
@@ -321,12 +315,10 @@ namespace {
             $this->flagAOn();
             $this->asAdmin();
             // A created channel (registry) + a channel that only exists via cache.
-            $this->global->store['channel_meta'] = [
-                'chat:noc' => ['type' => 'chat', 'topic' => 'ops room', 'created_by' => 'admin-7', 'created_at' => 1]
-            ];
-            $this->global->store['channels'] = [
-                'chat:random' => [['channel' => 'chat:random', 'from' => 'x', 'body' => 'y', 'level' => 'chat', 'ts' => 1, 'msg_id' => 1]]
-            ];
+            $this->seedChannelMeta('chat:noc', ['type' => 'chat', 'topic' => 'ops room', 'created_by' => 'admin-7', 'created_at' => 1]);
+            $this->seedCachedHistory('chat:random', [
+                ['channel' => 'chat:random', 'from' => 'x', 'body' => 'y', 'level' => 'chat', 'ts' => 1, 'msg_id' => 1]
+            ]);
             \GatewayWorker\Lib\Gateway::$groupCounts = ['chat:noc' => 3, 'chat:random' => 0];
 
             $this->dispatch('channel.list', []);
@@ -349,11 +341,16 @@ namespace {
         {
             $this->flagAOn();
             $this->asVpsHost(12);
-            $this->global->store['channels'] = [
-                'host:vps12' => [['channel' => 'host:vps12', 'from' => 'vps12', 'body' => 'log', 'level' => 'log', 'ts' => 1, 'msg_id' => 0]],
-                'host:vps99' => [['channel' => 'host:vps99', 'from' => 'vps99', 'body' => 'x', 'level' => 'log', 'ts' => 1, 'msg_id' => 0]],
-                'chat:noc' => [['channel' => 'chat:noc', 'from' => 'a', 'body' => 'x', 'level' => 'chat', 'ts' => 1, 'msg_id' => 1]]
-            ];
+            // Three channels with hot-cache traffic (activity index makes them enumerable).
+            $this->seedCachedHistory('host:vps12', [
+                ['channel' => 'host:vps12', 'from' => 'vps12', 'body' => 'log', 'level' => 'log', 'ts' => 1, 'msg_id' => 0]
+            ]);
+            $this->seedCachedHistory('host:vps99', [
+                ['channel' => 'host:vps99', 'from' => 'vps99', 'body' => 'x', 'level' => 'log', 'ts' => 1, 'msg_id' => 0]
+            ]);
+            $this->seedCachedHistory('chat:noc', [
+                ['channel' => 'chat:noc', 'from' => 'a', 'body' => 'x', 'level' => 'chat', 'ts' => 1, 'msg_id' => 1]
+            ]);
 
             $this->dispatch('channel.list', []);
 
@@ -375,7 +372,7 @@ namespace {
             for ($i = 1; $i <= 3; $i++) {
                 $history[] = ['channel' => 'chat:noc', 'from' => 'u', 'from_name' => 'U', 'body' => "m{$i}", 'level' => 'chat', 'ts' => $i, 'msg_id' => $i];
             }
-            $this->global->store['channels'] = ['chat:noc' => $history];
+            $this->seedCachedHistory('chat:noc', $history);
 
             $this->dispatch('channel.join', ['channel' => 'chat:noc'], 9);
 
@@ -446,7 +443,7 @@ namespace {
             $reply = $this->replyFor();
             $this->assertTrue($reply['ok']);
             $this->assertSame('chat:noc', $reply['data']['channel'], 'reply carries full type:name id');
-            $meta = $this->global->store['channel_meta']['chat:noc'];
+            $meta = \SharedState::hGet(\Events::CHANNEL_META_REGISTRY_KEY, 'chat:noc');
             $this->assertSame('chat', $meta['type']);
             $this->assertSame('ops', $meta['topic']);
             $this->assertSame('admin-7', $meta['created_by']);
@@ -458,7 +455,7 @@ namespace {
             $this->asVpsHost(1);
             $this->dispatch('channel.create', ['name' => 'noc']);
             $this->assertErrorReply('forbidden');
-            $this->assertArrayNotHasKey('channel_meta', $this->global->store);
+            $this->assertArrayNotHasKey(\Events::CHANNEL_META_REGISTRY_KEY, $this->redis->data, 'a forbidden create must not even mint the registry HASH');
 
             // A bot is likewise forbidden.
             \GatewayWorker\Lib\Gateway::reset();
@@ -492,8 +489,8 @@ namespace {
 
             $reply = $this->assertErrorReply('bad_request', 'req-2');
             $this->assertStringContainsString('already exists', $reply['error']['message']);
-            // The original registry entry is UNCHANGED (idempotent-reject, not overwrite).
-            $this->assertSame('', $this->global->store['channel_meta']['chat:noc']['topic'], 'second create did not overwrite topic');
+            // The original registry entry is UNCHANGED (HSETNX atomic-reject, not overwrite).
+            $this->assertSame('', \SharedState::hGet(\Events::CHANNEL_META_REGISTRY_KEY, 'chat:noc')['topic'], 'second create did not overwrite topic');
         }
 
         // ================================================================
@@ -521,7 +518,7 @@ namespace {
             $this->assertIsInt($call['args']['ts']);
 
             // (b) hot-cache append with resolved msg_id.
-            $cached = $this->global->store['channels']['chat:noc'];
+            $cached = $this->cachedHistory('chat:noc');
             $this->assertCount(1, $cached);
             $this->assertSame(4242, $cached[0]['msg_id']);
             $this->assertSame('admin-7', $cached[0]['from']);
@@ -604,7 +601,7 @@ namespace {
             // Core assertion: level:"log" dispatches NO persistence task.
             $this->assertCount(0, $this->dispatched, 'level:"log" must skip the chat_message DB dispatch entirely');
             // Still cached + fanned out with msg_id 0.
-            $cached = $this->global->store['channels']['host:vps12'];
+            $cached = $this->cachedHistory('host:vps12');
             $this->assertCount(1, $cached);
             $this->assertSame(0, $cached[0]['msg_id'], 'skipped DB write => msg_id 0');
             $push = $this->lastGroupPush();
@@ -932,7 +929,7 @@ namespace {
         }
 
         // ================================================================
-        // 3. Hot-cache 100-message cap + CAS correctness
+        // 3. Hot-cache 100-message cap (rPushLtrim bounding correctness)
         // ================================================================
 
         public function testHotCacheCapsAtHistoryMaxAndEvictsOldest(): void
@@ -942,13 +939,14 @@ namespace {
             $this->installTaskCapture();
 
             // 150 log-level publishes to one channel (log => synchronous, no task
-            // callback dependency; each still appends to the hot cache via CAS).
+            // callback dependency; each appends via rPushLtrim, which bounds the
+            // LIST to the newest CHAT_HISTORY_MAX entries in the same pipeline).
             for ($i = 1; $i <= 150; $i++) {
                 \GatewayWorker\Lib\Gateway::reset();
                 $this->dispatch('channel.publish', ['channel' => 'chat:noc', 'body' => 'm'.$i, 'level' => 'log'], 1, 'req-'.$i);
             }
 
-            $cache = $this->global->store['channels']['chat:noc'];
+            $cache = $this->cachedHistory('chat:noc');
             $this->assertCount(\Events::CHAT_HISTORY_MAX, $cache, 'cache capped at CHAT_HISTORY_MAX (100)');
             $this->assertSame(100, \Events::CHAT_HISTORY_MAX);
             // Newest 100 remain, oldest evicted first, order preserved.
@@ -1055,9 +1053,9 @@ namespace {
         {
             $this->flagAOn();
             $this->asAdmin('carol');
-            $this->global->store['channels'] = [
-                'dm:amy:bob' => [['channel' => 'dm:amy:bob', 'from' => 'amy', 'body' => 'secret', 'level' => 'chat', 'ts' => 1, 'msg_id' => 1]]
-            ];
+            $this->seedCachedHistory('dm:amy:bob', [
+                ['channel' => 'dm:amy:bob', 'from' => 'amy', 'body' => 'secret', 'level' => 'chat', 'ts' => 1, 'msg_id' => 1]
+            ]);
             $this->dispatch('channel.list', []);
             $ids = array_column($this->replyFor()['data']['channels'], 'id');
             $this->assertNotContains('dm:amy:bob', $ids, "a non-participant admin must not see others' DM in channel.list");

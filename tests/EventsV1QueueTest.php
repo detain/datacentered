@@ -43,57 +43,14 @@ namespace {
     // Declares the shared fake Gateway seam, then requires FeatureFlags + Events.
     require_once __DIR__.'/V1TestSupport.php';
 
-    /** In-memory GlobalData client with a working CAS (Flag A toggling). */
-    if (!class_exists('QueueFakeGlobalDataClient')) {
-        class QueueFakeGlobalDataClient extends \GlobalData\Client
-        {
-            /** @var array<string,mixed> */
-            public $store = [];
-
-            public function __construct()
-            {
-            }
-
-            public function __get($key)
-            {
-                return $this->store[$key] ?? null;
-            }
-
-            public function __set($key, $value)
-            {
-                $this->store[$key] = $value;
-            }
-
-            public function __isset($key)
-            {
-                return isset($this->store[$key]);
-            }
-
-            public function __unset($key)
-            {
-                unset($this->store[$key]);
-            }
-
-            public function cas($key, $old, $new)
-            {
-                $current = $this->store[$key] ?? null;
-                if ($current === $old) {
-                    $this->store[$key] = $new;
-                    return true;
-                }
-                return false;
-            }
-        }
-    }
-
     /**
      * Tests for the v1 queue.* handlers (WS-revamp Phase 2 step 2.5). Scope is
      * strictly the NEW step-2.5 bridge code.
      */
     class EventsV1QueueTest extends TestCase
     {
-        /** @var QueueFakeGlobalDataClient */
-        private $global;
+        /** @var InMemoryRedis SharedState double injected by setUp() */
+        private $redis;
 
         /** @var array<int,array{type:string,args:array}> captured dispatchTask calls */
         private $dispatched = [];
@@ -110,14 +67,26 @@ namespace {
         /** When true, the fake dispatcher fires the $onError path instead. */
         private $fakeTaskError = false;
 
+        /**
+         * SharedState discipline copied from tests/SharedStateTest.php: every
+         * test starts from "no leaked shared connection, fresh in-memory
+         * keyspace" — flags and any hub state read through the facade, never a
+         * live server.
+         */
         protected function setUp(): void
         {
+            unset($GLOBALS['redis']);
+            $this->redis = new \InMemoryRedis();
+            \SharedState::setClient($this->redis);
             $this->resetState();
         }
 
         protected function tearDown(): void
         {
             $this->resetState();
+            \SharedState::setClient(null);
+            unset($GLOBALS['redis']);
+            \SharedState::reset();
         }
 
         private function resetState(): void
@@ -126,29 +95,28 @@ namespace {
             $_SESSION = [];
             \Events::$db = null;
             \Events::$taskDispatcher = null;
-            unset($GLOBALS['global']);
             $this->dispatched = [];
             $this->fakeTaskReturn = null;
             $this->fakeTaskError = false;
-
-            $ref = new ReflectionClass(FeatureFlags::class);
-            $prop = $ref->getProperty('client');
-            $prop->setAccessible(true);
-            $prop->setValue(null, null);
         }
 
         // ------------------------------------------------------------------
         // Fixtures / helpers
         // ------------------------------------------------------------------
 
-        /** Inject the in-memory GlobalData client and flip Flag A ON. */
-        private function flagAOn(): QueueFakeGlobalDataClient
+        /** Flip Flag A ON: int 1 stored at dc:flag:ws_new_handling via the facade. */
+        private function flagAOn(): void
         {
-            $client = new QueueFakeGlobalDataClient();
-            $client->store[FeatureFlags::VAR_NEW_HANDLING] = 1;
-            $GLOBALS['global'] = $client;
-            $this->global = $client;
-            return $client;
+            \SharedState::set(FeatureFlags::VAR_NEW_HANDLING, 1);
+        }
+
+        /**
+         * Flip Flag A OFF: int 0 stored explicitly — with a usable Redis client
+         * an UNSET flag reads ON (new handling is the default).
+         */
+        private function flagAOff(): void
+        {
+            \SharedState::set(FeatureFlags::VAR_NEW_HANDLING, 0);
         }
 
         /**
@@ -427,10 +395,8 @@ namespace {
 
         public function testQueueActionDormantWhenFlagAOff(): void
         {
-            // Flag A OFF: client present but ws_new_handling unset.
-            $client = new QueueFakeGlobalDataClient();
-            $GLOBALS['global'] = $client;
-            $this->global = $client;
+            // Flag A OFF: usable client, dc:flag:ws_new_handling explicitly 0.
+            $this->flagAOff();
             $this->asVpsHost(1234);
             $this->installTaskCapture();
 
@@ -444,9 +410,7 @@ namespace {
         // Same dormancy/rejection surface applies to every queue.* alias.
         public function testQueuePullPullProvisionAckAllDormantWhenFlagAOff(): void
         {
-            $client = new QueueFakeGlobalDataClient();
-            $GLOBALS['global'] = $client;
-            $this->global = $client;
+            $this->flagAOff();
             $this->asVpsHost(1);
             $this->installTaskCapture();
 

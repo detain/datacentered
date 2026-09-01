@@ -17,72 +17,26 @@
  *   and to INJECT a fake task result, exercising the real handlers end-to-end on
  *   the hub side WITHOUT a live TaskWorker/mystage runtime.
  *
- * The sysinfo relay leg uses the in-memory GlobalData fake (extends
- * \GlobalData\Client) with a working add()/cas() so the correlation registry
- * ($global->sysinfos) round-trips exactly like production.
+ * SHARED-STATE SEAM — the sysinfo relay correlation registry:
+ *   The telemetry.sysinfo request leg records one TTL'd Redis key per relay
+ *   (dc:state:sysinfo:<relay-id>, JSON {for,re,host,ts}, SYSINFO_TTL=300) via
+ *   SharedState::set(); the reply leg reads it with SharedState::get() and
+ *   deletes it with SharedState::del(). The 5-minute reaper Timer is gone — the
+ *   Redis TTL self-expires. We drive this through the SharedState facade over the
+ *   InMemoryRedis double (no live server), seeding and asserting exactly that
+ *   per-relay key shape. Flags (FeatureFlags) resolve through the same facade.
  */
 
 namespace {
     use PHPUnit\Framework\TestCase;
 
+    // Declares the shared fake Gateway seam, then requires FeatureFlags + Events.
     require_once __DIR__.'/V1TestSupport.php';
-
-    /** In-memory GlobalData client with add()/cas() matching production semantics. */
-    if (!class_exists('TelemetryFakeGlobalDataClient')) {
-        class TelemetryFakeGlobalDataClient extends \GlobalData\Client
-        {
-            /** @var array<string,mixed> */
-            public $store = [];
-
-            public function __construct()
-            {
-            }
-
-            public function __get($key)
-            {
-                return $this->store[$key] ?? null;
-            }
-
-            public function __set($key, $value)
-            {
-                $this->store[$key] = $value;
-            }
-
-            public function __isset($key)
-            {
-                return isset($this->store[$key]);
-            }
-
-            public function __unset($key)
-            {
-                unset($this->store[$key]);
-            }
-
-            /** Init-if-absent (real GlobalData add() semantics). */
-            public function add($key, $value)
-            {
-                if (!array_key_exists($key, $this->store)) {
-                    $this->store[$key] = $value;
-                }
-                return true;
-            }
-
-            public function cas($key, $old, $new)
-            {
-                $current = $this->store[$key] ?? null;
-                if ($current === $old) {
-                    $this->store[$key] = $new;
-                    return true;
-                }
-                return false;
-            }
-        }
-    }
 
     class EventsV1TelemetryTest extends TestCase
     {
-        /** @var TelemetryFakeGlobalDataClient */
-        private $global;
+        /** @var InMemoryRedis SharedState double injected by setUp() */
+        private $redis;
 
         /** @var array<int,array{type:string,args:array}> captured dispatchTask calls */
         private $dispatched = [];
@@ -93,14 +47,27 @@ namespace {
         /** @var bool when true the fake dispatcher fires $onError instead */
         private $fakeTaskError = false;
 
+        /**
+         * SharedState discipline copied from tests/SharedStateTest.php: every
+         * test starts from "no leaked shared connection, fresh in-memory
+         * keyspace" — flags and the sysinfo registry are read/written through
+         * the facade, never a live server.
+         */
         protected function setUp(): void
         {
             $this->resetState();
+            unset($GLOBALS['redis']);
+            \SharedState::reset();
+            $this->redis = new \InMemoryRedis();
+            \SharedState::setClient($this->redis);
         }
 
         protected function tearDown(): void
         {
             $this->resetState();
+            \SharedState::setClient(null);
+            unset($GLOBALS['redis']);
+            \SharedState::reset();
         }
 
         private function resetState(): void
@@ -109,36 +76,46 @@ namespace {
             $_SESSION = [];
             \Events::$db = null;
             \Events::$taskDispatcher = null;
-            unset($GLOBALS['global']);
             $this->dispatched = [];
             $this->fakeTaskReturn = null;
             $this->fakeTaskError = false;
-
-            $ref = new ReflectionClass(FeatureFlags::class);
-            $prop = $ref->getProperty('client');
-            $prop->setAccessible(true);
-            $prop->setValue(null, null);
         }
 
         // ------------------------------------------------------------------
         // Fixtures / helpers
         // ------------------------------------------------------------------
 
-        private function flagAOn(): TelemetryFakeGlobalDataClient
+        /** Flip Flag A ON: int 1 stored at dc:flag:ws_new_handling via the facade. */
+        private function flagAOn(): void
         {
-            $client = new TelemetryFakeGlobalDataClient();
-            $client->store[FeatureFlags::VAR_NEW_HANDLING] = 1;
-            $GLOBALS['global'] = $client;
-            $this->global = $client;
-            return $client;
+            \SharedState::set(FeatureFlags::VAR_NEW_HANDLING, 1);
         }
 
-        private function flagAOff(): TelemetryFakeGlobalDataClient
+        /**
+         * Flip Flag A OFF: int 0 stored explicitly — with a usable Redis client
+         * an UNSET flag reads ON (new handling is the shipped default).
+         */
+        private function flagAOff(): void
         {
-            $client = new TelemetryFakeGlobalDataClient();
-            $GLOBALS['global'] = $client;
-            $this->global = $client;
-            return $client;
+            \SharedState::set(FeatureFlags::VAR_NEW_HANDLING, 0);
+        }
+
+        /**
+         * Seed one pending sysinfo relay correlation entry exactly as the
+         * request leg would: a STRING JSON value at dc:state:sysinfo:<relay-id>
+         * carrying {for,re,host,ts} with SYSINFO_TTL.
+         *
+         * @param array{for:string,re:string,host:string,ts?:int} $entry
+         */
+        private function seedSysinfoRelay(string $relayId, array $entry): void
+        {
+            \SharedState::set(\Events::SYSINFO_KEY_PREFIX.$relayId, $entry, \Events::SYSINFO_TTL);
+        }
+
+        /** Read back a relay correlation entry (null when absent/expired). */
+        private function readSysinfoRelay(string $relayId)
+        {
+            return \SharedState::get(\Events::SYSINFO_KEY_PREFIX.$relayId);
         }
 
         private function installTaskCapture(): void
@@ -578,7 +555,7 @@ namespace {
 
         public function testSysinfoRequestLegRelaysToHostAndRecordsRegistry(): void
         {
-            $client = $this->flagAOn();
+            $this->flagAOn();
             $this->asAdmin('admin-42');
             \GatewayWorker\Lib\Gateway::$onlineUids['vps5'] = true;
 
@@ -599,23 +576,30 @@ namespace {
             // No immediate reply to the admin (ok reply arrives when host answers).
             $this->assertCount(0, $this->sent());
 
-            // Registry entry recorded under the relay id => {for, re, host}.
-            $sysinfos = $client->store['sysinfos'];
-            $this->assertIsArray($sysinfos);
-            $this->assertArrayHasKey($relay['id'], $sysinfos);
-            $entry = $sysinfos[$relay['id']];
+            // Correlation entry recorded under the relay id at
+            // dc:state:sysinfo:<relay-id> => {for, re, host} (+ ts).
+            $entry = $this->readSysinfoRelay($relay['id']);
+            $this->assertIsArray($entry, 'relay correlation recorded under its own key');
             $this->assertSame('admin-42', $entry['for'], 'registry records requesting admin uid');
             $this->assertSame('admin-req-1', $entry['re'], 'registry records admin original envelope id');
             $this->assertSame('vps5', $entry['host']);
+
+            // TTL pin: the correlation key must carry EXACTLY SYSINFO_TTL from the
+            // double's clock. This EX300 replaces the deleted 5-min reaper — a
+            // dropped $ttl argument would surface here instead of leaking immortal
+            // dc:state:sysinfo:* keys in production.
+            $this->assertSame(
+                $this->redis->clock + \Events::SYSINFO_TTL,
+                $this->redis->expires[\Events::SYSINFO_KEY_PREFIX . $relay['id']],
+                'correlation entry must carry SYSINFO_TTL — it replaces the deleted reaper'
+            );
         }
 
         public function testSysinfoReplyLegRoutesBackToOriginatingAdmin(): void
         {
-            $client = $this->flagAOn();
-            // Pre-seed the registry as if the request leg already ran.
-            $client->store['sysinfos'] = [
-                'relay-id-1' => ['for' => 'admin-42', 're' => 'admin-req-1', 'host' => 'vps5', 'ts' => 100]
-            ];
+            $this->flagAOn();
+            // Pre-seed the correlation as if the request leg already ran.
+            $this->seedSysinfoRelay('relay-id-1', ['for' => 'admin-42', 're' => 'admin-req-1', 'host' => 'vps5', 'ts' => 100]);
             // The reply arrives from the host (role host, uid vps5), re=relay id.
             $this->asVpsHost(5);
 
@@ -632,16 +616,14 @@ namespace {
             $this->assertSame('payload', $reply['data']['some']);
             // host overwritten from the authed host session (never trusted from payload).
             $this->assertSame(5, $reply['data']['host']);
-            // Registry entry consumed (removed).
-            $this->assertArrayNotHasKey('relay-id-1', $client->store['sysinfos']);
+            // Correlation entry consumed (deleted after routing).
+            $this->assertNull($this->readSysinfoRelay('relay-id-1'));
         }
 
         public function testSysinfoReplyLegOverwritesPayloadHostFromSession(): void
         {
-            $client = $this->flagAOn();
-            $client->store['sysinfos'] = [
-                'relay-id-1' => ['for' => 'admin-1', 're' => 'orig', 'host' => 'vps5', 'ts' => 100]
-            ];
+            $this->flagAOn();
+            $this->seedSysinfoRelay('relay-id-1', ['for' => 'admin-1', 're' => 'orig', 'host' => 'vps5', 'ts' => 100]);
             $this->asVpsHost(5);
 
             // Host tries to spoof a different host id in the payload.
@@ -653,8 +635,8 @@ namespace {
 
         public function testSysinfoReplyLegUnknownRelayIdSilentlyDropped(): void
         {
-            $client = $this->flagAOn();
-            $client->store['sysinfos'] = [];
+            $this->flagAOn();
+            // No correlation key seeded — the reply races a restart/expiry.
             $this->asVpsHost(5);
 
             $this->dispatch('telemetry.sysinfo', ['data' => 'x'], 9, 'fresh', ['re' => 'never-seen']);
@@ -666,18 +648,16 @@ namespace {
 
         public function testSysinfoReplyLegWrongHostForbidden(): void
         {
-            $client = $this->flagAOn();
-            $client->store['sysinfos'] = [
-                'relay-id-1' => ['for' => 'admin-1', 're' => 'orig', 'host' => 'vps5', 'ts' => 100]
-            ];
+            $this->flagAOn();
+            $this->seedSysinfoRelay('relay-id-1', ['for' => 'admin-1', 're' => 'orig', 'host' => 'vps5', 'ts' => 100]);
             // A DIFFERENT host (vps99) tries to answer a relay addressed to vps5.
             $this->asVpsHost(99);
 
             $this->dispatch('telemetry.sysinfo', ['data' => 'x'], 9, 'fresh', ['re' => 'relay-id-1']);
 
             $this->assertErrorReply('forbidden');
-            // Registry entry NOT consumed (wrong host cannot dequeue it).
-            $this->assertArrayHasKey('relay-id-1', $client->store['sysinfos']);
+            // Correlation entry NOT consumed (wrong host cannot dequeue it).
+            $this->assertIsArray($this->readSysinfoRelay('relay-id-1'));
         }
 
         public function testSysinfoRequestLegHostNotOnlineNotOnline(): void
@@ -760,7 +740,15 @@ namespace {
             $this->assertCount(0, $this->sentToUid(), 'Flag A OFF: no telemetry relays');
             $this->assertCount(0, $this->dispatched, 'Flag A OFF: no telemetry task dispatch');
             $this->assertCount(0, $this->closed());
-            $this->assertArrayNotHasKey('sysinfos', $this->global->store, 'Flag A OFF: sysinfo registry untouched');
+
+            // Flag A OFF: the sysinfo relay never records a correlation entry.
+            $sysinfoKeys = array_values(array_filter(
+                $this->redis->allKeys(),
+                function ($key) {
+                    return strpos($key, \Events::SYSINFO_KEY_PREFIX) === 0;
+                }
+            ));
+            $this->assertSame([], $sysinfoKeys, 'Flag A OFF: no dc:state:sysinfo:* written');
         }
 
         // ================================================================

@@ -12,7 +12,10 @@ declare(strict_types=1);
  * SEAM NOTES:
  *  - handleStatusCommand uses Gateway::sendToClient directly (no task dispatch,
  *    no cache write, no fan-out) — this is the key behavior under test.
- *  - CAS-capable GlobalData: an in-memory client backs $global->channel_meta.
+ *  - SharedState Redis facade (GlobalData retired, migration A2): the
+ *    channel_meta registry the command counts is the dc:state:channel_meta
+ *    HASH, seeded directly through the SharedState::hSet shape production's
+ *    handleChannelCreate writes (the old CAS-capable GlobalData fake is gone).
  *  - Fake Gateway: getAllClientSessions lives on the shared fake Gateway
  *    (tests/V1TestSupport.php).
  */
@@ -20,72 +23,17 @@ declare(strict_types=1);
 namespace {
     use PHPUnit\Framework\TestCase;
 
-    // Declares the shared fake Gateway seam, then requires FeatureFlags + Events.
+    // Declares the shared fake Gateway seam (and with it TestBootstrap's
+    // InMemoryRedis double), then requires FeatureFlags + SharedState + Events.
     require_once __DIR__ . '/V1TestSupport.php';
-
-    /**
-     * In-memory GlobalData client with add-if-absent + whole-map CAS.
-     * (Same class as EventsV1ChatTest — declared once via V1TestSupport include.)
-     */
-    if (!class_exists('ChatFakeGlobalDataClient')) {
-        class ChatFakeGlobalDataClient extends \GlobalData\Client
-        {
-            /** @var array<string,mixed> */
-            public $store = [];
-
-            public function __construct()
-            {
-            }
-
-            public function __get($key)
-            {
-                return $this->store[$key] ?? null;
-            }
-
-            public function __set($key, $value)
-            {
-                $this->store[$key] = $value;
-            }
-
-            public function __isset($key)
-            {
-                return isset($this->store[$key]);
-            }
-
-            public function __unset($key)
-            {
-                unset($this->store[$key]);
-            }
-
-            /** Add-if-absent, like the real GlobalData add(). */
-            public function add($key, $value)
-            {
-                if (!array_key_exists($key, $this->store)) {
-                    $this->store[$key] = $value;
-                }
-                return true;
-            }
-
-            /** Whole-map compare-and-swap (strict value equality, like the real client). */
-            public function cas($key, $old, $new)
-            {
-                $current = $this->store[$key] ?? null;
-                if ($current === $old) {
-                    $this->store[$key] = $new;
-                    return true;
-                }
-                return false;
-            }
-        }
-    }
 
     /**
      * Tests for the v1 /status command (WS-revamp Phase 2 step 2.7).
      */
     class EventsV1StatusCommandTest extends TestCase
     {
-        /** @var ChatFakeGlobalDataClient */
-        private $global;
+        /** @var InMemoryRedis the SharedState double injected by setUp() */
+        private $redis;
 
         /** @var array<int,array{type:string,args:array}> captured dispatchTask calls */
         private $dispatched = [];
@@ -93,11 +41,22 @@ namespace {
         protected function setUp(): void
         {
             $this->resetState();
+
+            // SharedState contract (identical to tests/SharedStateTest.php):
+            // $GLOBALS['redis'] must not leak in from another suite — the facade
+            // prefers it over any injected client — so every test starts from
+            // the "no shared connection" baseline, then gets a fresh double.
+            unset($GLOBALS['redis']);
+            $this->redis = new \InMemoryRedis();
+            \SharedState::setClient($this->redis);
         }
 
         protected function tearDown(): void
         {
             $this->resetState();
+            \SharedState::setClient(null);
+            unset($GLOBALS['redis']);
+            \SharedState::reset();
         }
 
         private function resetState(): void
@@ -106,27 +65,29 @@ namespace {
             $_SESSION = [];
             \Events::$db = null;
             \Events::$taskDispatcher = null;
-            unset($GLOBALS['global']);
             $this->dispatched = [];
-
-            $ref = new ReflectionClass(FeatureFlags::class);
-            $prop = $ref->getProperty('client');
-            $prop->setAccessible(true);
-            $prop->setValue(null, null);
         }
 
         // ------------------------------------------------------------------
         // Fixtures / helpers
         // ------------------------------------------------------------------
 
-        /** Inject the in-memory GlobalData client and flip Flag A ON. */
-        private function flagAOn(): ChatFakeGlobalDataClient
+        /** Flag A ON — the same write FeatureFlags::setNewHandling(null, true) makes. */
+        private function flagAOn(): void
         {
-            $client = new ChatFakeGlobalDataClient();
-            $client->store[FeatureFlags::VAR_NEW_HANDLING] = 1;
-            $GLOBALS['global'] = $client;
-            $this->global = $client;
-            return $client;
+            \SharedState::set(FeatureFlags::VAR_NEW_HANDLING, 1);
+        }
+
+        /** Flag A explicitly OFF (dormant) — unset would mean ON with a live client. */
+        private function flagAOff(): void
+        {
+            \SharedState::set(FeatureFlags::VAR_NEW_HANDLING, 0);
+        }
+
+        /** Seed one dc:state:channel_meta registry field (handleChannelCreate's shape). */
+        private function seedChannelMeta(string $channel, array $meta): void
+        {
+            \SharedState::hSet(\Events::CHANNEL_META_REGISTRY_KEY, $channel, $meta);
         }
 
         private function installTaskCapture(): void
@@ -193,8 +154,10 @@ namespace {
 
             $this->dispatch('channel.publish', ['channel' => 'chat:noc', 'body' => '/status']);
 
-            $this->assertArrayNotHasKey('channels', $this->global->store, '/status must NOT write to hot cache');
-            $this->assertArrayNotHasKey('channel_msgs:chat:noc', $this->global->store, '/status must NOT write per-channel cache');
+            // Nothing under dc:chat: may exist: neither the per-channel LIST
+            // (dc:chat:msgs:chat:noc) nor the activity ZSET (dc:chat:activity).
+            $this->assertArrayNotHasKey(\Events::CHAT_MSGS_KEY_PREFIX.'chat:noc', $this->redis->data, '/status must NOT write the per-channel hot-cache LIST');
+            $this->assertArrayNotHasKey(\Events::CHAT_ACTIVITY_KEY, $this->redis->data, '/status must NOT touch the dc:chat:activity index either');
         }
 
         /**
@@ -247,9 +210,17 @@ namespace {
                         $this->assertSame('chat:noc', $d['data']['channel']);
                         $this->assertSame('system', $d['data']['from']);
                         $this->assertSame('Status Bot', $d['data']['from_name']);
-                        $this->assertSame('info', $d['data']['level']);
+                        // Production contract: handleStatusCommand() hardcodes
+                        // level 'chat' for the response (docblock: "so the name
+                        // prefix renders") — the 'info' this test once expected
+                        // predates that decision.
+                        $this->assertSame('chat', $d['data']['level']);
                         $this->assertArrayHasKey('body', $d['data']);
-                        $this->assertArrayHasKey('ts', $d['data']);
+                        // `ts` is a v1Envelope TOP-LEVEL field; the /status push
+                        // deliberately omits the message-obj ts inside `data`
+                        // (unlike a real chatPublishMessage payload).
+                        $this->assertArrayHasKey('ts', $d);
+                        $this->assertArrayNotHasKey('ts', $d['data'], 'the /status push omits the message-obj ts inside data');
                         $this->assertSame(0, $d['data']['msg_id'], 'msg_id must be 0 (no DB write)');
                         // body must contain the status text
                         $this->assertStringContainsString('Status:', $d['data']['body']);
@@ -476,8 +447,8 @@ namespace {
         {
             $this->flagAOn();
             $this->asAdmin();
-            // channel_meta key is not set at all
-            // ChatFakeGlobalDataClient returns null for unset keys
+            // The dc:state:channel_meta HASH is never seeded: hGetAll on an
+            // absent key is [] in Redis, so the registry reads as "no channels".
 
             $this->dispatch('channel.publish', ['channel' => 'chat:noc', 'body' => '/status'], 1, 'status-req');
 
@@ -500,7 +471,11 @@ namespace {
         {
             $this->flagAOn();
             $this->asAdmin();
-            $this->global->store['channel_meta'] = [];
+            // "Empty registry" in Redis: seed a channel, then delete its only
+            // field — HDEL of the last field drops the HASH key entirely (the
+            // double mirrors the server), which hGetAll reads back as [].
+            $this->seedChannelMeta('chat:gone', ['type' => 'chat']);
+            \SharedState::hDel(\Events::CHANNEL_META_REGISTRY_KEY, 'chat:gone');
 
             $this->dispatch('channel.publish', ['channel' => 'chat:noc', 'body' => '/status'], 1, 'status-req');
 
@@ -523,11 +498,9 @@ namespace {
         {
             $this->flagAOn();
             $this->asAdmin();
-            $this->global->store['channel_meta'] = [
-                'chat:noc' => ['type' => 'chat'],
-                'chat:alerts' => ['type' => 'chat'],
-                'host:vps5' => ['type' => 'host'],
-            ];
+            $this->seedChannelMeta('chat:noc', ['type' => 'chat']);
+            $this->seedChannelMeta('chat:alerts', ['type' => 'chat']);
+            $this->seedChannelMeta('host:vps5', ['type' => 'host']);
 
             $this->dispatch('channel.publish', ['channel' => 'chat:noc', 'body' => '/status'], 1, 'status-req');
 
@@ -579,10 +552,8 @@ namespace {
          */
         public function testStatusCommandDormantWhenFlagAOff(): void
         {
-            $client = new ChatFakeGlobalDataClient();
-            // Do NOT set Flag A — it's off by default
-            $GLOBALS['global'] = $client;
-            $this->global = $client;
+            // With a live client, unset Flag A would read ON — set it explicitly OFF.
+            $this->flagAOff();
             $this->asAdmin();
             $this->installTaskCapture();
 

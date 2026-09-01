@@ -23,55 +23,9 @@
 namespace {
     use PHPUnit\Framework\TestCase;
 
-    // Declares the shared fake Gateway seam, then requires FeatureFlags + Events.
+    // Declares the shared fake Gateway seam, then requires FeatureFlags + Events
+    // (and, transitively, TestBootstrap's InMemoryRedis + SharedState).
     require_once __DIR__.'/V1TestSupport.php';
-
-    /**
-     * Reused in-memory GlobalData client (mirrors FeatureFlagsTest /
-     * EventsV1RouterTest). Needed both to flip Flag A ON via GlobalData and to
-     * back the $global->hosts CAS map the host+vps success path updates.
-     */
-    if (!class_exists('AuthFakeGlobalDataClient')) {
-        class AuthFakeGlobalDataClient extends \GlobalData\Client
-        {
-            public $store = [];
-
-            public function __construct()
-            {
-            }
-
-            public function __get($key)
-            {
-                return $this->store[$key] ?? null;
-            }
-
-            public function __set($key, $value)
-            {
-                $this->store[$key] = $value;
-            }
-
-            public function __isset($key)
-            {
-                return isset($this->store[$key]);
-            }
-
-            public function __unset($key)
-            {
-                unset($this->store[$key]);
-            }
-
-            /** Minimal CAS used by the host+vps success path's hosts-map update. */
-            public function cas($key, $old, $new)
-            {
-                $current = $this->store[$key] ?? null;
-                if ($current === $old) {
-                    $this->store[$key] = $new;
-                    return true;
-                }
-                return false;
-            }
-        }
-    }
 
     /**
      * Fluent fake of \Workerman\MySQL\Connection covering exactly the builder
@@ -172,8 +126,17 @@ namespace {
     {
         private const REMOTE = '203.0.113.10';
 
+        /** @var InMemoryRedis the double backing SharedState for this suite */
+        private $redis;
+
         protected function setUp(): void
         {
+            // SharedState prefers $GLOBALS['redis'] over any injected client, so
+            // clear it first, then hand the facade a fresh in-memory double.
+            unset($GLOBALS['redis']);
+            $this->redis = new \InMemoryRedis();
+            \SharedState::setClient($this->redis);
+
             $this->resetState();
             $_SERVER['REMOTE_ADDR'] = self::REMOTE;
         }
@@ -181,6 +144,9 @@ namespace {
         protected function tearDown(): void
         {
             $this->resetState();
+            \SharedState::setClient(null);
+            unset($GLOBALS['redis']);
+            \SharedState::reset();
         }
 
         private function resetState(): void
@@ -192,22 +158,12 @@ namespace {
             \GatewayWorker\Lib\Gateway::$joined = [];
             $_SESSION = [];
             \Events::$db = null;
-            unset($GLOBALS['global']);
-
-            $ref = new ReflectionClass(FeatureFlags::class);
-            $prop = $ref->getProperty('client');
-            $prop->setAccessible(true);
-            $prop->setValue(null, null);
         }
 
-        /** Flip Flag A ON via an injected in-memory GlobalData client. */
-        private function flagAOn(): AuthFakeGlobalDataClient
+        /** Turn Flag A (ws_new_handling) ON through the SharedState facade. */
+        private function flagAOn(): void
         {
-            $client = new AuthFakeGlobalDataClient();
-            $client->store[FeatureFlags::VAR_NEW_HANDLING] = 1;
-            $client->store['hosts'] = [];
-            $GLOBALS['global'] = $client;
-            return $client;
+            \SharedState::set(FeatureFlags::VAR_NEW_HANDLING, 1);
         }
 
         /** Inject a fluent fake DB with the given dataset. */
@@ -297,8 +253,9 @@ namespace {
             $this->assertSame('vps1234', $_SESSION['uid']);
             $this->assertSame('host', $_SESSION['ima']);
 
-            // The host+vps success path CAS-updates the shared hosts map.
-            $this->assertArrayHasKey(1234, $GLOBALS['global']->store['hosts']);
+            // The host+vps success path writes the vps_masters row into the
+            // shared dc:state:hosts Redis HASH (field = vps_id, value = JSON).
+            $this->assertArrayHasKey(1234, \SharedState::hGetAll(\Events::HOSTS_REGISTRY_KEY));
         }
 
         /**
@@ -609,25 +566,22 @@ namespace {
         }
 
         /**
-         * With Flag A OFF, auth.hello itself is fully dormant — dispatchV1
-         * early-returns before any handler runs: no DB lookup, no reply, no close.
-         * (A throwOnFetch DB proves the handler was never reached.)
+         * With Flag A explicitly OFF, auth.hello itself is fully dormant —
+         * dispatchV1 early-returns before any handler runs: no DB lookup, no
+         * reply, no close. (A throwOnFetch DB proves the handler was never
+         * reached; had it run, handleAuthHello's DB-error recovery calls
+         * createDbConnection(), which opens a REAL socket to the production `my`
+         * MySQL cluster from the unit-test suite — the reason this must stay a
+         * true no-op.)
+         *
+         * Flag A must be set to 0 EXPLICITLY: an UNSET ws_new_handling reads ON
+         * through the SharedState facade (useNewHandling()'s "unset means ON"
+         * default, the v1 handler enabled by default in commit 9eabb50), so
+         * relying on the absence of a value would run the handler.
          */
         public function testAuthHelloDormantWhenFlagAOff(): void
         {
-            // Flag A must be set to 0 EXPLICITLY. An UNSET ws_new_handling reads
-            // ON — useNewHandling() ends `isset($var) ? (bool) $var : true`, the
-            // v1 handler having been enabled by default in commit 9eabb50 — so
-            // simply omitting the variable (what this test used to do) ran the
-            // handler. That also had a nasty side effect: the handler hit the
-            // FakeAuthDb's throwOnFetch, and handleAuthHello's DB-error recovery
-            // path calls createDbConnection(), which opened a REAL socket to the
-            // production `my` MySQL cluster from the unit-test suite. Verified
-            // with `strace -e trace=connect` before/after: 1 connect to
-            // 174.138.179.252:3306 -> 0.
-            $client = new AuthFakeGlobalDataClient();
-            $client->store[FeatureFlags::VAR_NEW_HANDLING] = 0;
-            $GLOBALS['global'] = $client;
+            \SharedState::set(FeatureFlags::VAR_NEW_HANDLING, 0);
             $db = $this->injectDb(['vps_masters' => ['vps_id' => ['13' => [
                 'vps_id' => 13, 'vps_name' => 'h13', 'vps_ip' => self::REMOTE,
                 'vps_token_hash' => $this->sha('t')

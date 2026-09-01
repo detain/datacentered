@@ -11,67 +11,23 @@
  * \GatewayWorker\Lib\Gateway *before* Events.php loads, capturing every reply,
  * close, sendToUid, sendToGroup and answering isUidOnline() from an in-memory
  * online-uid set. The REAL handlers run end to end (role gates, run_id
- * validation, collision guard, CAS registry writes/removes, exit-code
+ * validation, collision guard, atomic registry writes/removes, exit-code
  * pass-through) — nothing is reimplemented here.
  *
- * The shared $global->running registry is backed by the same in-memory
- * GlobalData client the other v1 tests use (extends \GlobalData\Client so the
- * FeatureFlags `instanceof` gate passes; array-backed store + a real CAS).
+ * The shared running registry lives in Redis through the SharedState facade
+ * (one STRING key dc:state:running:<run_id> per run + a dc:state:running_ids SET
+ * index), backed here by the InMemoryRedis double injected via
+ * SharedState::setClient() in setUp() — the same seam FeatureFlagsTest and
+ * SharedStateTest use. The cmd handlers read/write it with real Redis commands;
+ * nothing is reimplemented here.
  */
 
 namespace {
     use PHPUnit\Framework\TestCase;
 
-    // Declares the shared fake Gateway seam, then requires FeatureFlags + Events.
+    // Declares the shared fake Gateway seam, then requires FeatureFlags + Events
+    // (and, transitively, TestBootstrap's InMemoryRedis + SharedState).
     require_once __DIR__.'/V1TestSupport.php';
-
-    /**
-     * In-memory GlobalData client with a working CAS, reused for Flag A toggling
-     * AND for backing $global->running (the shared run registry the cmd handlers
-     * read/write via the same whole-map CAS loop the legacy paths use).
-     */
-    if (!class_exists('CmdFakeGlobalDataClient')) {
-        class CmdFakeGlobalDataClient extends \GlobalData\Client
-        {
-            /** @var array<string,mixed> */
-            public $store = [];
-
-            public function __construct()
-            {
-            }
-
-            public function __get($key)
-            {
-                return $this->store[$key] ?? null;
-            }
-
-            public function __set($key, $value)
-            {
-                $this->store[$key] = $value;
-            }
-
-            public function __isset($key)
-            {
-                return isset($this->store[$key]);
-            }
-
-            public function __unset($key)
-            {
-                unset($this->store[$key]);
-            }
-
-            /** Whole-map compare-and-swap (strict value equality, like the real client). */
-            public function cas($key, $old, $new)
-            {
-                $current = $this->store[$key] ?? null;
-                if ($current === $old) {
-                    $this->store[$key] = $new;
-                    return true;
-                }
-                return false;
-            }
-        }
-    }
 
     /**
      * Tests for the v1 cmd.* handlers (WS-revamp Phase 2 step 2.3). Scope is
@@ -79,17 +35,26 @@ namespace {
      */
     class EventsV1CmdTest extends TestCase
     {
-        /** @var CmdFakeGlobalDataClient */
-        private $global;
+        /** @var InMemoryRedis the double backing SharedState for this suite */
+        private $redis;
 
         protected function setUp(): void
         {
+            // SharedState prefers $GLOBALS['redis'] over any injected client, so
+            // clear it first, then hand the facade a fresh in-memory double.
+            unset($GLOBALS['redis']);
+            $this->redis = new \InMemoryRedis();
+            \SharedState::setClient($this->redis);
+
             $this->resetState();
         }
 
         protected function tearDown(): void
         {
             $this->resetState();
+            \SharedState::setClient(null);
+            unset($GLOBALS['redis']);
+            \SharedState::reset();
         }
 
         private function resetState(): void
@@ -97,27 +62,37 @@ namespace {
             \GatewayWorker\Lib\Gateway::reset();
             $_SESSION = [];
             \Events::$db = null;
-            unset($GLOBALS['global']);
-
-            $ref = new ReflectionClass(FeatureFlags::class);
-            $prop = $ref->getProperty('client');
-            $prop->setAccessible(true);
-            $prop->setValue(null, null);
         }
 
         // ------------------------------------------------------------------
         // Fixtures / helpers
         // ------------------------------------------------------------------
 
-        /** Inject the in-memory GlobalData client and flip Flag A ON. */
-        private function flagAOn(): CmdFakeGlobalDataClient
+        /** Turn Flag A (ws_new_handling) ON through the SharedState facade. */
+        private function flagAOn(): void
         {
-            $client = new CmdFakeGlobalDataClient();
-            $client->store[FeatureFlags::VAR_NEW_HANDLING] = 1;
-            $client->store['running'] = [];
-            $GLOBALS['global'] = $client;
-            $this->global = $client;
-            return $client;
+            \SharedState::set(FeatureFlags::VAR_NEW_HANDLING, 1);
+        }
+
+        /** Turn Flag A OFF explicitly (an unset flag reads ON — see FeatureFlags). */
+        private function flagAOff(): void
+        {
+            \SharedState::set(FeatureFlags::VAR_NEW_HANDLING, 0);
+        }
+
+        /**
+         * Seed the shared running registry the way production writes it: one
+         * dc:state:running:<run_id> STRING (JSON entry) plus the id in the
+         * dc:state:running_ids SET index.
+         *
+         * @param array<string,array> $runs run_id => entry
+         */
+        private function seedRunning(array $runs): void
+        {
+            foreach ($runs as $runId => $entry) {
+                \SharedState::set(\Events::RUNNING_KEY_PREFIX.$runId, $entry);
+                \SharedState::sAdd(\Events::RUNNING_INDEX_KEY, (string) $runId);
+            }
         }
 
         /** Mark a uid online for isUidOnline(). */
@@ -166,9 +141,27 @@ namespace {
             return \GatewayWorker\Lib\Gateway::$closed;
         }
 
+        /**
+         * The shared running registry as a run_id => entry map, enumerated the
+         * same way the handlers write/read it: the dc:state:running_ids SET index
+         * with one GET per id. Expired/absent entries read back empty.
+         *
+         * @return array<string,array>
+         */
         private function running(): array
         {
-            return $this->global->store['running'] ?? [];
+            $out = [];
+            foreach (\SharedState::sMembers(\Events::RUNNING_INDEX_KEY) as $runId) {
+                if (!is_string($runId) || $runId === '') {
+                    continue;
+                }
+                $entry = \SharedState::get(\Events::RUNNING_KEY_PREFIX.$runId);
+                if (is_array($entry)) {
+                    $out[$runId] = $entry;
+                }
+            }
+
+            return $out;
         }
 
         /** Decode the single client reply; assert exactly one was sent. */
@@ -232,6 +225,17 @@ namespace {
             $this->assertSame('admin-7', $entry['for'], 'for = originating admin uid from session');
             $this->assertSame('run-abc', $entry['id'], 'legacy `id` alias must mirror run_id');
             $this->assertSame('run-abc', $entry['run_id']);
+
+            // (b2) TTL pin: the entry must be seeded with EXACTLY RUNNING_ENTRY_TTL
+            // seconds from the double's clock (SharedState::add → SET NX EX). A drift
+            // in the constant or a dropped $ttl argument surfaces here, not silently
+            // as unbounded key growth in production.
+            $this->assertSame(
+                $this->redis->clock + \Events::RUNNING_ENTRY_TTL,
+                $this->redis->expires[\Events::RUNNING_KEY_PREFIX.'run-abc']
+            );
+            // The hosts registry is a persistent HASH — it must never carry a TTL.
+            $this->assertArrayNotHasKey(\Events::HOSTS_REGISTRY_KEY, $this->redis->expires);
 
             // (c) The admin got an ok:true ack with the run_id.
             $reply = $this->singleReply();
@@ -335,7 +339,7 @@ namespace {
                 'interact' => false, 'update_after' => false,
                 'rows' => 24, 'cols' => 80, 'started' => 111, 'v' => 1
             ];
-            $this->global->store['running'] = ['dup' => $existing];
+            $this->seedRunning(['dup' => $existing]);
 
             $this->dispatch('cmd.exec', ['run_id' => 'dup', 'host' => 1234, 'command' => 'whoami']);
 
@@ -353,12 +357,12 @@ namespace {
         {
             $this->flagAOn();
             $this->asAdmin();
-            $this->global->store['running'] = ['run-x' => [
+            $this->seedRunning(['run-x' => [
                 'run_id' => 'run-x', 'id' => 'run-x', 'host' => 'vps3',
                 'for' => 'admin-1', 'command' => 'cat', 'interact' => true,
                 'update_after' => false, 'rows' => 24, 'cols' => 80,
                 'started' => 1, 'v' => 1
-            ]];
+            ]]);
 
             $this->dispatch('cmd.stdin', ['run_id' => 'run-x', 'data' => "hello\n"]);
 
@@ -388,11 +392,11 @@ namespace {
         {
             $this->flagAOn();
             $this->asHost('vps3');
-            $this->global->store['running'] = ['run-x' => [
+            $this->seedRunning(['run-x' => [
                 'run_id' => 'run-x', 'id' => 'run-x', 'host' => 'vps3',
                 'for' => 'admin-1', 'command' => 'cat', 'interact' => true,
                 'update_after' => false, 'rows' => 24, 'cols' => 80, 'started' => 1, 'v' => 1
-            ]];
+            ]]);
 
             $this->dispatch('cmd.stdin', ['run_id' => 'run-x', 'data' => 'x']);
 
@@ -406,12 +410,12 @@ namespace {
 
         private function seedRun(string $runId, string $host, $for): void
         {
-            $this->global->store['running'] = [$runId => [
+            $this->seedRunning([$runId => [
                 'run_id' => $runId, 'id' => $runId, 'host' => $host,
                 'for' => $for, 'command' => 'x', 'interact' => false,
                 'update_after' => false, 'rows' => 24, 'cols' => 80,
                 'started' => 1, 'v' => 1
-            ]];
+            ]]);
         }
 
         public function testCmdOutputOwningHostRelaysToUidTarget(): void
@@ -496,6 +500,11 @@ namespace {
 
             // Run removed from the registry after exit.
             $this->assertArrayNotHasKey('run-e', $this->running());
+            // Raw index proof production sRem'd the id, not just del'd the entry:
+            // a ghost member is invisible to running() (its GET misses and the id
+            // is skipped), so inspect the SET keyspace directly. SharedState stores
+            // members JSON-encoded, hence the quoted id as the map key.
+            $this->assertArrayNotHasKey('"run-e"', $this->redis->data[\Events::RUNNING_INDEX_KEY]['value'] ?? []);
             $this->assertCount(0, $this->sent(), 'cmd.exit has no client reply on success');
         }
 
@@ -619,11 +628,10 @@ namespace {
 
         public function testCmdExecDormantWhenFlagAOff(): void
         {
-            // Flag A OFF: client present but ws_new_handling unset.
-            $client = new CmdFakeGlobalDataClient();
-            $client->store['running'] = [];
-            $GLOBALS['global'] = $client;
-            $this->global = $client;
+            // Flag A OFF: writing 0 explicitly. An UNSET ws_new_handling reads ON
+            // through SharedState (FeatureFlags' unset-means-ON default), so
+            // relying on the absence of a value would run the handler.
+            $this->flagAOff();
             $this->asAdmin();
             $this->online('vps1234');
 
@@ -668,7 +676,7 @@ namespace {
                 'interact' => false, 'update_after' => false, 'host' => 'vps1234',
                 'rows' => 80, 'cols' => 24, 'for' => 'admin-legacy'
             ];
-            $this->global->store['running'] = [$legacyKey => $legacyEntry];
+            $this->seedRunning([$legacyKey => $legacyEntry]);
 
             // Run a v1 cmd.exec — different (uuid-style) key.
             $this->dispatch('cmd.exec', ['run_id' => 'v1-run', 'host' => 1234, 'command' => 'uptime']);
@@ -691,20 +699,20 @@ namespace {
 
             $legacyKey = md5('legacy cmd');
             $legacyEntry = ['type' => 'run', 'id' => $legacyKey, 'host' => 'vps3', 'for' => 'admin-l', 'command' => 'legacy cmd'];
-            $this->global->store['running'] = [
+            $this->seedRunning([
                 $legacyKey => $legacyEntry,
                 'run-e' => [
                     'run_id' => 'run-e', 'id' => 'run-e', 'host' => 'vps3', 'for' => 'admin-9',
                     'command' => 'x', 'interact' => false, 'update_after' => false,
                     'rows' => 24, 'cols' => 80, 'started' => 1, 'v' => 1
                 ]
-            ];
+            ]);
 
             $this->dispatch('cmd.exit', ['run_id' => 'run-e', 'code' => 0, 'term' => null]);
 
             $running = $this->running();
             $this->assertArrayNotHasKey('run-e', $running, 'v1 run removed on exit');
-            $this->assertArrayHasKey($legacyKey, $running, 'legacy entry must survive v1 cmd.exit CAS remove');
+            $this->assertArrayHasKey($legacyKey, $running, 'legacy entry must survive v1 cmd.exit per-key remove');
             $this->assertSame($legacyEntry, $running[$legacyKey]);
         }
     }

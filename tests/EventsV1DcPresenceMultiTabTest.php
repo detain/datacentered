@@ -39,11 +39,31 @@
  *    no test existed, and there IS no auth.welcome op: an auth reply correlates
  *    by re + ok and carries NO op. Covered for real now.
  *
+ *  - SharedState migration (Phase 5.2): the whole presence fixture surface moved
+ *    from the retired shared-variable store to the SharedState Redis facade,
+ *    seeded through the SAME facade methods production writes with so every
+ *    assertion also proves the JSON encode/decode round-trip. Shapes per the
+ *    production writes (Applications/Chat/Events.php):
+ *      dc:presence:client:<id>       STRING JSON record, EX PRESENCE_STALE_TTL
+ *      dc:presence:index /  :active  ZSETs scored by last-seen ts
+ *                                     (presenceIndexAdd → zAdd)
+ *      dc:presence:ping: / ping_sent: STRING JSON ints (last pong RECEIVED /
+ *                                     last ping SENT), EX PRESENCE_PING_TTL
+ *      dc:presence:client_session:<cid>  STRING (the session id)
+ *      dc:presence:session_clients:<sid> STRING JSON-encoding a PHP array —
+ *                                     a STRING, NOT a Redis LIST
+ *      dc:presence:timer:<sid>       STRING holding the OWNING PID, never a
+ *                                     raw Workerman timer id
+ *    The flat dc_presence_clients / dc_active_clients index arrays the fixtures
+ *    used to hold are ZSETs now, so membership assertions read zRange order:
+ *    ascending last-seen score, ties broken lexicographically by member.
+ *
  * @see Events::handleDcPresenceJoin()
  * @see Events::handleDcPresenceLeave()
  * @see Events::onClose()
  * @see Events::trackSessionClient()
  * @see Events::setupSessionHealthTimer()
+ * @see Applications/Chat/SharedState.php
  */
 
 namespace {
@@ -59,6 +79,18 @@ namespace {
         private const NAME = 'adminuser';
         private const SESSION = 'mystage-session-7f3c';
 
+        /**
+         * Session/cleanup-scoped SharedState keys that trackSessionClient(),
+         * onClose() and setupSessionHealthTimer() build inline (Events.php has
+         * no constants for these) — pinned to the exact production names.
+         * All are dc:presence: STRINGS written through SharedState::set.
+         */
+        private const CLIENT_SESSION_KEY_PREFIX = 'dc:presence:client_session:';
+        private const SESSION_CLIENTS_KEY_PREFIX = 'dc:presence:session_clients:';
+        private const SESSION_TIMER_KEY_PREFIX = 'dc:presence:timer:';
+        private const MOVE_BATCH_KEY_PREFIX = 'dc:presence:move_batch:';
+        private const CLEANUP_KEY_PREFIX = 'dc:presence:cleanup:';
+
         /** @var string tab A's 20-char hex connection id */
         private string $tabA;
 
@@ -68,6 +100,9 @@ namespace {
         /** @var string tab C's 20-char hex connection id (same session/uid) */
         private string $tabC;
 
+        /** @var InMemoryRedis the double injected through SharedState::setClient() */
+        private InMemoryRedis $redis;
+
         protected function setUp(): void
         {
             // Distinct gateway connection ids on the same gateway address — the
@@ -75,6 +110,16 @@ namespace {
             $this->tabA = dc_client_id(1001);
             $this->tabB = dc_client_id(1002);
             $this->tabC = dc_client_id(1003);
+
+            // FeatureFlagsTest/SharedStateTest injection discipline: a leaked
+            // $GLOBALS['redis'] or a leftover facade memo from another suite
+            // must never decide behaviour here, so drop both, then inject a
+            // FRESH double (fresh keyspace AND fresh controllable clock).
+            unset($GLOBALS['redis']);
+            \SharedState::reset();
+            $this->redis = new InMemoryRedis();
+            \SharedState::setClient($this->redis);
+
             $this->resetState();
             $_SERVER['REMOTE_ADDR'] = '203.0.113.10';
         }
@@ -82,51 +127,145 @@ namespace {
         protected function tearDown(): void
         {
             $this->resetState();
+            \SharedState::setClient(null);
+            \SharedState::reset();
+            unset($GLOBALS['redis']);
         }
 
         private function resetState(): void
         {
             \GatewayWorker\Lib\Gateway::reset();
             \Channel\Client::reset();
-            \GlobalData\Client::resetConstructed();
             TestTimer::install();
             $_SESSION = [];
             \Events::$db = null;
             \Events::$channelClient = null;   // production configuration
-            \Events::$moveBatch = [];
-            \Events::$moveBatchTimer = null;
-            unset($GLOBALS['global']);
-
-            $ref = new ReflectionClass(FeatureFlags::class);
-            $prop = $ref->getProperty('client');
-            $prop->setAccessible(true);
-            $prop->setValue(null, null);
+            \Events::$moveBatchTimer = null;  // the flush slot is process-local static
         }
 
         /**
-         * Flag A ON, Flag C (bot presence) OFF, authenticated admin session, and
-         * the GlobalData indexes seeded the way a live worker's are.
+         * Flag A ON, Flag C (bot presence) OFF, authenticated admin session.
+         *
+         * Flags are written through SharedState under the exact FeatureFlags
+         * VAR_* keys — an explicit value, never an omission: unset Flag A reads
+         * ON, so dormancy only exists as a value an operator wrote (commit
+         * 9eabb50). Registries the retired store kept as whole maps (hosts,
+         * running, rooms) need no seeding here — Redis absence IS empty, which
+         * is precisely the NULL-vs-empty trap the migration removed.
+         *
+         * @param array<string,int> $flagOverrides full dc:flag: keys => 0/1
          */
-        private function authedSession(array $seed = []): InMemoryGlobalData
+        private function authedSession(array $flagOverrides = []): void
         {
-            $global = new InMemoryGlobalData(array_merge([
+            $flags = array_merge([
                 FeatureFlags::VAR_NEW_HANDLING => 1,
                 FeatureFlags::VAR_DC_BOT_PRESENCE => 0,
-                'hosts' => [],
-                'running' => [],
-                'rooms' => [],
-                'dc_presence_clients' => [],
-                'dc_active_clients' => [],
-            ], $seed));
-            $GLOBALS['global'] = $global;
+            ], $flagOverrides);
+            foreach ($flags as $key => $value) {
+                $this->assertTrue(
+                    \SharedState::set($key, $value),
+                    "fixture: flag '{$key}' seeded with {$value}"
+                );
+            }
 
             $_SESSION['v1_authed'] = true;
             $_SESSION['uid'] = self::UID;
             $_SESSION['name'] = self::NAME;
             $_SESSION['ima'] = 'admin';
             $_SESSION['login'] = true;
+        }
 
-            return $global;
+        // --------------------------------------------------------------------
+        // Fixture seeding — exactly the shapes the production writers emit
+        // --------------------------------------------------------------------
+
+        /**
+         * Seed a live scene member the way handleDcPresenceJoin writes one:
+         * the STRING JSON record under EX PRESENCE_STALE_TTL plus membership in
+         * BOTH index ZSETs scored by the record's ts (presenceIndexAdd).
+         */
+        private function seedPresenceMember(string $clientId, array $record): void
+        {
+            $this->assertTrue(\SharedState::set(
+                \Events::DC_PRESENCE_KEY_PREFIX.$clientId,
+                $record,
+                \Events::PRESENCE_STALE_TTL
+            ), 'fixture: presence record for '.$clientId);
+            $this->seedIndexMembership($clientId, (int) $record['ts']);
+        }
+
+        /** Seed one member into both presence index ZSETs at $score — no record. */
+        private function seedIndexMembership(string $clientId, int $score): void
+        {
+            $this->assertTrue(\SharedState::zAdd(\Events::DC_PRESENCE_INDEX_KEY, $score, $clientId));
+            $this->assertTrue(\SharedState::zAdd(\Events::DC_ACTIVE_INDEX_KEY, $score, $clientId));
+        }
+
+        /** Seed the liveness stamps the way the pong path / pingers write them. */
+        private function seedLiveness(string $clientId, ?int $lastPong = null, ?int $lastPingSent = null): void
+        {
+            if ($lastPong !== null) {
+                $this->assertTrue(\SharedState::set(
+                    \Events::DC_PONG_KEY_PREFIX.$clientId,
+                    $lastPong,
+                    \Events::PRESENCE_PING_TTL
+                ), 'fixture: last pong for '.$clientId);
+            }
+            if ($lastPingSent !== null) {
+                $this->assertTrue(\SharedState::set(
+                    \Events::DC_PING_SENT_KEY_PREFIX.$clientId,
+                    $lastPingSent,
+                    \Events::PRESENCE_PING_TTL
+                ), 'fixture: last ping sent for '.$clientId);
+            }
+        }
+
+        /** Seed one connection→session STRING (trackSessionClient's shape). */
+        private function seedClientSession(string $clientId, string $sessionId): void
+        {
+            $this->assertTrue(\SharedState::set(
+                self::CLIENT_SESSION_KEY_PREFIX.$clientId,
+                $sessionId,
+                \Events::PRESENCE_SESSION_TTL
+            ), 'fixture: client_session for '.$clientId);
+        }
+
+        /**
+         * Seed the session→clients STRING that JSON-encodes a PHP array —
+         * trackSessionClient writes a plain facade STRING here, NOT a Redis LIST.
+         *
+         * That value is read-modify-written (get → merge → set) with NO CAS:
+         * concurrent joins/prunes on the SAME session are last-writer-wins and
+         * one writer can drop another's member. This is the accepted trade-off,
+         * identical to the rooms registry — see the Events.php ~:5519 note (a
+         * dropped member self-heals on next reconcile; locking is deliberately
+         * not reintroduced for these legacy same-field maps).
+         *
+         * @param array<int,string> $clientIds
+         */
+        private function seedSessionClients(string $sessionId, array $clientIds): void
+        {
+            $this->assertTrue(\SharedState::set(
+                self::SESSION_CLIENTS_KEY_PREFIX.$sessionId,
+                $clientIds,
+                \Events::PRESENCE_SESSION_TTL
+            ), 'fixture: session_clients for '.$sessionId);
+        }
+
+        // --------------------------------------------------------------------
+        // Reads through the same facade the production readers use
+        // --------------------------------------------------------------------
+
+        /** @return mixed the decoded presence record, null when absent */
+        private function presenceRecord(string $clientId)
+        {
+            return \SharedState::get(\Events::DC_PRESENCE_KEY_PREFIX.$clientId);
+        }
+
+        /** @return array<int,string> index ZSET members in Redis order */
+        private function indexMembers(string $indexKey): array
+        {
+            return \SharedState::zRange($indexKey, 0, -1);
         }
 
         private function presenceOp(string $op, array $data, string $clientId, string $id = 'req-multitab'): void
@@ -151,17 +290,17 @@ namespace {
 
         /**
          * Two tabs, one uid: two independent entries at
-         * dc_presence:client:<hex>, nothing at dc_presence:<uid>.
+         * dc:presence:client:<hex>, nothing at dc:presence:client:<uid>.
          */
         public function testJoinCreatesPerConnectionEntriesNotPerUid(): void
         {
-            $global = $this->authedSession();
+            $this->authedSession();
 
             $this->presenceOp('dc.presence.join', ['x' => 10.5, 'z' => -3.25, 'yaw' => 1.57], $this->tabA);
             $this->presenceOp('dc.presence.join', ['x' => 20.5, 'z' => -13.25, 'yaw' => 2.57], $this->tabB);
 
-            $entryA = $global->raw('dc_presence:client:'.$this->tabA);
-            $entryB = $global->raw('dc_presence:client:'.$this->tabB);
+            $entryA = $this->presenceRecord($this->tabA);
+            $entryB = $this->presenceRecord($this->tabB);
             $this->assertIsArray($entryA);
             $this->assertIsArray($entryB);
 
@@ -173,8 +312,8 @@ namespace {
             $this->assertSame($this->tabB, $entryB['client_id']);
 
             $this->assertNotContains(
-                'dc_presence:'.self::UID,
-                $global->keys(),
+                \Events::DC_PRESENCE_KEY_PREFIX.self::UID,
+                $this->redis->allKeys(),
                 'a per-uid presence key would collapse the two tabs into one avatar'
             );
             $this->assertDeadChannelTransportUnused('multi-tab join:');
@@ -182,26 +321,29 @@ namespace {
 
         public function testJoinAddsBothConnectionsToBothIndexes(): void
         {
-            $global = $this->authedSession();
+            $this->authedSession();
 
             $this->presenceOp('dc.presence.join', ['x' => 0.0, 'z' => 0.0, 'yaw' => 0.0], $this->tabA);
             $this->presenceOp('dc.presence.join', ['x' => 0.0, 'z' => 0.0, 'yaw' => 0.0], $this->tabB);
 
-            $this->assertSame([$this->tabA, $this->tabB], $global->raw('dc_presence_clients'));
-            $this->assertSame([$this->tabA, $this->tabB], $global->raw('dc_active_clients'));
+            $this->assertSame([$this->tabA, $this->tabB], $this->indexMembers(\Events::DC_PRESENCE_INDEX_KEY));
+            $this->assertSame([$this->tabA, $this->tabB], $this->indexMembers(\Events::DC_ACTIVE_INDEX_KEY));
         }
 
         /** Re-joining from the same connection must not duplicate index entries. */
         public function testRejoinFromSameConnectionIsIdempotentInIndexes(): void
         {
-            $global = $this->authedSession();
+            $this->authedSession();
 
             $this->presenceOp('dc.presence.join', ['x' => 1.0, 'z' => 1.0, 'yaw' => 0.0], $this->tabA);
             $this->presenceOp('dc.presence.join', ['x' => 2.0, 'z' => 2.0, 'yaw' => 0.0], $this->tabA);
 
-            $this->assertSame([$this->tabA], $global->raw('dc_presence_clients'));
-            $this->assertSame([$this->tabA], $global->raw('dc_active_clients'));
-            $this->assertSame(2.0, $global->raw('dc_presence:client:'.$this->tabA)['x'], 'the entry is overwritten');
+            $this->assertSame([$this->tabA], $this->indexMembers(\Events::DC_PRESENCE_INDEX_KEY));
+            $this->assertSame([$this->tabA], $this->indexMembers(\Events::DC_ACTIVE_INDEX_KEY));
+            // Whole-valued floats (2.0) round-trip through SharedState's JSON
+            // encoding as ints — production re-reads them with (float) casts, so
+            // compare the numeric value, not the accidental scalar type.
+            $this->assertSame(2.0, (float) $this->presenceRecord($this->tabA)['x'], 'the entry is overwritten');
         }
 
         /**
@@ -229,48 +371,46 @@ namespace {
 
         public function testMoveUpdatesOnlyTheSendingConnection(): void
         {
-            $global = $this->authedSession([
-                'dc_presence_clients' => [$this->tabA, $this->tabB],
-                'dc_active_clients' => [$this->tabA, $this->tabB],
-                'dc_presence:client:'.$this->tabA => $this->entry($this->tabA),
-                'dc_presence:client:'.$this->tabB => $this->entry($this->tabB, 100.0, 100.0, 3.14),
-            ]);
+            $this->authedSession();
+            $this->seedPresenceMember($this->tabA, $this->entry($this->tabA));
+            $this->seedPresenceMember($this->tabB, $this->entry($this->tabB, 100.0, 100.0, 3.14));
 
             $this->presenceOp('dc.presence.move', [
                 'x' => 50.5, 'z' => -25.25, 'yaw' => 1.57, 'clientId' => $this->tabA,
             ], $this->tabA);
 
-            $entryA = $global->raw('dc_presence:client:'.$this->tabA);
-            $entryB = $global->raw('dc_presence:client:'.$this->tabB);
+            $entryA = $this->presenceRecord($this->tabA);
+            $entryB = $this->presenceRecord($this->tabB);
 
             $this->assertSame(50.5, $entryA['x']);
             $this->assertSame(-25.25, $entryA['z']);
             $this->assertSame(1.57, $entryA['yaw']);
 
-            $this->assertSame(100.0, $entryB['x'], 'the other tab must be untouched');
-            $this->assertSame(100.0, $entryB['z']);
+            // (float) casts: whole-valued coordinates (100.0) come back as ints
+            // through the facade's JSON round-trip; see the rejoin test note.
+            $this->assertSame(100.0, (float) $entryB['x'], 'the other tab must be untouched');
+            $this->assertSame(100.0, (float) $entryB['z']);
             $this->assertSame(3.14, $entryB['yaw']);
         }
 
         /** Batch keys are per connection, so two tabs coalesce into one event. */
         public function testEachConnectionGetsItsOwnBatchKeyAndOneSharedFlush(): void
         {
-            $global = $this->authedSession([
-                'dc_presence_clients' => [$this->tabA, $this->tabB],
-                'dc_active_clients' => [$this->tabA, $this->tabB],
-                'dc_presence:client:'.$this->tabA => $this->entry($this->tabA),
-                'dc_presence:client:'.$this->tabB => $this->entry($this->tabB),
-            ]);
+            $this->authedSession();
+            $this->seedPresenceMember($this->tabA, $this->entry($this->tabA));
+            $this->seedPresenceMember($this->tabB, $this->entry($this->tabB));
 
             $this->presenceOp('dc.presence.move', ['x' => 10.0, 'z' => 20.0, 'yaw' => 0.5], $this->tabA);
             $this->presenceOp('dc.presence.move', ['x' => 30.0, 'z' => 40.0, 'yaw' => 1.0], $this->tabB);
 
-            $batchA = json_decode((string) $global->raw('dc_move_batch:'.$this->tabA), true);
-            $batchB = json_decode((string) $global->raw('dc_move_batch:'.$this->tabB), true);
+            // The facade decodes the JSON, so the batch entry arrives as an array —
+            // no manual json_decode around a raw string any more.
+            $batchA = \SharedState::get(self::MOVE_BATCH_KEY_PREFIX.$this->tabA);
+            $batchB = \SharedState::get(self::MOVE_BATCH_KEY_PREFIX.$this->tabB);
             $this->assertIsArray($batchA);
             $this->assertIsArray($batchB);
-            $this->assertEqualsWithDelta(10.0, $batchA['x'], 0.001);
-            $this->assertEqualsWithDelta(30.0, $batchB['x'], 0.001);
+            $this->assertSame(10.0, (float) $batchA['x']);   // JSON int/float cast, see rejoin test note
+            $this->assertSame(30.0, (float) $batchB['x']);
 
             $armed = TestTimer::withInterval(0.05);
             $this->assertCount(1, $armed, 'both tabs share ONE armed flush timer');
@@ -292,19 +432,21 @@ namespace {
 
         public function testLeaveRemovesOnlyTheLeavingConnection(): void
         {
-            $global = $this->authedSession([
-                'dc_presence_clients' => [$this->tabA, $this->tabB],
-                'dc_active_clients' => [$this->tabA, $this->tabB],
-                'dc_presence:client:'.$this->tabA => $this->entry($this->tabA),
-                'dc_presence:client:'.$this->tabB => $this->entry($this->tabB, 100.0, 100.0, 3.14),
-            ]);
+            $this->authedSession();
+            $this->seedPresenceMember($this->tabA, $this->entry($this->tabA));
+            $this->seedPresenceMember($this->tabB, $this->entry($this->tabB, 100.0, 100.0, 3.14));
 
             $this->presenceOp('dc.presence.leave', [], $this->tabB, 'leave-tab-b');
 
-            $this->assertNull($global->raw('dc_presence:client:'.$this->tabB));
-            $this->assertSame([$this->tabA], $global->raw('dc_presence_clients'));
+            $this->assertNull($this->presenceRecord($this->tabB));
+            $this->assertSame([$this->tabA], $this->indexMembers(\Events::DC_PRESENCE_INDEX_KEY));
+            $this->assertSame(
+                [$this->tabA],
+                $this->indexMembers(\Events::DC_ACTIVE_INDEX_KEY),
+                'leave must drop BOTH index ZSETs (the reviewer fix against recipient drift)'
+            );
 
-            $entryA = $global->raw('dc_presence:client:'.$this->tabA);
+            $entryA = $this->presenceRecord($this->tabA);
             $this->assertIsArray($entryA, 'the surviving tab keeps its avatar');
             $this->assertSame($this->tabA, $entryA['client_id']);
 
@@ -317,25 +459,22 @@ namespace {
 
         public function testOnCloseRemovesOnlyOwnConnectionAndAnnouncesIt(): void
         {
-            $global = $this->authedSession([
-                'dc_presence_clients' => [$this->tabA, $this->tabB],
-                'dc_active_clients' => [$this->tabA, $this->tabB],
-                'dc_presence:client:'.$this->tabA => $this->entry($this->tabA),
-                'dc_presence:client:'.$this->tabB => $this->entry($this->tabB, 100.0, 100.0, 3.14),
-            ]);
+            $this->authedSession();
+            $this->seedPresenceMember($this->tabA, $this->entry($this->tabA));
+            $this->seedPresenceMember($this->tabB, $this->entry($this->tabB, 100.0, 100.0, 3.14));
             // Two live connections for this uid: onClose must not take the
             // single-connection logout branch.
             \GatewayWorker\Lib\Gateway::$uidClientIds[self::UID] = [$this->tabA, $this->tabB];
 
             \Events::onClose($this->tabA);
 
-            $this->assertNull($global->raw('dc_presence:client:'.$this->tabA));
+            $this->assertNull($this->presenceRecord($this->tabA));
             $this->assertIsArray(
-                $global->raw('dc_presence:client:'.$this->tabB),
+                $this->presenceRecord($this->tabB),
                 'the other tab survives a sibling disconnect'
             );
-            $this->assertSame([$this->tabB], $global->raw('dc_presence_clients'));
-            $this->assertSame([$this->tabB], $global->raw('dc_active_clients'));
+            $this->assertSame([$this->tabB], $this->indexMembers(\Events::DC_PRESENCE_INDEX_KEY));
+            $this->assertSame([$this->tabB], $this->indexMembers(\Events::DC_ACTIVE_INDEX_KEY));
 
             $events = $this->presenceGroupEvents('dc.presence.left');
             $this->assertCount(1, $events);
@@ -358,20 +497,17 @@ namespace {
         }
 
         /**
-         * The sweep pings every connection in dc_presence_clients, keyed by hex
-         * client_id, and records the SEND time under dc_ping_sent: (never
-         * dc_ping:, which is reserved for pongs RECEIVED — BUG-B3).
+         * The sweep pings every connection in the presence index, keyed by hex
+         * client_id, and records the SEND time under dc:presence:ping_sent:
+         * (never dc:presence:ping:, which is reserved for pongs RECEIVED — BUG-B3).
          */
         public function testHealthTimerPingsEveryConnectionAndRecordsSendTime(): void
         {
-            $global = $this->authedSession([
-                'dc_presence_clients' => [$this->tabA, $this->tabB],
-                'dc_active_clients' => [$this->tabA, $this->tabB],
-                'dc_presence:client:'.$this->tabA => $this->entry($this->tabA),
-                'dc_presence:client:'.$this->tabB => $this->entry($this->tabB),
-                \Events::DC_PONG_KEY_PREFIX.$this->tabA => time(),
-                \Events::DC_PONG_KEY_PREFIX.$this->tabB => time(),
-            ]);
+            $this->authedSession();
+            $this->seedPresenceMember($this->tabA, $this->entry($this->tabA));
+            $this->seedPresenceMember($this->tabB, $this->entry($this->tabB));
+            $this->seedLiveness($this->tabA, time());
+            $this->seedLiveness($this->tabB, time());
 
             TestTimer::run($this->armHealthTimer());
 
@@ -384,10 +520,10 @@ namespace {
             }
             $this->assertSame([$this->tabA, $this->tabB], $pinged, 'every live connection is pinged, by hex id');
 
-            $this->assertGreaterThan(0, $global->raw(\Events::DC_PING_SENT_KEY_PREFIX.$this->tabA));
-            $this->assertGreaterThan(0, $global->raw(\Events::DC_PING_SENT_KEY_PREFIX.$this->tabB));
+            $this->assertGreaterThan(0, \SharedState::get(\Events::DC_PING_SENT_KEY_PREFIX.$this->tabA));
+            $this->assertGreaterThan(0, \SharedState::get(\Events::DC_PING_SENT_KEY_PREFIX.$this->tabB));
             $this->assertSame([], \GatewayWorker\Lib\Gateway::$closed, 'responsive clients are never dropped');
-            $this->assertIsArray($global->raw('dc_presence:client:'.$this->tabA));
+            $this->assertIsArray($this->presenceRecord($this->tabA));
         }
 
         /**
@@ -399,18 +535,13 @@ namespace {
         public function testHealthTimerDropsOnlyTheConnectionWhosePongIsStale(): void
         {
             $now = time();
-            $global = $this->authedSession([
-                'dc_presence_clients' => [$this->tabA, $this->tabB],
-                'dc_active_clients' => [$this->tabA, $this->tabB],
-                'dc_presence:client:'.$this->tabA => $this->entry($this->tabA),
-                'dc_presence:client:'.$this->tabB => $this->entry($this->tabB),
-                \Events::DC_PONG_KEY_PREFIX.$this->tabA => $now - 200,  // silent for 200s
-                \Events::DC_PING_SENT_KEY_PREFIX.$this->tabA => $now - 30,
-                \Events::DC_PONG_KEY_PREFIX.$this->tabB => $now - 5,    // answering
-                \Events::DC_PING_SENT_KEY_PREFIX.$this->tabB => $now - 30,
-                'dc_client_session:'.$this->tabA => self::SESSION,
-                'dc_session_clients:'.self::SESSION => [$this->tabA, $this->tabB],
-            ]);
+            $this->authedSession();
+            $this->seedPresenceMember($this->tabA, $this->entry($this->tabA));
+            $this->seedPresenceMember($this->tabB, $this->entry($this->tabB));
+            $this->seedLiveness($this->tabA, $now - 200, $now - 30);  // silent for 200s
+            $this->seedLiveness($this->tabB, $now - 5, $now - 30);    // answering
+            $this->seedClientSession($this->tabA, self::SESSION);
+            $this->seedSessionClients(self::SESSION, [$this->tabA, $this->tabB]);
 
             TestTimer::run($this->armHealthTimer());
 
@@ -419,34 +550,36 @@ namespace {
                 \GatewayWorker\Lib\Gateway::$closed,
                 'exactly the stale connection is closed'
             );
-            $this->assertNull($global->raw('dc_presence:client:'.$this->tabA));
-            $this->assertSame([$this->tabB], $global->raw('dc_presence_clients'));
-            $this->assertIsArray($global->raw('dc_presence:client:'.$this->tabB));
+            $this->assertNull($this->presenceRecord($this->tabA));
+            $this->assertSame([$this->tabB], $this->indexMembers(\Events::DC_PRESENCE_INDEX_KEY));
+            $this->assertSame([$this->tabB], $this->indexMembers(\Events::DC_ACTIVE_INDEX_KEY));
+            $this->assertIsArray($this->presenceRecord($this->tabB));
 
             // Dropped connection's liveness + session bookkeeping is cleared.
-            $this->assertNull($global->raw(\Events::DC_PONG_KEY_PREFIX.$this->tabA));
-            $this->assertNull($global->raw(\Events::DC_PING_SENT_KEY_PREFIX.$this->tabA));
-            $this->assertNull($global->raw('dc_client_session:'.$this->tabA));
-            $this->assertSame([$this->tabB], $global->raw('dc_session_clients:'.self::SESSION));
-            $this->assertNull($global->raw('dc_cleanup:'.$this->tabA), 'the cleanup sentinel is released');
+            $this->assertNull(\SharedState::get(\Events::DC_PONG_KEY_PREFIX.$this->tabA));
+            $this->assertNull(\SharedState::get(\Events::DC_PING_SENT_KEY_PREFIX.$this->tabA));
+            $this->assertNull(\SharedState::get(self::CLIENT_SESSION_KEY_PREFIX.$this->tabA));
+            $this->assertSame([$this->tabB], \SharedState::get(self::SESSION_CLIENTS_KEY_PREFIX.self::SESSION));
+            $this->assertNull(
+                \SharedState::get(self::CLEANUP_KEY_PREFIX.$this->tabA),
+                'the cleanup sentinel is released'
+            );
         }
 
         /**
          * BUG-B4 (the important half): a connection that has been PINGED but has
          * not yet had time to PONG must NEVER be dropped. This is the case the
          * old single-key scheme could not express — writing the ping-send time
-         * into dc_ping: made "answered promptly" and "never answered" identical.
+         * into dc:presence:ping: made "answered promptly" and "never answered"
+         * identical.
          */
         public function testHealthTimerNeverDropsAConnectionThatWasJustPinged(): void
         {
             $now = time();
-            $global = $this->authedSession([
-                'dc_presence_clients' => [$this->tabA],
-                'dc_active_clients' => [$this->tabA],
-                'dc_presence:client:'.$this->tabA => $this->entry($this->tabA),
-                // Freshly connected: pinged 1s ago, no pong yet.
-                \Events::DC_PING_SENT_KEY_PREFIX.$this->tabA => $now - 1,
-            ]);
+            $this->authedSession();
+            $this->seedPresenceMember($this->tabA, $this->entry($this->tabA));
+            // Freshly connected: pinged 1s ago, no pong yet.
+            $this->seedLiveness($this->tabA, null, $now - 1);
 
             TestTimer::run($this->armHealthTimer());
 
@@ -455,14 +588,15 @@ namespace {
                 \GatewayWorker\Lib\Gateway::$closed,
                 'a client pinged 1s ago has not had 90s to answer and must survive'
             );
-            $this->assertIsArray($global->raw('dc_presence:client:'.$this->tabA));
-            $this->assertSame([$this->tabA], $global->raw('dc_presence_clients'));
+            $this->assertIsArray($this->presenceRecord($this->tabA));
+            $this->assertSame([$this->tabA], $this->indexMembers(\Events::DC_PRESENCE_INDEX_KEY));
         }
 
         /**
-         * dc_ping_sent: marks the START of the current UNANSWERED streak, so a
-         * connection with an outstanding ping must keep its original send time —
-         * the sweep may only re-arm it once the previous ping has been answered.
+         * dc:presence:ping_sent: marks the START of the current UNANSWERED
+         * streak, so a connection with an outstanding ping must keep its
+         * original send time — the sweep may only re-arm it once the previous
+         * ping has been answered.
          *
          * Rewriting it on every sweep (the earlier half-fix) reproduced BUG-B4
          * for the never-ponged branch of dcPresenceIsStale(): the Phase 1
@@ -474,42 +608,35 @@ namespace {
         {
             $now = time();
             $streakStart = $now - 40;
-            $global = $this->authedSession([
-                'dc_presence_clients' => [$this->tabA],
-                'dc_active_clients' => [$this->tabA],
-                'dc_presence:client:'.$this->tabA => $this->entry($this->tabA),
-                // Pinged 40s ago, never answered: the streak began at $streakStart.
-                \Events::DC_PING_SENT_KEY_PREFIX.$this->tabA => $streakStart,
-            ]);
+            $this->authedSession();
+            $this->seedPresenceMember($this->tabA, $this->entry($this->tabA));
+            // Pinged 40s ago, never answered: the streak began at $streakStart.
+            $this->seedLiveness($this->tabA, null, $streakStart);
 
             TestTimer::run($this->armHealthTimer());
 
             $this->assertSame(
                 $streakStart,
-                $global->raw(\Events::DC_PING_SENT_KEY_PREFIX.$this->tabA),
-                'dc_ping_sent must keep marking the start of the unanswered streak, otherwise the '
-                .'90s watchdog can never fire for a client that never pongs'
+                \SharedState::get(\Events::DC_PING_SENT_KEY_PREFIX.$this->tabA),
+                'dc:presence:ping_sent: must keep marking the start of the unanswered streak, otherwise '
+                .'the 90s watchdog can never fire for a client that never pongs'
             );
             $this->assertSame([], \GatewayWorker\Lib\Gateway::$closed, '40s of silence is under the 90s threshold');
         }
 
-        /** Once the previous ping HAS been answered, the next sweep re-arms dc_ping_sent. */
+        /** Once the previous ping HAS been answered, the next sweep re-arms the ping-sent stamp. */
         public function testHealthTimerRearmsPingSentAfterAPongArrived(): void
         {
             $now = time();
-            $global = $this->authedSession([
-                'dc_presence_clients' => [$this->tabA],
-                'dc_active_clients' => [$this->tabA],
-                'dc_presence:client:'.$this->tabA => $this->entry($this->tabA),
-                \Events::DC_PING_SENT_KEY_PREFIX.$this->tabA => $now - 40,
-                \Events::DC_PONG_KEY_PREFIX.$this->tabA => $now - 38,   // answered
-            ]);
+            $this->authedSession();
+            $this->seedPresenceMember($this->tabA, $this->entry($this->tabA));
+            $this->seedLiveness($this->tabA, $now - 38, $now - 40);   // answered
 
             TestTimer::run($this->armHealthTimer());
 
             $this->assertGreaterThanOrEqual(
                 $now,
-                $global->raw(\Events::DC_PING_SENT_KEY_PREFIX.$this->tabA),
+                \SharedState::get(\Events::DC_PING_SENT_KEY_PREFIX.$this->tabA),
                 'an answered ping means this sweep starts a NEW streak'
             );
             $this->assertSame([], \GatewayWorker\Lib\Gateway::$closed);
@@ -523,13 +650,10 @@ namespace {
         public function testHealthTimerEventuallyDropsAConnectionThatNeverPongs(): void
         {
             $now = time();
-            $global = $this->authedSession([
-                'dc_presence_clients' => [$this->tabA],
-                'dc_active_clients' => [$this->tabA],
-                'dc_presence:client:'.$this->tabA => $this->entry($this->tabA),
-                // Pinged 200s ago, never answered, and no pong has EVER arrived.
-                \Events::DC_PING_SENT_KEY_PREFIX.$this->tabA => $now - 200,
-            ]);
+            $this->authedSession();
+            $this->seedPresenceMember($this->tabA, $this->entry($this->tabA));
+            // Pinged 200s ago, never answered, and no pong has EVER arrived.
+            $this->seedLiveness($this->tabA, null, $now - 200);
 
             TestTimer::run($this->armHealthTimer());
 
@@ -538,35 +662,32 @@ namespace {
                 \GatewayWorker\Lib\Gateway::$closed,
                 'a connection with a >90s outstanding ping and no pong ever must be dropped'
             );
-            $this->assertNull($global->raw('dc_presence:client:'.$this->tabA));
+            $this->assertNull($this->presenceRecord($this->tabA));
         }
 
         /** A never-pinged connection is likewise never dropped. */
         public function testHealthTimerNeverDropsANeverPingedConnection(): void
         {
-            $global = $this->authedSession([
-                'dc_presence_clients' => [$this->tabA],
-                'dc_active_clients' => [$this->tabA],
-                'dc_presence:client:'.$this->tabA => $this->entry($this->tabA),
-            ]);
+            $this->authedSession();
+            $this->seedPresenceMember($this->tabA, $this->entry($this->tabA));
 
             TestTimer::run($this->armHealthTimer());
 
             $this->assertSame([], \GatewayWorker\Lib\Gateway::$closed);
-            $this->assertIsArray($global->raw('dc_presence:client:'.$this->tabA));
+            $this->assertIsArray($this->presenceRecord($this->tabA));
         }
 
         /** Bots have a presence entry but no socket: never pinged, never dropped. */
         public function testHealthTimerSkipsBotEntries(): void
         {
             $botId = 'bot_'.\Events::BOT_DEFAULT_LOCATION;
-            $global = $this->authedSession([
-                'dc_presence_clients' => [$this->tabA, $botId],
-                'dc_active_clients' => [$this->tabA, $botId],
-                'dc_presence:client:'.$this->tabA => $this->entry($this->tabA),
-                'dc_presence:client:'.$botId => ['uid' => $botId, 'x' => 0, 'z' => 0, 'yaw' => 0, 'client_id' => $botId],
-                \Events::DC_PONG_KEY_PREFIX.$this->tabA => time(),
+            $this->authedSession();
+            $this->seedPresenceMember($this->tabA, $this->entry($this->tabA));
+            $this->seedPresenceMember($botId, [
+                'uid' => $botId, 'x' => 0.0, 'z' => 0.0, 'yaw' => 0.0,
+                'ts' => time(), 'client_id' => $botId,
             ]);
+            $this->seedLiveness($this->tabA, time());
 
             TestTimer::run($this->armHealthTimer());
 
@@ -574,64 +695,66 @@ namespace {
                 $this->assertNotSame($botId, (string) $entry['client_id'], 'a bot has no socket to ping');
             }
             $this->assertSame([], \GatewayWorker\Lib\Gateway::$closed);
-            $this->assertIsArray($global->raw('dc_presence:client:'.$botId), 'the bot avatar survives the sweep');
+            $this->assertIsArray($this->presenceRecord($botId), 'the bot avatar survives the sweep');
         }
 
         /**
-         * PRODUCTION BUG pinned (Applications/Chat/Events.php — not editable here).
+         * Ghost-index pruning (fixes the leak this test used to pin).
          *
-         * Phase 1 of the sweep queues every index entry whose presence record is
-         * missing: `$toDrop[] = ['clientId' => $clientId]; // stale entry, mark
-         * for cleanup`. But the drop loop then hits
+         * Phase 1 of the sweep queues every index member whose presence record
+         * is missing: `$toDrop[] = ['clientId' => $clientId]; // stale entry,
+         * mark for cleanup`. The drop loop's record-null branch used to run
          *
-         *     if ($global->{'dc_cleanup:'.$clientId} && $global->$presenceKey === null) {
-         *         unset($global->{'dc_cleanup:'.$clientId});
-         *         continue;
-         *     }
+         *     SharedState::del($cleanupKey);
+         *     continue;
          *
-         * and a stale index entry has a null presence key BY DEFINITION, so it
-         * always takes that `continue` — jumping over the CAS that would remove
-         * it from dc_presence_clients. The "stale entry, mark for cleanup" branch
-         * is therefore unreachable: such ids stay in the index forever, are
-         * re-queued on every 30s sweep, and the index grows without bound (every
-         * sweep and every flushPresenceBatch() then iterates them).
+         * and that `continue` jumped over the loop-tail presenceIndexRemove(),
+         * so a stale index entry — which has no presence record BY DEFINITION —
+         * stayed in the dc:presence:* ZSETs forever, was re-queued on every 30s
+         * sweep, and grew both index ZSETs without bound.
          *
-         * FIX (for the Events.php owner): in that branch, still run the
-         * dc_presence_clients CAS removal before continuing — skip only the
-         * closeClient()/presence-key work that onClose already did.
+         * FIXED in Events.php: the branch now drops the ghost from BOTH indexes
+         * before releasing the cleanup sentinel, skipping only the record-delete/
+         * closeClient() work an already-completed onClose() did.
          *
-         * This test pins today's behaviour so the leak stays visible; flip the
-         * two assertions marked BUG when the fix lands.
+         * The ghost is seeded with a FRESH score on purpose: the TTL-native
+         * sweepPresenceStale() backstop (90s window) cannot reclaim it, so this
+         * run proves the health-timer drop loop is the mechanism doing the prune.
          */
-        public function testHealthTimerDoesNotYetPruneGhostIndexEntries(): void
+        public function testHealthTimerPrunesGhostIndexEntries(): void
         {
             $ghost = dc_client_id(9999);
-            $global = $this->authedSession([
-                'dc_presence_clients' => [$this->tabA, $ghost],
-                'dc_active_clients' => [$this->tabA, $ghost],
-                'dc_presence:client:'.$this->tabA => $this->entry($this->tabA),
-                \Events::DC_PONG_KEY_PREFIX.$this->tabA => time(),
-            ]);
+            $this->authedSession();
+            $this->seedPresenceMember($this->tabA, $this->entry($this->tabA));
+            $this->seedLiveness($this->tabA, time());
+            // Index member with NO presence record, scored fresh so the
+            // TTL-native sweepPresenceStale() backstop cannot reclaim it first.
+            $this->seedIndexMembership($ghost, time());
 
             TestTimer::run($this->armHealthTimer());
 
-            // BUG: should be [$this->tabA] — the ghost is never removed.
+            // FIXED: the ghost is gone from BOTH indexes; the live tab survives.
             $this->assertSame(
-                [$this->tabA, $ghost],
-                $global->raw('dc_presence_clients'),
-                'PRODUCTION BUG: an index entry with no presence record is queued for cleanup but '
-                .'the drop loop `continue`s past the index CAS, so dc_presence_clients grows forever'
+                [$this->tabA],
+                $this->indexMembers(\Events::DC_PRESENCE_INDEX_KEY),
+                'an index member with no presence record must be pruned from the presence index by the drop loop'
             );
-            // BUG: a ghost should arguably also be closed; today it is not.
+            $this->assertSame(
+                [$this->tabA],
+                $this->indexMembers(\Events::DC_ACTIVE_INDEX_KEY),
+                'presenceIndexRemove() drops BOTH indexes, so no ghost lingers in the active index either'
+            );
+            // A ghost has no socket by definition — closing one is not (and was
+            // never) part of the prune; only the index membership is reclaimed.
             $this->assertNotContains($ghost, \GatewayWorker\Lib\Gateway::$closed);
 
-            // What IS correct today: the cleanup sentinel is released rather than leaked.
+            // Unchanged from the pinned version: the cleanup sentinel is released.
             $this->assertNull(
-                $global->raw('dc_cleanup:'.$ghost),
-                'the dc_cleanup sentinel must not be leaked on the skip path'
+                \SharedState::get(self::CLEANUP_KEY_PREFIX.$ghost),
+                'the dc:presence:cleanup: sentinel must not be leaked on the skip path'
             );
             // And the healthy connection is untouched.
-            $this->assertIsArray($global->raw('dc_presence:client:'.$this->tabA));
+            $this->assertIsArray($this->presenceRecord($this->tabA));
             $this->assertNotContains($this->tabA, \GatewayWorker\Lib\Gateway::$closed);
         }
 
@@ -648,14 +771,13 @@ namespace {
 
         /**
          * A second connection for a known session pings the existing ones and
-         * records the SEND time under dc_ping_sent:.
+         * records the SEND time under dc:presence:ping_sent:.
          */
         public function testSecondConnectionForSessionPingsExistingConnections(): void
         {
-            $global = $this->authedSession([
-                'dc_client_session:'.$this->tabA => self::SESSION,
-                'dc_session_clients:'.self::SESSION => [$this->tabA],
-            ]);
+            $this->authedSession();
+            $this->seedClientSession($this->tabA, self::SESSION);
+            $this->seedSessionClients(self::SESSION, [$this->tabA]);
 
             $this->trackSessionClient($this->tabB, self::SESSION);
 
@@ -669,18 +791,18 @@ namespace {
                 }
             }
             $this->assertSame([$this->tabA], $pinged, 'only the pre-existing connection is challenged');
-            $this->assertGreaterThan(0, $global->raw(\Events::DC_PING_SENT_KEY_PREFIX.$this->tabA));
+            $this->assertGreaterThan(0, \SharedState::get(\Events::DC_PING_SENT_KEY_PREFIX.$this->tabA));
             $this->assertNull(
-                $global->raw(\Events::DC_PONG_KEY_PREFIX.$this->tabA),
+                \SharedState::get(\Events::DC_PONG_KEY_PREFIX.$this->tabA),
                 'sending a ping must not fabricate a pong'
             );
 
             $this->assertSame(
                 [$this->tabA, $this->tabB],
-                $global->raw('dc_session_clients:'.self::SESSION),
+                \SharedState::get(self::SESSION_CLIENTS_KEY_PREFIX.self::SESSION),
                 'the new connection joins the session list'
             );
-            $this->assertSame(self::SESSION, $global->raw('dc_client_session:'.$this->tabB));
+            $this->assertSame(self::SESSION, \SharedState::get(self::CLIENT_SESSION_KEY_PREFIX.$this->tabB));
         }
 
         /**
@@ -691,10 +813,9 @@ namespace {
          */
         public function testSessionPruneTimerIsOneShotWithArrayArgs(): void
         {
-            $this->authedSession([
-                'dc_client_session:'.$this->tabA => self::SESSION,
-                'dc_session_clients:'.self::SESSION => [$this->tabA],
-            ]);
+            $this->authedSession();
+            $this->seedClientSession($this->tabA, self::SESSION);
+            $this->seedSessionClients(self::SESSION, [$this->tabA]);
 
             $this->trackSessionClient($this->tabB, self::SESSION);
 
@@ -705,7 +826,8 @@ namespace {
         }
 
         /**
-         * dc_timer:<sessionId> is an OWNER PID marker, never a raw timer id.
+         * dc:presence:timer:<sessionId> is an OWNER PID marker, never a raw
+         * timer id.
          *
          * Workerman timer ids are per-PROCESS and a duplicate-session connection
          * lands on whichever of the 5 BusinessWorkers the Gateway picked, so
@@ -716,14 +838,13 @@ namespace {
          */
         public function testSessionPruneTimerMarkerIsTheOwningPidNotATimerId(): void
         {
-            $global = $this->authedSession([
-                'dc_client_session:'.$this->tabA => self::SESSION,
-                'dc_session_clients:'.self::SESSION => [$this->tabA],
-            ]);
+            $this->authedSession();
+            $this->seedClientSession($this->tabA, self::SESSION);
+            $this->seedSessionClients(self::SESSION, [$this->tabA]);
 
             $this->trackSessionClient($this->tabB, self::SESSION);
 
-            $marker = $global->raw('dc_timer:'.self::SESSION);
+            $marker = \SharedState::get(self::SESSION_TIMER_KEY_PREFIX.self::SESSION);
             $this->assertSame(getmypid(), $marker, 'the shared marker must be the OWNING PID');
 
             $armed = TestTimer::withInterval(15.0);
@@ -731,7 +852,7 @@ namespace {
             $this->assertNotSame(
                 $armed[0]['id'],
                 $marker,
-                'the raw (process-local) timer id must NOT be published to GlobalData'
+                'the raw (process-local) timer id must NOT be published to the shared store'
             );
 
             $local = new ReflectionProperty(\Events::class, 'sessionPruneTimers');
@@ -746,10 +867,9 @@ namespace {
         /** Re-arming for the same session deletes the previous prune timer (MAJOR-5). */
         public function testRearmingSessionPruneDeletesThePreviousTimer(): void
         {
-            $this->authedSession([
-                'dc_client_session:'.$this->tabA => self::SESSION,
-                'dc_session_clients:'.self::SESSION => [$this->tabA],
-            ]);
+            $this->authedSession();
+            $this->seedClientSession($this->tabA, self::SESSION);
+            $this->seedSessionClients(self::SESSION, [$this->tabA]);
 
             $this->trackSessionClient($this->tabB, self::SESSION);
             $firstTimerId = TestTimer::withInterval(15.0)[0]['id'];
@@ -777,26 +897,23 @@ namespace {
          */
         public function testSessionPruneKeepsTwoMostRecentlyResponsiveConnections(): void
         {
-            $global = $this->authedSession([
-                'dc_client_session:'.$this->tabA => self::SESSION,
-                'dc_client_session:'.$this->tabB => self::SESSION,
-                'dc_client_session:'.$this->tabC => self::SESSION,
-                'dc_session_clients:'.self::SESSION => [$this->tabA, $this->tabB, $this->tabC],
-            ]);
+            $this->authedSession();
+            $this->seedClientSession($this->tabA, self::SESSION);
+            $this->seedClientSession($this->tabB, self::SESSION);
+            $this->seedClientSession($this->tabC, self::SESSION);
+            $this->seedSessionClients(self::SESSION, [$this->tabA, $this->tabB, $this->tabC]);
 
             $fourth = dc_client_id(1004);
             $this->trackSessionClient($fourth, self::SESSION);
 
             // The prune judges responsiveness against the ping IT just sent, so
             // the pongs have to land at/after that moment.
-            $pingedAt = $global->raw(\Events::DC_PING_SENT_KEY_PREFIX.$this->tabA);
+            $pingedAt = \SharedState::get(\Events::DC_PING_SENT_KEY_PREFIX.$this->tabA);
             $this->assertIsInt($pingedAt);
-            $global->seed([
-                \Events::DC_PONG_KEY_PREFIX.$this->tabA => $pingedAt + 3,
-                \Events::DC_PONG_KEY_PREFIX.$this->tabB => $pingedAt + 2,
-                \Events::DC_PONG_KEY_PREFIX.$this->tabC => $pingedAt + 1,
-                \Events::DC_PONG_KEY_PREFIX.$fourth => $pingedAt + 9,
-            ]);
+            $this->seedLiveness($this->tabA, $pingedAt + 3);
+            $this->seedLiveness($this->tabB, $pingedAt + 2);
+            $this->seedLiveness($this->tabC, $pingedAt + 1);
+            $this->seedLiveness($fourth, $pingedAt + 9);
 
             TestTimer::run(TestTimer::withInterval(15.0)[0]['id']);
 
@@ -805,11 +922,11 @@ namespace {
                 \GatewayWorker\Lib\Gateway::$closed,
                 'only the 2 most-recently-responsive connections survive the cap'
             );
-            $this->assertNull($global->raw('dc_client_session:'.$this->tabB));
-            $this->assertNull($global->raw('dc_client_session:'.$this->tabC));
+            $this->assertNull(\SharedState::get(self::CLIENT_SESSION_KEY_PREFIX.$this->tabB));
+            $this->assertNull(\SharedState::get(self::CLIENT_SESSION_KEY_PREFIX.$this->tabC));
             $this->assertSame(
                 [$this->tabA, $fourth],
-                $global->raw('dc_session_clients:'.self::SESSION),
+                \SharedState::get(self::SESSION_CLIENTS_KEY_PREFIX.self::SESSION),
                 'the session list keeps exactly the survivors'
             );
         }
@@ -820,10 +937,9 @@ namespace {
          */
         public function testSessionPruneDropsSilentButKeepsUnpingedConnections(): void
         {
-            $global = $this->authedSession([
-                'dc_client_session:'.$this->tabA => self::SESSION,
-                'dc_session_clients:'.self::SESSION => [$this->tabA],
-            ]);
+            $this->authedSession();
+            $this->seedClientSession($this->tabA, self::SESSION);
+            $this->seedSessionClients(self::SESSION, [$this->tabA]);
 
             // Challenges A; B is the newcomer and is never challenged.
             $this->trackSessionClient($this->tabB, self::SESSION);
@@ -834,36 +950,35 @@ namespace {
             $this->assertSame([$this->tabA], \GatewayWorker\Lib\Gateway::$closed);
             $this->assertSame(
                 self::SESSION,
-                $global->raw('dc_client_session:'.$this->tabB),
+                \SharedState::get(self::CLIENT_SESSION_KEY_PREFIX.$this->tabB),
                 'a connection that was never challenged must never be pruned'
             );
-            $this->assertNull($global->raw(\Events::DC_PONG_KEY_PREFIX.$this->tabA));
-            $this->assertNull($global->raw(\Events::DC_PING_SENT_KEY_PREFIX.$this->tabA));
+            $this->assertNull(\SharedState::get(\Events::DC_PONG_KEY_PREFIX.$this->tabA));
+            $this->assertNull(\SharedState::get(\Events::DC_PING_SENT_KEY_PREFIX.$this->tabA));
         }
 
         /**
          * A connection that ANSWERED the session_check must survive even after
-         * the 30s health sweep has re-pinged it and moved dc_ping_sent forward.
+         * the 30s health sweep has re-pinged it and moved the ping-sent stamp on.
          *
          * The prune must compare the pong against the $pingedAt captured when IT
-         * pinged, not against the shared dc_ping_sent: key — otherwise a client
-         * that answered promptly is closed purely because an unrelated timer
-         * pinged it again 1s before the prune ran.
+         * pinged, not against the shared dc:presence:ping_sent: key — otherwise
+         * a client that answered promptly is closed purely because an unrelated
+         * timer pinged it again 1s before the prune ran.
          */
         public function testSessionPruneKeepsAnsweringConnectionWhenHealthTimerRepingsAfterwards(): void
         {
-            $global = $this->authedSession([
-                'dc_client_session:'.$this->tabA => self::SESSION,
-                'dc_session_clients:'.self::SESSION => [$this->tabA],
-            ]);
+            $this->authedSession();
+            $this->seedClientSession($this->tabA, self::SESSION);
+            $this->seedSessionClients(self::SESSION, [$this->tabA]);
 
             $this->trackSessionClient($this->tabB, self::SESSION);
-            $pingedAt = $global->raw(\Events::DC_PING_SENT_KEY_PREFIX.$this->tabA);
+            $pingedAt = \SharedState::get(\Events::DC_PING_SENT_KEY_PREFIX.$this->tabA);
 
             // A answers the session_check…
-            $global->seed([\Events::DC_PONG_KEY_PREFIX.$this->tabA => $pingedAt]);
-            // …then the 30s health sweep pings it again, moving dc_ping_sent on.
-            $global->seed([\Events::DC_PING_SENT_KEY_PREFIX.$this->tabA => $pingedAt + 5]);
+            $this->seedLiveness($this->tabA, $pingedAt);
+            // …then the 30s health sweep pings it again, moving ping_sent on.
+            $this->seedLiveness($this->tabA, null, $pingedAt + 5);
 
             TestTimer::run(TestTimer::withInterval(15.0)[0]['id']);
 
@@ -872,31 +987,86 @@ namespace {
                 \GatewayWorker\Lib\Gateway::$closed,
                 'answering the session_check must protect the connection regardless of later pings'
             );
-            $this->assertSame(self::SESSION, $global->raw('dc_client_session:'.$this->tabA));
+            $this->assertSame(
+                self::SESSION,
+                \SharedState::get(self::CLIENT_SESSION_KEY_PREFIX.$this->tabA)
+            );
         }
 
         /**
          * $sessionId is client-supplied (auth.hello data.session) and is
-         * concatenated into GlobalData KEY names, so a malformed/oversized value
-         * must be refused outright rather than allowed to grow the shared store.
+         * concatenated into SharedState KEY names, so it is fenced twice:
+         *
+         *  1. Events' own shape guard must refuse malformed/oversized values
+         *     outright, writing NOTHING to the shared store — not even a
+         *     namespaced key — so one client can never grow the keyspace with
+         *     megabyte or arbitrary-byte key components.
+         *  2. SharedState's namespace guard makes every non-dc:* key throw
+         *     InvalidArgumentException BEFORE touching Redis. That guard is why
+         *     the pre-migration flat key names (dc_presence_clients,
+         *     dc_client_session:…) are now illegal writes, and it is what keeps
+         *     a key-building bug inside Events out of the other tenants of the
+         *     shared DB0.
          */
         public function testMalformedSessionIdIsRejectedAndWritesNothing(): void
         {
-            $global = $this->authedSession();
+            $this->authedSession();
 
             $this->trackSessionClient($this->tabA, str_repeat('A', 200));
             $this->trackSessionClient($this->tabB, "bad key\n<script>");
             $this->trackSessionClient($this->tabC, '');
 
-            foreach ($global->keys() as $key) {
-                $this->assertStringStartsNotWith(
-                    'dc_session_clients:',
-                    $key,
-                    'a malformed session id must not create a GlobalData key'
+            foreach ($this->redis->allKeys() as $key) {
+                $this->assertFalse(
+                    str_starts_with($key, 'dc:presence:'),
+                    "a malformed session id must not create a shared-store key, got '{$key}'"
                 );
-                $this->assertStringStartsNotWith('dc_client_session:', $key);
             }
-            $this->assertSame([], \GatewayWorker\Lib\Gateway::$sent);
+            $this->assertSame([], \GatewayWorker\Lib\Gateway::$sent, 'a rejected session must not ping anyone');
+            // A rejected session id returns before Events' prune branch
+            // (Events::trackSessionClient guards at ~:1819, the 15s one-shot
+            // Timer::add is at ~:1881), so no prune/health timer is ever armed.
+            $this->assertSame([], TestTimer::withInterval(15.0), 'a rejected session arms no prune timer');
+
+            // Guard 2a: Events' key builders compose inside the guarded namespace.
+            $keyBuilder = new ReflectionMethod(\Events::class, 'dcPresenceKey');
+            $keyBuilder->setAccessible(true);
+            $this->assertSame(
+                \Events::DC_PRESENCE_KEY_PREFIX.$this->tabA,
+                $keyBuilder->invoke(null, $this->tabA),
+                "Events' presence key builder is DC_PRESENCE_KEY_PREFIX + connection id"
+            );
+            foreach ([
+                \Events::DC_PRESENCE_KEY_PREFIX,
+                \Events::DC_PONG_KEY_PREFIX,
+                \Events::DC_PING_SENT_KEY_PREFIX,
+                self::CLIENT_SESSION_KEY_PREFIX,
+                self::SESSION_CLIENTS_KEY_PREFIX,
+                self::SESSION_TIMER_KEY_PREFIX,
+                self::MOVE_BATCH_KEY_PREFIX,
+                self::CLEANUP_KEY_PREFIX,
+            ] as $prefix) {
+                $this->assertStringStartsWith(
+                    \SharedState::PREFIX_PRESENCE,
+                    $prefix,
+                    "presence key prefix '{$prefix}' must live inside the facade's dc:presence: namespace"
+                );
+            }
+
+            // Guard 2b: the pre-migration key names escape dc:* and must throw.
+            foreach ([
+                'dc_presence_clients',
+                'dc_active_clients',
+                'dc_client_session:'.$this->tabA,
+                'dc_session_clients:'.self::SESSION,
+            ] as $retiredKey) {
+                try {
+                    \SharedState::get($retiredKey);
+                    $this->fail("SharedState::get('{$retiredKey}') must throw — a key outside dc:* escapes the namespace guard");
+                } catch (\InvalidArgumentException $e) {
+                    $this->assertStringContainsString($retiredKey, $e->getMessage());
+                }
+            }
         }
 
         // ====================================================================
@@ -917,7 +1087,7 @@ namespace {
          */
         public function testAdminAuthReplyIsCorrelatedAndCarriesHexClientId(): void
         {
-            $global = $this->authedSession();
+            $this->authedSession();
             $_SESSION = [];   // auth.hello must populate the session itself
 
             \Events::$db = new class {
@@ -988,7 +1158,11 @@ namespace {
                 ['client_id' => $this->tabA, 'group' => 'admins'],
                 \GatewayWorker\Lib\Gateway::$joined
             );
-            $this->assertSame(self::SESSION, $global->raw('dc_client_session:'.$this->tabA));
+            $this->assertSame(
+                self::SESSION,
+                \SharedState::get(self::CLIENT_SESSION_KEY_PREFIX.$this->tabA)
+            );
+            $this->assertSame([0 => $this->tabA], \SharedState::get(self::SESSION_CLIENTS_KEY_PREFIX.self::SESSION));
             $this->assertTrue($_SESSION['v1_authed']);
         }
 
@@ -1018,19 +1192,25 @@ namespace {
 
         /**
          * Flag A must be set to 0 EXPLICITLY to be dormant — an unset
-         * ws_new_handling reads ON (commit 9eabb50). The previous version of
-         * this test simply omitted the variable and therefore asserted dormancy
-         * while the handler ran.
+         * dc:flag:ws_new_handling reads ON (commit 9eabb50). The previous
+         * version of this test simply omitted the variable and therefore
+         * asserted dormancy while the handler ran.
          */
         public function testPresenceOpsAreDormantWhenFlagAIsExplicitlyOff(): void
         {
-            $global = $this->authedSession([FeatureFlags::VAR_NEW_HANDLING => 0]);
+            $this->authedSession([FeatureFlags::VAR_NEW_HANDLING => 0]);
 
             $this->presenceOp('dc.presence.join', ['x' => 0.0, 'z' => 0.0, 'yaw' => 0.0], $this->tabA);
 
             $this->assertSame([], \GatewayWorker\Lib\Gateway::$sent, 'Flag A OFF: no reply');
             $this->assertSame([], \GatewayWorker\Lib\Gateway::$sentToGroup, 'Flag A OFF: no broadcast');
-            $this->assertNull($global->raw('dc_presence:client:'.$this->tabA));
+            $this->assertNull($this->presenceRecord($this->tabA));
+            foreach ($this->redis->allKeys() as $key) {
+                $this->assertFalse(
+                    str_starts_with($key, 'dc:presence:'),
+                    "dormant Flag A must write no presence key at all, got '{$key}'"
+                );
+            }
             $this->assertDeadChannelTransportUnused('flag A off:');
         }
     }

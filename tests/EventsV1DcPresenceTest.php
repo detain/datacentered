@@ -5,6 +5,33 @@
  * handleDcPresenceMove(), handleDcPresenceLeave(), handleDcViewportUpdate() and
  * the batched flush (flushPresenceBatch).
  *
+ * PORTED (GlobalData→Redis migration, phase 5.2-C): all presence state now
+ * lives behind the SharedState Redis facade. The suite injects a fresh
+ * InMemoryRedis double through SharedState::setClient() in setUp and REVERSES
+ * the injection in tearDown (setClient(null) + unset $GLOBALS['redis'] +
+ * SharedState::reset()) — the same discipline tests/EventsV1AuthHelloTest.php,
+ * tests/FeatureFlagsTest.php and tests/SharedStateTest.php use. Leaving a
+ * live-but-empty double installed would leak process-wide and flip later
+ * suites' FeatureFlags fail-safe semantics (unset flag over a live client
+ * reads ON; unreachable store throws and reads OFF). Seeding goes through the
+ * SAME facade methods production uses
+ * (SharedState::set / zAdd), never by hand-encoding: the facade JSON-encodes
+ * ZSET members, so a hand-encoded member would round-trip as a quoted string
+ * and every index assertion would silently target a different value.
+ *
+ * Production shapes asserted here (Events.php is authoritative):
+ *   - dc:presence:client:<id>  STRING JSON, EX 90s (PRESENCE_STALE_TTL),
+ *     refreshed on join / move / pong (touchPresence).
+ *   - dc:presence:index and dc:presence:active  ZSETs, score = last-seen unix
+ *     ts, member = raw client id (both written by presenceIndexAdd()).
+ *   - Session/throttle/bounds keys under dc:presence:* — client_session,
+ *     session_clients, move_batch, move_throttle, viewport, room_bounds, ping,
+ *     ping_sent, cleanup. Read via the actual builders in Events.php.
+ *   - Lock VALUES are RAW (never JSON): a lock may only be planted through the
+ *     double's raw set($key, $token, ['nx','ex'=>…]). No presence op takes a
+ *     lock, so this file plants none; the rule is pinned here because the
+ *     facade's set() would silently corrupt one.
+ *
  * WHAT CHANGED HERE AND WHY (this file was asserting fiction)
  *
  *  - TRANSPORT. Every broadcast assertion went through a FakeChannelClient
@@ -25,13 +52,13 @@
  *    a real id arrives. Int fixtures would let that straight back in, so every
  *    id here comes from dc_client_id().
  *
- *  - KEY SHAPE. Assertions targeted $global->{'dc_presence:'.$uid}. Presence is
- *    per-CONNECTION: dc_presence:client:<client_id>, indexed by
- *    dc_presence_clients / dc_active_clients (multiple tabs share a uid).
+ *  - KEY SHAPE. Presence is per-CONNECTION: dc:presence:client:<client_id>,
+ *    indexed by the dc:presence:index / dc:presence:active ZSETs (multiple tabs
+ *    share a uid). Nothing is ever keyed by uid.
  *
  *  - MOVE. There is no per-move dc.presence.updated broadcast. Moves are
- *    written to dc_move_batch:<client_id> and coalesced by a one-shot 50ms
- *    timer into ONE dc.presence.batch_updated event (BUG-B7). The timer is
+ *    written to dc:presence:move_batch:<client_id> and coalesced by a one-shot
+ *    50ms timer into ONE dc.presence.batch_updated event (BUG-B7). The timer is
  *    recorded by TestTimer and fired explicitly.
  *
  *  - EVENT vs REPLY SHAPE. Events are v1Envelope() — v/id/op/ts/data and
@@ -46,13 +73,16 @@
  * @see Events::handleDcPresenceLeave()
  * @see Events::flushPresenceBatch()
  * @see Events::broadcastDcPresence()
+ * @see Applications/Chat/SharedState.php
  */
 
 namespace {
     use PHPUnit\Framework\TestCase;
 
-    // Declares the offline \GlobalData\Client, the \Channel\Client tripwire, the
-    // recording Timer loop and the fake Gateway, then loads FeatureFlags + Events.
+    // Declares the Channel tripwire, the recording Timer loop and the fake
+    // Gateway, then loads FeatureFlags + Events (and through them SharedState).
+    // The offline legacy shared-state stub it also declares belongs to sibling
+    // suites still mid-migration; this suite never touches it.
     require_once __DIR__.'/V1TestSupport.php';
 
     class EventsV1DcPresenceTest extends TestCase
@@ -62,6 +92,9 @@ namespace {
         private const REMOTE = '203.0.113.10';
         private const UID = 77;
         private const NAME = 'adminuser';
+
+        /** @var InMemoryRedis the SharedState double injected by setUp() */
+        private $redis;
 
         /** @var string 20-char hex gateway client id (never an int) */
         private string $clientId;
@@ -73,6 +106,15 @@ namespace {
         {
             $this->clientId = dc_client_id(10);
             $this->peerId = dc_client_id(11);
+
+            // SharedState prefers $GLOBALS['redis'] over any injected client, so
+            // clear it first, then hand the facade a fresh in-memory double —
+            // no $GLOBALS['redis'] leak from another suite may decide presence
+            // behavior here.
+            unset($GLOBALS['redis']);
+            $this->redis = new InMemoryRedis();
+            SharedState::setClient($this->redis);
+
             $this->resetState();
             $_SERVER['REMOTE_ADDR'] = self::REMOTE;
         }
@@ -80,60 +122,99 @@ namespace {
         protected function tearDown(): void
         {
             $this->resetState();
+            // REVERSE the injection rather than re-installing a fresh-but-empty
+            // double: SharedState::$client is a process static, and a leaked
+            // live client would invert FeatureFlags' fail-safe semantics for
+            // every later suite (unset flag reads ON over a live client, OFF
+            // only when the store is unreachable). Mirrors AuthHello exactly.
+            SharedState::setClient(null);
+            unset($GLOBALS['redis']);
+            SharedState::reset();
         }
 
+        /** Clear Gateway/session/Events statics only; the Redis double lives in setUp/tearDown. */
         private function resetState(): void
         {
             \GatewayWorker\Lib\Gateway::reset();
             \Channel\Client::reset();
-            \GlobalData\Client::resetConstructed();
             TestTimer::install();
             $_SESSION = [];
             \Events::$db = null;
             // PRODUCTION CONFIGURATION: no channel seam. The old suite installed
             // one in setUp() and thereby hid BUG-A3 completely.
             \Events::$channelClient = null;
-            \Events::$moveBatch = [];
+            // $moveBatch is a dead relic (the batch moved into
+            // dc:presence:move_batch:* keys); $moveBatchTimer is still live
+            // process-local static state consulted by scheduleDcPresenceFlush().
             \Events::$moveBatchTimer = null;
-            unset($GLOBALS['global']);
-
-            $ref = new ReflectionClass(FeatureFlags::class);
-            $prop = $ref->getProperty('client');
-            $prop->setAccessible(true);
-            $prop->setValue(null, null);
         }
 
         /**
-         * Flag A ON + an authenticated admin session + a GlobalData keyspace
-         * seeded the way a live worker's is.
+         * Flag A ON + an authenticated admin session, optionally with presence
+         * members already in the scene, given as [client_id => presence entry].
          *
-         * dc_active_clients is seeded because onWorkerStart() seeds it on a cold
-         * start ($global->dc_active_clients = []). dc_presence_clients is seeded
-         * here too — see
-         * testJoinCasLoopLivelocksWhenPresenceIndexWasNeverSeeded() for why
-         * production must do the same and currently does not.
+         * Each member is seeded through the SAME facade calls production makes:
+         * SharedState::set for the dc:presence:client:<id> record and
+         * SharedState::zAdd for both index ZSETs (presenceIndexAdd's shape), so
+         * the facade's JSON member encoding round-trips exactly like a live join.
          *
-         * Flag C (bot presence) is OFF so the bot system does not interfere with
-         * plain presence assertions; EventsBotPresenceTest covers it with C on.
+         * No index "seeding" sentinel exists anymore: Redis zAdd creates each
+         * index on first write (the retired CAS-era seedClientIndex() had no
+         * job here beyond that — see Events::presenceIndexAdd()'s migration
+         * note). Flag C (bot presence) is OFF so the bot system does not
+         * interfere with plain presence assertions; EventsBotPresenceTest
+         * covers it with C on.
+         *
+         * @param array<string,array> $members client_id => presence entry
          */
-        private function authedSession(array $seed = []): InMemoryGlobalData
+        private function authedSession(array $members = []): void
         {
-            $global = new InMemoryGlobalData(array_merge([
-                FeatureFlags::VAR_NEW_HANDLING => 1,
-                FeatureFlags::VAR_DC_BOT_PRESENCE => 0,
-                'hosts' => [],
-                'dc_presence_clients' => [],
-                'dc_active_clients' => [],
-            ], $seed));
-            $GLOBALS['global'] = $global;
+            // Flags are plain dc:flag: keys with no TTL; written through the
+            // facade exactly like FeatureFlags' own operators do.
+            SharedState::set(FeatureFlags::VAR_NEW_HANDLING, 1);
+            SharedState::set(FeatureFlags::VAR_DC_BOT_PRESENCE, 0);
+
+            foreach ($members as $clientId => $entry) {
+                $this->seedPresenceMember((string) $clientId, $entry);
+            }
 
             $_SESSION['v1_authed'] = true;
             $_SESSION['uid'] = self::UID;
             $_SESSION['name'] = self::NAME;
             $_SESSION['ima'] = 'admin';
             $_SESSION['login'] = true;
+        }
 
-            return $global;
+        /** Put one member in the scene the way a completed join would have. */
+        private function seedPresenceMember(string $clientId, array $entry): void
+        {
+            SharedState::set(\Events::DC_PRESENCE_KEY_PREFIX.$clientId, $entry, \Events::PRESENCE_STALE_TTL);
+            SharedState::zAdd(\Events::DC_PRESENCE_INDEX_KEY, $entry['ts'], $clientId);
+            SharedState::zAdd(\Events::DC_ACTIVE_INDEX_KEY, $entry['ts'], $clientId);
+        }
+
+        /** The per-connection presence record, decoded through the facade. */
+        private function presenceRecord(string $clientId)
+        {
+            return SharedState::get(\Events::DC_PRESENCE_KEY_PREFIX.$clientId);
+        }
+
+        /** @return array<int,mixed> raw client ids, score order */
+        private function presenceIndex(): array
+        {
+            return SharedState::zRange(\Events::DC_PRESENCE_INDEX_KEY, 0, -1);
+        }
+
+        /** @return array<int,mixed> raw client ids, score order */
+        private function activeIndex(): array
+        {
+            return SharedState::zRange(\Events::DC_ACTIVE_INDEX_KEY, 0, -1);
+        }
+
+        /** @return array<int,string> every key currently in the raw keyspace */
+        private function keys(): array
+        {
+            return $this->redis->allKeys();
         }
 
         /** Send dc.presence.<op> through the real dispatchV1 entry point. */
@@ -187,11 +268,13 @@ namespace {
          *
          * trackSessionClient() carried `int $client_id` and crash-looped the
          * BusinessWorker (102 fatals / 155 restarts) the first time a real id
-         * reached it. Nothing in this path may narrow client_id to int.
+         * reached it. Nothing in this path may narrow client_id to int — and
+         * the ZSET round-trip must hand the raw hex string back, never a
+         * mangled or double-encoded variant.
          */
         public function testHexStringClientIdFlowsThroughPresenceWithoutTypeError(): void
         {
-            $global = $this->authedSession();
+            $this->authedSession();
 
             $this->assertSame(20, strlen($this->clientId), 'fixture must be a REAL 20-char hex client_id');
             $this->assertMatchesRegularExpression('/^[0-9a-f]{20}$/', $this->clientId);
@@ -203,17 +286,23 @@ namespace {
             );
 
             $this->presenceOp('dc.presence.join', ['x' => 1.5, 'z' => 2.5, 'yaw' => 0.25], null, 'join-1');
+
+            // The record key and BOTH index members must carry the full hex
+            // string verbatim — key builder and facade JSON round-trip alike.
+            $this->assertContains(
+                'dc:presence:client:'.$this->clientId,
+                $this->keys(),
+                'presence key must be built from the hex client_id verbatim'
+            );
+            $this->assertSame([$this->clientId], $this->presenceIndex(), 'index member must round-trip as the raw hex string');
+            $this->assertSame([$this->clientId], $this->activeIndex());
+
             $this->presenceOp('dc.presence.move', ['x' => 3.5, 'z' => 4.5, 'yaw' => 0.75], null, 'move-1');
             TestTimer::runAll();
             $this->presenceOp('dc.presence.leave', [], null, 'leave-1');
 
-            // The keys used along the way must contain the full hex string.
-            $this->assertContains(
-                'dc_presence:client:'.$this->clientId,
-                $global->keys(),
-                'presence key must be built from the hex client_id verbatim'
-            );
-            $this->assertNoLazyGlobalDataFallback();
+            $this->assertNull($this->presenceRecord($this->clientId));
+            $this->assertSame([], $this->presenceIndex());
             $this->assertDeadChannelTransportUnused();
         }
 
@@ -225,7 +314,7 @@ namespace {
          */
         public function testTrackSessionClientAcceptsHexStringClientId(): void
         {
-            $global = $this->authedSession();
+            $this->authedSession();
 
             $method = new ReflectionMethod(\Events::class, 'trackSessionClient');
             $method->setAccessible(true);
@@ -233,12 +322,12 @@ namespace {
 
             $this->assertSame(
                 'mystage-session-abc',
-                $global->raw('dc_client_session:'.$this->clientId),
+                SharedState::get('dc:presence:client_session:'.$this->clientId),
                 'client_id -> session mapping must be keyed by the hex string'
             );
             $this->assertSame(
                 [$this->clientId],
-                $global->raw('dc_session_clients:mystage-session-abc'),
+                SharedState::get('dc:presence:session_clients:mystage-session-abc'),
                 'the session -> clients list must hold the hex string, not an int'
             );
 
@@ -256,12 +345,12 @@ namespace {
 
         public function testJoinStoresPerConnectionEntryAndIndexes(): void
         {
-            $global = $this->authedSession();
+            $this->authedSession();
 
             $this->presenceOp('dc.presence.join', ['x' => 10.5, 'z' => -3.25, 'yaw' => 1.57]);
 
-            $entry = $global->raw('dc_presence:client:'.$this->clientId);
-            $this->assertIsArray($entry, 'join must store dc_presence:client:<client_id>');
+            $entry = $this->presenceRecord($this->clientId);
+            $this->assertIsArray($entry, 'join must store dc:presence:client:<client_id>');
             $this->assertSame(10.5, $entry['x']);
             $this->assertSame(-3.25, $entry['z']);
             $this->assertSame(1.57, $entry['yaw']);
@@ -270,11 +359,12 @@ namespace {
             $this->assertSame($this->clientId, $entry['client_id'], 'entry carries its own hex client_id');
             $this->assertArrayHasKey('ts', $entry);
 
-            $this->assertSame([$this->clientId], $global->raw('dc_presence_clients'));
-            $this->assertSame([$this->clientId], $global->raw('dc_active_clients'));
+            $this->assertSame([$this->clientId], $this->presenceIndex());
+            $this->assertSame([$this->clientId], $this->activeIndex());
 
             // Presence is per-connection: nothing may be written under the uid.
-            $this->assertNotContains('dc_presence:'.self::UID, $global->keys());
+            $this->assertNotContains('dc:presence:'.self::UID, $this->keys());
+            $this->assertNotContains('dc:presence:client:'.self::UID, $this->keys());
         }
 
         /**
@@ -352,22 +442,25 @@ namespace {
          */
         public function testJoinRecordsValidBrowserReportedRoomBounds(): void
         {
-            $global = $this->authedSession();
+            $this->authedSession();
 
             $this->presenceOp('dc.presence.join', [
                 'x' => 0.0, 'z' => 0.0, 'yaw' => 0.0,
                 'bounds' => ['minX' => -120.0, 'maxX' => 40.0, 'minZ' => -130.0, 'maxZ' => 20.0],
             ]);
 
-            $this->assertSame(
+            // Numeric equality, not identical(): the facade's JSON trip types
+            // integral floats as ints on the wire (-120.0 arrives as -120), and
+            // the browser's JSON.parse would see the very same shape.
+            $this->assertEquals(
                 ['minX' => -120.0, 'maxX' => 40.0, 'minZ' => -130.0, 'maxZ' => 20.0],
-                $global->raw(\Events::DC_ROOM_BOUNDS_KEY_PREFIX.\Events::BOT_DEFAULT_LOCATION)
+                SharedState::get(\Events::DC_ROOM_BOUNDS_KEY_PREFIX.\Events::BOT_DEFAULT_LOCATION)
             );
         }
 
         public function testJoinIgnoresHostileRoomBounds(): void
         {
-            $global = $this->authedSession();
+            $this->authedSession();
 
             $this->presenceOp('dc.presence.join', [
                 'x' => 0.0, 'z' => 0.0, 'yaw' => 0.0,
@@ -375,7 +468,7 @@ namespace {
             ]);
 
             $this->assertNull(
-                $global->raw(\Events::DC_ROOM_BOUNDS_KEY_PREFIX.\Events::BOT_DEFAULT_LOCATION),
+                SharedState::get(\Events::DC_ROOM_BOUNDS_KEY_PREFIX.\Events::BOT_DEFAULT_LOCATION),
                 'absurd bounds must be rejected outright, not recorded'
             );
         }
@@ -386,18 +479,19 @@ namespace {
 
         public function testMoveUpdatesEntryAndQueuesBatchWithoutReplying(): void
         {
-            $global = $this->authedSession([
-                'dc_presence_clients' => [$this->clientId],
-                'dc_active_clients' => [$this->clientId],
-                'dc_presence:client:'.$this->clientId => $this->presenceEntry($this->clientId),
+            $this->authedSession([
+                $this->clientId => $this->presenceEntry($this->clientId),
             ]);
 
             $this->presenceOp('dc.presence.move', ['x' => 99.5, 'z' => -77.25, 'yaw' => 3.0]);
 
-            $entry = $global->raw('dc_presence:client:'.$this->clientId);
+            // (float) reads tolerate the JSON wire's int/float unification of
+            // integral values (3.0 round-trips as int 3) without loosening the
+            // exactness of the comparison itself.
+            $entry = $this->presenceRecord($this->clientId);
             $this->assertSame(99.5, $entry['x']);
             $this->assertSame(-77.25, $entry['z']);
-            $this->assertSame(3.0, $entry['yaw']);
+            $this->assertSame(3.0, (float) $entry['yaw']);
 
             $this->assertEmpty($this->sent(), 'move is fire-and-forget: NO reply to the mover');
             $this->assertSame(
@@ -406,8 +500,8 @@ namespace {
                 'a move must not broadcast immediately — it is coalesced by the 50ms batch timer'
             );
 
-            $queued = json_decode($global->raw('dc_move_batch:'.$this->clientId), true);
-            $this->assertIsArray($queued, 'move must be queued at dc_move_batch:<client_id>');
+            $queued = SharedState::get('dc:presence:move_batch:'.$this->clientId);
+            $this->assertIsArray($queued, 'move must queue the entry array at dc:presence:move_batch:<client_id>');
             $this->assertSame(99.5, $queued['x']);
         }
 
@@ -417,11 +511,9 @@ namespace {
          */
         public function testBatchFlushBroadcastsBatchUpdatedViaGatewayGroup(): void
         {
-            $global = $this->authedSession([
-                'dc_presence_clients' => [$this->clientId, $this->peerId],
-                'dc_active_clients' => [$this->clientId, $this->peerId],
-                'dc_presence:client:'.$this->clientId => $this->presenceEntry($this->clientId),
-                'dc_presence:client:'.$this->peerId => $this->presenceEntry($this->peerId),
+            $this->authedSession([
+                $this->clientId => $this->presenceEntry($this->clientId),
+                $this->peerId => $this->presenceEntry($this->peerId),
             ]);
 
             $this->presenceOp('dc.presence.move', ['x' => 1.0, 'z' => 2.0, 'yaw' => 0.0]);
@@ -445,8 +537,8 @@ namespace {
             $this->assertEqualsWithDelta(8.0, $batch[$this->peerId]['x'], 0.001);
 
             // Batch keys are cleared after the flush (CRIT-7).
-            $this->assertNull($global->raw('dc_move_batch:'.$this->clientId));
-            $this->assertNull($global->raw('dc_move_batch:'.$this->peerId));
+            $this->assertNull(SharedState::get('dc:presence:move_batch:'.$this->clientId));
+            $this->assertNull(SharedState::get('dc:presence:move_batch:'.$this->peerId));
 
             $this->assertNull(\Events::$moveBatchTimer, 'the flush must disarm itself so the next move re-arms');
             $this->assertDeadChannelTransportUnused('batch flush:');
@@ -463,21 +555,19 @@ namespace {
             $watcher = dc_client_id(21);   // fresh viewport, looking away from the mover
             $blind = dc_client_id(22);     // no viewport data at all
 
-            $global = $this->authedSession([
-                'dc_presence_clients' => [$mover, $watcher, $blind],
-                'dc_active_clients' => [$mover, $watcher, $blind],
-                'dc_presence:client:'.$mover => $this->presenceEntry($mover, 500.0, 500.0),
-                'dc_presence:client:'.$watcher => $this->presenceEntry($watcher),
-                'dc_presence:client:'.$blind => $this->presenceEntry($blind),
-                // flushPresenceBatch() only sends to clients with a session mapping.
-                'dc_client_session:'.$watcher => 'sess-w',
-                'dc_client_session:'.$blind => 'sess-b',
-                'dc_viewport:'.$watcher => [
-                    'x' => 0.0, 'z' => 0.0, 'dirX' => -1.0, 'dirZ' => 0.0,
-                    'viewDist' => 50.0, 'ts' => time(),
-                ],
-                'dc_move_batch:'.$mover => json_encode($this->presenceEntry($mover, 500.0, 500.0)),
+            $this->authedSession([
+                $mover => $this->presenceEntry($mover, 500.0, 500.0),
+                $watcher => $this->presenceEntry($watcher),
+                $blind => $this->presenceEntry($blind),
             ]);
+            // flushPresenceBatch() only sends to clients with a session mapping.
+            SharedState::set('dc:presence:client_session:'.$watcher, 'sess-w');
+            SharedState::set('dc:presence:client_session:'.$blind, 'sess-b');
+            SharedState::set('dc:presence:viewport:'.$watcher, [
+                'x' => 0.0, 'z' => 0.0, 'dirX' => -1.0, 'dirZ' => 0.0,
+                'viewDist' => 50.0, 'ts' => time(),
+            ]);
+            SharedState::set('dc:presence:move_batch:'.$mover, $this->presenceEntry($mover, 500.0, 500.0));
 
             $flush = new ReflectionMethod(\Events::class, 'flushPresenceBatch');
             $flush->setAccessible(true);
@@ -497,7 +587,6 @@ namespace {
                 'once ANY client has fresh viewport data the flush unicasts; no group broadcast'
             );
             $this->assertDeadChannelTransportUnused('viewport flush:');
-            unset($global);
         }
 
         public function testMoveSilentlyIgnoresUnjoinedConnection(): void
@@ -520,57 +609,51 @@ namespace {
         public function testMoveWithForeignClientIdIsDroppedNotApplied(): void
         {
             $victim = dc_client_id(30);
-            $global = $this->authedSession([
-                'dc_presence_clients' => [$this->clientId, $victim],
-                'dc_active_clients' => [$this->clientId, $victim],
-                'dc_presence:client:'.$this->clientId => $this->presenceEntry($this->clientId),
-                'dc_presence:client:'.$victim => $this->presenceEntry($victim, 100.0, 100.0),
+            $this->authedSession([
+                $this->clientId => $this->presenceEntry($this->clientId),
+                $victim => $this->presenceEntry($victim, 100.0, 100.0),
             ]);
 
             $this->presenceOp('dc.presence.move', [
                 'x' => -1.0, 'z' => -1.0, 'yaw' => 0.0, 'clientId' => $victim,
             ]);
 
-            $victimEntry = $global->raw('dc_presence:client:'.$victim);
-            $this->assertSame(100.0, $victimEntry['x'], 'another connection\'s avatar must not be moved');
-            $this->assertSame(100.0, $victimEntry['z']);
+            $victimEntry = $this->presenceRecord($victim);
+            $this->assertSame(100.0, (float) $victimEntry['x'], 'another connection\'s avatar must not be moved');
+            $this->assertSame(100.0, (float) $victimEntry['z']);
 
-            $ownEntry = $global->raw('dc_presence:client:'.$this->clientId);
-            $this->assertSame(0.0, $ownEntry['x'], 'a mismatching supplied clientId drops the move entirely');
-            $this->assertNull($global->raw('dc_move_batch:'.$this->clientId));
+            $ownEntry = $this->presenceRecord($this->clientId);
+            $this->assertSame(0.0, (float) $ownEntry['x'], 'a mismatching supplied clientId drops the move entirely');
+            $this->assertNull(SharedState::get('dc:presence:move_batch:'.$this->clientId));
         }
 
         /** An echoed-back OWN clientId (older clients do this) is tolerated. */
         public function testMoveWithOwnClientIdEchoedBackIsAccepted(): void
         {
-            $global = $this->authedSession([
-                'dc_presence_clients' => [$this->clientId],
-                'dc_active_clients' => [$this->clientId],
-                'dc_presence:client:'.$this->clientId => $this->presenceEntry($this->clientId),
+            $this->authedSession([
+                $this->clientId => $this->presenceEntry($this->clientId),
             ]);
 
             $this->presenceOp('dc.presence.move', [
                 'x' => 12.0, 'z' => 13.0, 'yaw' => 0.0, 'clientId' => $this->clientId,
             ]);
 
-            $this->assertSame(12.0, $global->raw('dc_presence:client:'.$this->clientId)['x']);
+            $this->assertSame(12.0, (float) $this->presenceRecord($this->clientId)['x']);
         }
 
         /** 150ms per-connection throttle mirrors the client THROTTLE_MS. */
         public function testMoveIsThrottledPerConnection(): void
         {
-            $global = $this->authedSession([
-                'dc_presence_clients' => [$this->clientId],
-                'dc_active_clients' => [$this->clientId],
-                'dc_presence:client:'.$this->clientId => $this->presenceEntry($this->clientId),
-                'dc_move_throttle:'.$this->clientId => microtime(true),
+            $this->authedSession([
+                $this->clientId => $this->presenceEntry($this->clientId),
             ]);
+            SharedState::set('dc:presence:move_throttle:'.$this->clientId, microtime(true));
 
             $this->presenceOp('dc.presence.move', ['x' => 42.0, 'z' => 42.0, 'yaw' => 0.0]);
 
             $this->assertSame(
                 0.0,
-                $global->raw('dc_presence:client:'.$this->clientId)['x'],
+                (float) $this->presenceRecord($this->clientId)['x'],
                 'a move within 150ms of the previous one must be dropped'
             );
         }
@@ -581,16 +664,15 @@ namespace {
 
         public function testLeaveRemovesEntryRepliesAndBroadcastsLeft(): void
         {
-            $global = $this->authedSession([
-                'dc_presence_clients' => [$this->clientId],
-                'dc_active_clients' => [$this->clientId],
-                'dc_presence:client:'.$this->clientId => $this->presenceEntry($this->clientId),
+            $this->authedSession([
+                $this->clientId => $this->presenceEntry($this->clientId),
             ]);
 
             $this->presenceOp('dc.presence.leave', [], null, 'leave-req');
 
-            $this->assertNull($global->raw('dc_presence:client:'.$this->clientId), 'entry must be cleared');
-            $this->assertSame([], $global->raw('dc_presence_clients'), 'index must drop the client');
+            $this->assertNull($this->presenceRecord($this->clientId), 'entry must be cleared');
+            $this->assertSame([], $this->presenceIndex(), 'index must drop the client');
+            $this->assertSame([], $this->activeIndex(), 'the recipient index must drop the client too');
 
             $reply = $this->singleReply();
             $this->assertIsV1Reply($reply, 'leave-req');
@@ -623,22 +705,23 @@ namespace {
          * A dropped socket announces dc.presence.left over the Gateway group
          * before cleaning up, so remaining avatars disappear immediately rather
          * than waiting up to 30s for the health timer.
+         *
+         * The old fixture also seeded the 'running' and 'rooms' shared-state
+         * registries; both are Redis HASH/SETs now (dc:state:rooms,
+         * dc:state:running_ids) that read as empty when absent, so onClose
+         * needs no pre-seeding of them at all.
          */
         public function testOnCloseBroadcastsLeftAndCleansUpConnectionKeys(): void
         {
-            $global = $this->authedSession([
-                'dc_presence_clients' => [$this->clientId],
-                'dc_active_clients' => [$this->clientId],
-                'dc_presence:client:'.$this->clientId => $this->presenceEntry($this->clientId),
-                'dc_client_session:'.$this->clientId => 'sess-1',
-                'dc_session_clients:sess-1' => [$this->clientId],
-                \Events::DC_PONG_KEY_PREFIX.$this->clientId => time(),
-                \Events::DC_PING_SENT_KEY_PREFIX.$this->clientId => time(),
-                'dc_viewport:'.$this->clientId => ['ts' => time()],
-                'dc_move_throttle:'.$this->clientId => microtime(true),
-                'running' => [],
-                'rooms' => [],
+            $this->authedSession([
+                $this->clientId => $this->presenceEntry($this->clientId),
             ]);
+            SharedState::set('dc:presence:client_session:'.$this->clientId, 'sess-1');
+            SharedState::set('dc:presence:session_clients:sess-1', [$this->clientId]);
+            SharedState::set(\Events::DC_PONG_KEY_PREFIX.$this->clientId, time());
+            SharedState::set(\Events::DC_PING_SENT_KEY_PREFIX.$this->clientId, time());
+            SharedState::set('dc:presence:viewport:'.$this->clientId, ['ts' => time()]);
+            SharedState::set('dc:presence:move_throttle:'.$this->clientId, microtime(true));
             \GatewayWorker\Lib\Gateway::$uidClientIds[self::UID] = [$this->clientId];
 
             \Events::onClose($this->clientId);
@@ -647,16 +730,16 @@ namespace {
             $this->assertCount(1, $events, 'onClose must announce the departure');
             $this->assertSame($this->clientId, $events[0]['data']['clientId']);
 
-            $this->assertNull($global->raw('dc_presence:client:'.$this->clientId));
-            $this->assertSame([], $global->raw('dc_presence_clients'));
-            $this->assertSame([], $global->raw('dc_active_clients'));
-            $this->assertNull($global->raw('dc_client_session:'.$this->clientId));
-            $this->assertSame([], $global->raw('dc_session_clients:sess-1'));
-            $this->assertNull($global->raw(\Events::DC_PONG_KEY_PREFIX.$this->clientId));
-            $this->assertNull($global->raw(\Events::DC_PING_SENT_KEY_PREFIX.$this->clientId));
-            $this->assertNull($global->raw('dc_viewport:'.$this->clientId));
-            $this->assertNull($global->raw('dc_move_throttle:'.$this->clientId));
-            $this->assertNull($global->raw('dc_cleanup:'.$this->clientId), 'the cleanup sentinel must be released');
+            $this->assertNull($this->presenceRecord($this->clientId));
+            $this->assertSame([], $this->presenceIndex());
+            $this->assertSame([], $this->activeIndex());
+            $this->assertNull(SharedState::get('dc:presence:client_session:'.$this->clientId));
+            $this->assertSame([], SharedState::get('dc:presence:session_clients:sess-1'));
+            $this->assertNull(SharedState::get(\Events::DC_PONG_KEY_PREFIX.$this->clientId));
+            $this->assertNull(SharedState::get(\Events::DC_PING_SENT_KEY_PREFIX.$this->clientId));
+            $this->assertNull(SharedState::get('dc:presence:viewport:'.$this->clientId));
+            $this->assertNull(SharedState::get('dc:presence:move_throttle:'.$this->clientId));
+            $this->assertNull(SharedState::get('dc:presence:cleanup:'.$this->clientId), 'the cleanup sentinel must be released');
 
             $this->assertDeadChannelTransportUnused('onClose:');
         }
@@ -666,15 +749,15 @@ namespace {
         // ====================================================================
 
         /**
-         * A pong records the RECEIPT time under dc_ping: and must not touch
-         * dc_ping_sent:. Writing the send time into dc_ping: (the old bug) made
-         * a correctly answering client indistinguishable from a silent one.
+         * A pong records the RECEIPT time under dc:presence:ping: and must not
+         * touch dc:presence:ping_sent:. Writing the send time into the pong key
+         * (the old bug) made a correctly answering client indistinguishable
+         * from a silent one.
          */
         public function testPongRecordsReceiptTimeUnderPongKeyOnly(): void
         {
-            $global = $this->authedSession([
-                \Events::DC_PING_SENT_KEY_PREFIX.$this->clientId => 1000,
-            ]);
+            $this->authedSession();
+            SharedState::set(\Events::DC_PING_SENT_KEY_PREFIX.$this->clientId, 1000);
 
             \Events::dispatchV1($this->clientId, [
                 'v' => 1, 'id' => 'keepalive', 'op' => 'pong', 'ts' => time(), 'data' => [],
@@ -682,13 +765,13 @@ namespace {
 
             $this->assertGreaterThan(
                 0,
-                $global->raw(\Events::DC_PONG_KEY_PREFIX.$this->clientId),
-                'pong must record the receipt time under dc_ping:<client_id>'
+                (int) SharedState::get(\Events::DC_PONG_KEY_PREFIX.$this->clientId),
+                'pong must record the receipt time under dc:presence:ping:<client_id>'
             );
             $this->assertSame(
                 1000,
-                $global->raw(\Events::DC_PING_SENT_KEY_PREFIX.$this->clientId),
-                'pong must NOT overwrite dc_ping_sent: (that is the hub\'s send record)'
+                SharedState::get(\Events::DC_PING_SENT_KEY_PREFIX.$this->clientId),
+                'pong must NOT overwrite dc:presence:ping_sent: (that is the hub\'s send record)'
             );
             $this->assertSame([], $this->sent(), 'a pong is not answered');
         }
@@ -699,25 +782,27 @@ namespace {
 
         public function testViewportUpdateStoresNormalisedViewportForConnection(): void
         {
-            $global = $this->authedSession();
+            $this->authedSession();
 
             \Events::dispatchV1($this->clientId, [
                 'v' => 1, 'id' => 'vp-1', 'op' => 'dc.viewport.update', 'ts' => time(),
                 'data' => ['x' => 1, 'y' => 2, 'z' => 3, 'dirX' => 0, 'dirY' => 0, 'dirZ' => -1, 'viewDist' => 80],
             ]);
 
-            $vp = $global->raw('dc_viewport:'.$this->clientId);
+            $vp = SharedState::get('dc:presence:viewport:'.$this->clientId);
             $this->assertIsArray($vp);
-            $this->assertSame(1.0, $vp['x']);
-            $this->assertSame(-1.0, $vp['dirZ']);
-            $this->assertSame(80.0, $vp['viewDist']);
+            // Handler casts to float; the JSON wire types integral floats as
+            // ints, so the (float) read is the faithful numeric assertion.
+            $this->assertSame(1.0, (float) $vp['x']);
+            $this->assertSame(-1.0, (float) $vp['dirZ']);
+            $this->assertSame(80.0, (float) $vp['viewDist']);
             $this->assertArrayHasKey('ts', $vp);
             $this->assertSame([], $this->sent(), 'viewport updates are fire-and-forget');
         }
 
         public function testViewportUpdateRequiresLogin(): void
         {
-            $global = $this->authedSession();
+            $this->authedSession();
             unset($_SESSION['login']);
 
             \Events::dispatchV1($this->clientId, [
@@ -725,7 +810,7 @@ namespace {
                 'data' => ['x' => 1, 'z' => 3, 'dirX' => 0, 'dirZ' => -1],
             ]);
 
-            $this->assertNull($global->raw('dc_viewport:'.$this->clientId));
+            $this->assertNull(SharedState::get('dc:presence:viewport:'.$this->clientId));
         }
 
         // ====================================================================
@@ -756,14 +841,15 @@ namespace {
          */
         public function testPresenceOpsAreDormantWhenFlagAIsExplicitlyOff(): void
         {
-            $global = $this->authedSession([FeatureFlags::VAR_NEW_HANDLING => 0]);
+            $this->authedSession();
+            FeatureFlags::setNewHandling(null, false);
 
             $this->presenceOp('dc.presence.join', ['x' => 0.0, 'z' => 0.0, 'yaw' => 0.0]);
 
             $this->assertSame([], $this->sent(), 'Flag A OFF: no reply');
             $this->assertSame([], \GatewayWorker\Lib\Gateway::$sentToGroup, 'Flag A OFF: no broadcast');
-            $this->assertNull($global->raw('dc_presence:client:'.$this->clientId));
-            $this->assertSame([], $global->raw('dc_presence_clients'));
+            $this->assertNull($this->presenceRecord($this->clientId));
+            $this->assertSame([], $this->presenceIndex());
             $this->assertDeadChannelTransportUnused('flag A off:');
         }
 
@@ -798,80 +884,74 @@ namespace {
         }
 
         // ====================================================================
-        // PRODUCTION BUG pinned: unseeded dc_presence_clients CAS livelock
+        // Cold start: a fresh empty store must just work
         // ====================================================================
 
         /**
-         * PRODUCTION BUG (Applications/Chat/Events.php — not editable from here).
+         * MIGRATION REFRAME (phase 5.2-C).
          *
-         * handleDcPresenceJoin() maintains its client index with
+         * This slot used to pin a CAS livelock: on the retired shared-state
+         * store, an unseeded presence index key made every bounded index
+         * compare-and-swap loop unstartable until something called
+         * seedClientIndex()/add() first. All of that machinery —
+         * seedClientIndex(), casShouldRetry(), CAS_MAX_ATTEMPTS and the
+         * add('running', []) cold-start sentinel — is RETIRED; the authoritative
+         * note lives in Events::presenceIndexAdd() (Events.php, migration A2):
+         * Redis zAdd CREATES the index on first write, there is no compare step
+         * to lose and nothing to seed. Likewise onWorkerStart's boot gate is now
+         * SharedState::lock('startup_reap', 60) + an hSetNx room seed
+         * (Events.php ~:505-538) and touches no presence key at all.
          *
-         *     do {
-         *         $currentList = $global->$clientIndexKey;              // null when unseeded
-         *         ...
-         *         $oldForCas = is_array($currentList) ? $currentList : [];   // []
-         *         if ($currentList === $clientList || $global->cas($clientIndexKey, $oldForCas, $clientList)) break;
-         *     } while (true);
-         *
-         * The real GlobalData server compares md5(serialize($old)) against the
-         * CURRENT value and reports an ABSENT key as NULL
-         * (vendor/workerman/globaldata/src/Server.php, case 'cas'), so
-         * cas('dc_presence_clients', [], [$cid]) can NEVER succeed while the key
-         * does not exist — and `$currentList === $clientList` is null === [$cid],
-         * also false. The loop has no attempt ceiling: the BusinessWorker spins
-         * at 100% CPU forever on the FIRST dc.presence.join after a GlobalData
-         * cold start.
-         *
-         * onWorkerStart() seeds `dc_active_clients` ($global->dc_active_clients = [])
-         * inside its `$global->add('running', [])` cold-start block, but NOTHING
-         * anywhere seeds `dc_presence_clients`. This is also why this test file
-         * used to hang the runner forever rather than fail.
-         *
-         * FIXED (2026-07-31) by seedClientIndex(), which calls $global->add($key, [])
-         * before every index CAS loop — add() is atomic set-if-absent, so it is safe
-         * with the three datacentered instances sharing one GlobalData store and never
-         * overwrites a list another instance is maintaining. Every such loop is now
-         * additionally bounded by casShouldRetry()/CAS_MAX_ATTEMPTS, so a CAS that can
-         * never succeed fails loudly instead of wedging a worker.
-         *
-         * This test was written to PIN the livelock and now pins the FIX: a cold
-         * GlobalData keyspace must let a join through, and must not spin.
+         * What remains to pin is the positive half: against a completely fresh,
+         * empty Redis the FIRST dc.presence.join must run to completion — reply
+         * sent, broadcast out — and create both index ZSETs with the joiner in
+         * them.
          */
-        public function testJoinSeedsTheIndexWhenGlobalDataWasColdInsteadOfLivelocking(): void
+        public function testJoinCreatesBothIndexesOnAFreshEmptyStore(): void
         {
-            $global = $this->authedSession();
-            // Remove the fixture seed to reproduce a cold GlobalData server.
-            unset($global->store['dc_presence_clients']);
-            $this->assertFalse($global->keyExists('dc_presence_clients'));
+            $this->authedSession(); // flags + session only; no presence key exists yet
 
-            $this->presenceOp('dc.presence.join', ['x' => 0.0, 'z' => 0.0, 'yaw' => 0.0]);
+            $this->assertFalse(SharedState::exists(\Events::DC_PRESENCE_INDEX_KEY), 'precondition: full-membership index absent');
+            $this->assertFalse(SharedState::exists(\Events::DC_ACTIVE_INDEX_KEY), 'precondition: recipient index absent');
 
-            $this->assertSame(
-                [$this->clientId],
-                $global->raw('dc_presence_clients'),
-                'an unseeded index must be created and the joiner recorded, not spun on'
-            );
-            $this->assertTrue(
-                $global->keyExists('dc_presence_clients'),
-                'seedClientIndex() must have created the key via add()'
-            );
+            $this->presenceOp('dc.presence.join', ['x' => 0.0, 'z' => 0.0, 'yaw' => 0.0], null, 'join-1');
+
+            $this->assertSame([$this->clientId], $this->presenceIndex(), 'join must create the index and record the joiner');
+            $this->assertSame([$this->clientId], $this->activeIndex(), 'and the recipient index in the same stroke');
+            $this->assertIsArray($this->presenceRecord($this->clientId), 'the record key must exist beside the indexes');
+
+            $reply = $this->singleReply();
+            $this->assertIsV1Reply($reply, 'join-1');
+            $this->assertCount(1, $this->presenceGroupEvents('dc.presence.joined'));
         }
 
         /**
-         * The same cold-start guarantee for dc_active_clients. It escaped the
-         * livelock in production only because onWorkerStart()'s cold-start block
-         * happens to seed it; that is a coincidence of ordering, not a guarantee,
-         * so the join path must not depend on it.
+         * The same fresh-store guarantee for the whole live path, not just the
+         * first write: join -> move -> 50ms flush -> leave against a cold,
+         * empty store. The flush enumerates the ZSET indexes the join itself
+         * created, so this also proves the facade's JSON member encoding
+         * round-trips the raw hex ids exactly (zAdd in, zRange out) — the
+         * indexes must never contain a double-encoded or mangled member.
          */
-        public function testJoinSeedsActiveClientsWhenGlobalDataWasCold(): void
+        public function testMoveAndFlushWorkEndToEndOnAFreshEmptyStore(): void
         {
-            $global = $this->authedSession();
-            unset($global->store['dc_active_clients']);
-            $this->assertFalse($global->keyExists('dc_active_clients'));
+            $this->authedSession();
 
             $this->presenceOp('dc.presence.join', ['x' => 0.0, 'z' => 0.0, 'yaw' => 0.0]);
+            $this->presenceOp('dc.presence.move', ['x' => 7.5, 'z' => 8.5, 'yaw' => 0.0]);
 
-            $this->assertSame([$this->clientId], $global->raw('dc_active_clients'));
+            TestTimer::runAll();
+
+            $events = $this->presenceGroupEvents('dc.presence.batch_updated');
+            $this->assertCount(1, $events, 'the flush must find the move queued via the self-created index');
+            $this->assertArrayHasKey($this->clientId, $events[0]['data'], 'raw hex member round-tripped through the index');
+            $this->assertEqualsWithDelta(7.5, $events[0]['data'][$this->clientId]['x'], 0.001);
+
+            $this->assertNull(SharedState::get('dc:presence:move_batch:'.$this->clientId), 'batch key cleared after flush');
+
+            $this->presenceOp('dc.presence.leave', [], null, 'leave-req');
+            $this->assertSame([], $this->presenceIndex(), 'leave empties the index the cold join created');
+            $this->assertSame([], $this->activeIndex());
         }
     }
 }

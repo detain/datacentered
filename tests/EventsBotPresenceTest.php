@@ -4,37 +4,46 @@
  * Tests for the DataCenter bot-presence system: a simulated visitor avatar that
  * walks the 3D scene while real users are there.
  *
- * WHAT CHANGED HERE AND WHY
+ * WHAT CHANGED HERE AND WHY (migration A2: the retired shared-state store → SharedState Redis)
  *
- *  - 22 of 26 cases were ERRORS on baseline: every spawn/move/cleanup path ends
- *    in \Workerman\Timer::add(), which throws 'Timer can only be used in
- *    workerman running environment' outside a worker. TestTimer (see
- *    tests/TestBootstrap.php) injects a recording
- *    Workerman\Events\EventInterface into Timer's own $event seam, so the bot
- *    timers are now created, inspected, DELETED and FIRED for real.
+ *  This whole file was near-completely rewritten for the lock model. The bot
+ *  used to be owned by a raw "<host>:<pid>" marker plus a heartbeat ts in the
+ *  retired shared-state store, and liveness was probed with is_dir('/proc/<pid>')
+ *  — which was WRONG across
+ *  the three datacentered instances that shared one store (a foreign pid that
+ *  merely happened not to exist locally read as "owner gone" and a SECOND bot
+ *  spawned over another host's). That whole mechanism is gone.
  *
- *  - The fake GlobalData double's cas() treated an absent key as [] and compared
- *    with ===, so the CAS loops always succeeded first try. The real server
- *    compares md5(serialize()) and reports an absent key as NULL, which is what
- *    InMemoryGlobalData now models — see the dc_presence_clients livelock pinned
- *    in EventsV1DcPresenceTest.
+ *  Ownership is now ONE SharedState Redis lock per location:
+ *  dc:lock:bot_owner:<location> at BOT_OWNER_LOCK_TTL (10s). Acquiring it IS
+ *  taking ownership; every moveBot() tick renews it (that renew IS the old
+ *  heartbeat, now with a real, ENFORCED expiry), and a crashed owner's lock
+ *  lapses so the next join takes over — no reaper, no /proc, no md5 CAS. The
+ *  process-local Workerman timer id (THE BOT #4) stays process-local exactly as
+ *  before: a Workerman id means nothing in another process, so a worker that
+ *  loses the lock retires only ITS OWN timer.
  *
- *  - Broadcast assertions went through Events::$channelClient, which the old
- *    setUp() ALWAYS installed. That is precisely how the dead
- *    \Channel\Client::publish() transport (BUG-A3) stayed green for months.
- *    The seam is gone; broadcasts are asserted on
- *    Gateway::sendToGroup('dc_presence', …) and the dead transport is a
- *    recording tripwire every test checks.
+ *  Test-port consequences:
+ *   - Rival/dead-owner fixtures no longer seed the retired store. A live rival is
+ *     a RAW lock value ($redis->set('dc:lock:bot_owner:main', token,
+ *     ['nx','ex'=>10]))
+ *     — never SharedState::set(), whose JSON encoding would corrupt the raw
+ *     token the Lua compare scripts string-match. A lapsed owner is a real
+ *     acquire() fast-forwarded past the TTL.
+ *   - Presence indexes are Redis ZSETs written through the facade (zAdd), so
+ *     the retired store's empty-array seed (and its NULL-vs-[] cas livelock) has
+ *     no analog: the first zAdd creates the index.
+ *   - The old \Events::$moveBatch static was REMOVED in migration wave 5.1 (it had
+ *     been dead on the presence path since A2), so it is absent from this file's
+ *     reset list, as are the retired fake shared-store clients / FeatureFlags
+ *     private-client resets; batch state is now the dc:presence:move_batch:<bot>
+ *     key. Only the still-existing process-local $botTimers and $botLockTokens
+ *     are reset by reflection.
  *
- *  - Real-user fixtures used int client_id 999. A gateway client_id is a 20-char
- *    hex STRING; the bot's is the non-hex sentinel 'bot_<location>'. Both shapes
- *    coexist in dc_presence_clients and the bot/real distinction is
- *    `strpos($cid, 'bot_') === 0`, so the fixtures must use realistic hex ids
- *    (dc_client_id()) or that discrimination is never really exercised.
- *
- *  - testMoveBotSkipsWhenNoRealUsers asserted only that bot state still
- *    existed — true whether or not anything was skipped. Replaced with the real
- *    invariants (walk step, target selection, clamp, timer ownership).
+ *  The seam discipline from BUG-A3 is retained: Events::$channelClient stays
+ *  NULL (production configuration) so broadcasts are asserted on
+ *  Gateway::sendToGroup('dc_presence', …), and the dead \Channel\Client
+ *  transport is a recording tripwire every broadcast test checks.
  *
  * @see Events::spawnBotForLocation()
  * @see Events::moveBot()
@@ -45,6 +54,10 @@
 namespace {
     use PHPUnit\Framework\TestCase;
 
+    // Declares the offline seams (Channel tripwire, recording Timer, fake
+    // Gateway, InMemoryRedis) then loads FeatureFlags + Events through the
+    // shared V1 support, so the whole bot cluster runs against the SharedState
+    // facade with no socket to anywhere.
     require_once __DIR__.'/V1TestSupport.php';
 
     class EventsBotPresenceTest extends TestCase
@@ -53,6 +66,9 @@ namespace {
 
         private const LOCATION = 'main';
         private const BOT_ID = 'bot_main';
+
+        /** @var InMemoryRedis the SharedState double every state/lock assertion reads */
+        private $redis;
 
         /** @var string a real user's 20-char hex connection id */
         private string $userId;
@@ -73,75 +89,211 @@ namespace {
         {
             \GatewayWorker\Lib\Gateway::reset();
             \Channel\Client::reset();
-            \GlobalData\Client::resetConstructed();
             TestTimer::install();
             $_SESSION = [];
             \Events::$db = null;
             \Events::$channelClient = null;   // production configuration
-            \Events::$moveBatch = [];
             \Events::$moveBatchTimer = null;
-            unset($GLOBALS['global']);
 
-            // Bot timer ids are process-local statics that survive between tests.
-            $botTimers = new ReflectionProperty(\Events::class, 'botTimers');
-            $botTimers->setAccessible(true);
-            $botTimers->setValue(null, []);
+            // FeatureFlagsTest-style injection: a leaked $GLOBALS['redis'] from
+            // another suite would win over the facade's own client, so start
+            // from "no shared connection" and hand SharedState a fresh double.
+            unset($GLOBALS['redis']);
+            SharedState::reset();
+            $this->redis = new InMemoryRedis();
+            SharedState::setClient($this->redis);
 
-            $ref = new ReflectionClass(FeatureFlags::class);
-            $prop = $ref->getProperty('client');
-            $prop->setAccessible(true);
-            $prop->setValue(null, null);
+            // Bot timer ids AND lock tokens are process-local statics that
+            // survive between tests — a stale token would let a later moveBot()
+            // "renew" against a keyspace that no longer holds it.
+            $this->clearBotStatics();
         }
 
-        /** Flag C (dc_bot_presence) ON, with the indexes a live worker seeds. */
-        private function botFlagOn(array $seed = []): InMemoryGlobalData
+        // ====================================================================
+        // SharedState key builders + seeding helpers (the lock model)
+        // ====================================================================
+
+        private function stateKey(): string
         {
-            $global = new InMemoryGlobalData(array_merge([
-                FeatureFlags::VAR_NEW_HANDLING => 1,
-                FeatureFlags::VAR_DC_BOT_PRESENCE => 1,
-                'dc_presence_clients' => [],
-                'dc_active_clients' => [],
-            ], $seed));
-            $GLOBALS['global'] = $global;
-            return $global;
+            return \Events::BOT_STATE_KEY_PREFIX . self::LOCATION;
         }
 
-        /** Flag C explicitly OFF. */
-        private function botFlagOff(array $seed = []): InMemoryGlobalData
+        private function presenceKey(string $clientId): string
         {
-            return $this->botFlagOn(array_merge([FeatureFlags::VAR_DC_BOT_PRESENCE => 0], $seed));
+            return \Events::DC_PRESENCE_KEY_PREFIX . $clientId;
         }
 
-        /** Add a real (non-bot) user with a hex client_id at ($x,$z). */
-        private function addRealUser(InMemoryGlobalData $global, string $clientId, float $x = 0.0, float $z = 0.0): void
+        private function roomBoundsKey(): string
         {
-            $global->store['dc_presence:client:'.$clientId] = [
-                'uid' => 4242, 'name' => 'admin', 'x' => $x, 'z' => $z, 'yaw' => 0.0,
-                'ts' => time(), 'client_id' => $clientId,
-            ];
-            $list = $global->raw('dc_presence_clients') ?? [];
-            $list[] = $clientId;
-            $global->store['dc_presence_clients'] = array_values(array_unique($list));
-            $active = $global->raw('dc_active_clients') ?? [];
-            $active[] = $clientId;
-            $global->store['dc_active_clients'] = array_values(array_unique($active));
+            return \Events::DC_ROOM_BOUNDS_KEY_PREFIX . self::LOCATION;
+        }
+
+        private function moveBatchKey(string $clientId = self::BOT_ID): string
+        {
+            return 'dc:presence:move_batch:' . $clientId;
+        }
+
+        /** The lock NAME SharedState::lock() takes (it applies dc:lock: itself). */
+        private function ownerLockName(): string
+        {
+            return 'bot_owner:' . self::LOCATION;
+        }
+
+        /** The full RAW Redis key the owner lock lives at. */
+        private function ownerLockKey(): string
+        {
+            return SharedState::PREFIX_LOCK . $this->ownerLockName();
+        }
+
+        /** Flag A ON (so dispatchV1 routes the integration joins) + Flag C ON. */
+        private function botFlagOn(): void
+        {
+            SharedState::set(FeatureFlags::VAR_NEW_HANDLING, 1);
+            SharedState::set(FeatureFlags::VAR_DC_BOT_PRESENCE, 1);
+        }
+
+        /** Flag C explicitly OFF (Flag A stays ON — the gate is bot presence, not v1). */
+        private function botFlagOff(): void
+        {
+            SharedState::set(FeatureFlags::VAR_NEW_HANDLING, 1);
+            SharedState::set(FeatureFlags::VAR_DC_BOT_PRESENCE, 0);
+        }
+
+        private function clearBotStatics(): void
+        {
+            foreach (['botTimers', 'botLockTokens'] as $name) {
+                $prop = new ReflectionProperty(\Events::class, $name);
+                $prop->setAccessible(true);
+                $prop->setValue(null, []);
+            }
         }
 
         /**
-         * The ownership marker spawnBotForLocation() writes for THIS process.
-         *
-         * datacentered runs on three systems sharing one GlobalData store, and pids
-         * are not unique across them, so the marker is host-qualified "<host>:<pid>"
-         * rather than a bare pid. Fixtures elsewhere in this file deliberately still
-         * seed the legacy bare-pid form: markerIsSelf()/botOwnerAlive() must keep
-         * honouring it or a rolling restart across the three hosts would have the
-         * owning process fail to recognise its own marker and retire its own timer,
-         * killing the bot on its first tick.
+         * Forget ONLY our ownership token while KEEPING the move timer — the exact
+         * precondition of Events::spawnBotForLocation()'s duplicate-timer retire
+          * branch (~:5146 `isset($botTimers[$location]) && !isset($botLockTokens[$location])`).
+         * Production reaches this when our lock lapses and a rival takes over
+         * between ticks; we force it via reflection because both statics are
+         * process-local and no shared write can empty just one of their slots.
          */
-        private function selfMarker(): string
+        private function dropOwnershipTokenOnly(): void
         {
-            $host = gethostname();
-            return (($host === false || $host === '') ? 'unknown-host' : $host).':'.getmypid();
+            $prop = new ReflectionProperty(\Events::class, 'botLockTokens');
+            $prop->setAccessible(true);
+            $tokens = $prop->getValue();
+            unset($tokens[self::LOCATION]);
+            $prop->setValue(null, $tokens);
+        }
+
+        /** @return array<string,int> */
+        private function getBotTimers(): array
+        {
+            $prop = new ReflectionProperty(\Events::class, 'botTimers');
+            $prop->setAccessible(true);
+            return $prop->getValue();
+        }
+
+        /** @return array<string,string> */
+        private function getBotLockTokens(): array
+        {
+            $prop = new ReflectionProperty(\Events::class, 'botLockTokens');
+            $prop->setAccessible(true);
+            return $prop->getValue();
+        }
+
+        /** The token this process holds for the location (null when not owner). */
+        private function ownerToken(): ?string
+        {
+            return $this->getBotLockTokens()[self::LOCATION] ?? null;
+        }
+
+        /** Raw keyspace view of a lock value (phpredis: a MISS is false, not null). */
+        private function rawLockValue(): mixed
+        {
+            return $this->redis->get($this->ownerLockKey());
+        }
+
+        /** A frozen bot-state written by a now-dead owner (name-parameterised ghost). */
+        private function seedGhostState(string $name, float $x = 1.0, float $z = 2.0): void
+        {
+            SharedState::set($this->stateKey(), [
+                'uid' => self::BOT_ID, 'name' => $name, 'x' => $x, 'z' => $z, 'yaw' => 0.0,
+                'target_x' => $x, 'target_z' => $z, 'ts' => time(),
+                'client_id' => self::BOT_ID, 'location' => self::LOCATION,
+            ], \Events::BOT_STATE_TTL);
+        }
+
+        /**
+         * Another instance currently owns the bot: a RAW lock value carrying a
+         * foreign token, never through SharedState::set (which would JSON-wrap
+         * it and break the Lua token compare). This is the "marker naming a live
+         * foreign owner" case of the old suite.
+         */
+        private function seedRivalOwnerLockAlive(string $token = 'otherhost:999:deadbeef'): void
+        {
+            $seeded = $this->redis->set($this->ownerLockKey(), $token, ['nx', 'ex' => \Events::BOT_OWNER_LOCK_TTL]);
+            $this->assertTrue($seeded, 'precondition: the rival lock must actually be seeded');
+        }
+
+        /**
+         * Reproduce a crashed owner: it acquired the lock (real TTL) and then
+         * stopped renewing, so the TTL lapsed and the key self-freed — the exact
+         * mechanism the retired pid/heartbeat probe emulated by hand. The 30s
+         * state TTL outlives the 10s lock, so a ghost bot-state lingers, which is
+         * precisely the takeover opportunity.
+         */
+        private function expireOwnerLock(): void
+        {
+            $ghost = SharedState::lock($this->ownerLockName(), \Events::BOT_OWNER_LOCK_TTL);
+            $this->assertNotNull($ghost, 'precondition: the ghost owner acquires the lock');
+            $this->redis->fastForward(\Events::BOT_OWNER_LOCK_TTL + 1);
+            $this->assertFalse($this->rawLockValue(), 'precondition: the owner lock lapsed on TTL');
+        }
+
+        /** A real (non-bot) user's presence record + both index memberships, via the facade. */
+        private function addRealUser(string $clientId, float $x = 0.0, float $z = 0.0): void
+        {
+            SharedState::set($this->presenceKey($clientId), [
+                'uid' => 4242, 'name' => 'admin', 'x' => $x, 'z' => $z, 'yaw' => 0.0,
+                'ts' => time(), 'client_id' => $clientId,
+            ], \Events::PRESENCE_STALE_TTL);
+            // Mirrors Events::presenceIndexAdd(): the member is written as a JSON
+            // string through the facade so reads decode it back to the bare id.
+            SharedState::zAdd(\Events::DC_PRESENCE_INDEX_KEY, time(), $clientId);
+            SharedState::zAdd(\Events::DC_ACTIVE_INDEX_KEY, time(), $clientId);
+        }
+
+        /**
+         * Establish real ownership the way production does — spawn through the
+         * facade (which acquires the lock, records the token, arms the timer) —
+         * then impose a deterministic bot-state so a single moveBot() tick is
+         * reproducible. Returns the armed timer's id.
+         */
+        private function takeOwnershipAndSeedState(array $state): int
+        {
+            $this->botFlagOn();
+            \Events::spawnBotForLocation(self::LOCATION);
+            SharedState::set($this->stateKey(), $state, \Events::BOT_STATE_TTL);
+
+            return $this->botMoveTimers()[0]['id'];
+        }
+
+        /** A bot state at the origin walking toward ($tx,$ty). */
+        private function walkState(float $tx, float $tz, string $name = 'Walker', float $yaw = 0.0): array
+        {
+            return [
+                'uid' => self::BOT_ID, 'name' => $name,
+                'x' => 0.0, 'z' => 0.0, 'yaw' => $yaw,
+                'target_x' => $tx, 'target_z' => $tz,
+                'ts' => time(), 'client_id' => self::BOT_ID, 'location' => self::LOCATION,
+            ];
+        }
+
+        private function seedRoomBounds(float $min, float $max): void
+        {
+            SharedState::set($this->roomBoundsKey(), [
+                'minX' => -$min, 'maxX' => $max, 'minZ' => -$min, 'maxZ' => $max,
+            ], \Events::PRESENCE_SESSION_TTL);
         }
 
         /** The recorded repeating bot move timer(s). */
@@ -160,11 +312,11 @@ namespace {
 
         public function testSpawnBotCreatesStatePresenceEntryAndIndexes(): void
         {
-            $global = $this->botFlagOn();
+            $this->botFlagOn();
 
             \Events::spawnBotForLocation(self::LOCATION);
 
-            $entry = $global->raw('dc_presence:client:'.self::BOT_ID);
+            $entry = SharedState::get($this->presenceKey(self::BOT_ID));
             $this->assertIsArray($entry, 'the bot gets a presence entry like any client');
             $this->assertSame(self::BOT_ID, $entry['uid']);
             $this->assertSame(self::BOT_ID, $entry['client_id']);
@@ -174,14 +326,14 @@ namespace {
             $this->assertIsFloat($entry['z']);
             $this->assertIsFloat($entry['yaw']);
 
-            $state = $global->raw('dc_bot_state:'.self::LOCATION);
+            $state = SharedState::get($this->stateKey());
             $this->assertIsArray($state);
             $this->assertArrayHasKey('target_x', $state);
             $this->assertArrayHasKey('target_z', $state);
             $this->assertSame($entry['x'], $state['x'], 'presence entry and bot state start identical');
 
-            $this->assertSame([self::BOT_ID], $global->raw('dc_presence_clients'));
-            $this->assertSame([self::BOT_ID], $global->raw('dc_active_clients'));
+            $this->assertContains(self::BOT_ID, SharedState::zRange(\Events::DC_PRESENCE_INDEX_KEY, 0, -1));
+            $this->assertContains(self::BOT_ID, SharedState::zRange(\Events::DC_ACTIVE_INDEX_KEY, 0, -1));
             $this->assertDeadChannelTransportUnused('spawn:');
         }
 
@@ -192,22 +344,29 @@ namespace {
          */
         public function testBotClientIdIsThePrefixedSentinelNotAHexId(): void
         {
-            $global = $this->botFlagOn();
+            $this->botFlagOn();
 
             \Events::spawnBotForLocation(self::LOCATION);
 
-            $this->assertSame(self::BOT_ID, $global->raw('dc_presence_clients')[0]);
-            $this->assertStringStartsWith('bot_', $global->raw('dc_presence_clients')[0]);
+            $members = SharedState::zRange(\Events::DC_PRESENCE_INDEX_KEY, 0, -1);
+            $this->assertSame(self::BOT_ID, $members[0]);
+            $this->assertStringStartsWith('bot_', $members[0]);
             $this->assertDoesNotMatchRegularExpression(
                 '/^[0-9a-f]{20}$/',
-                $global->raw('dc_presence_clients')[0],
+                $members[0],
                 'a bot id must be distinguishable from a real 20-char hex client_id'
             );
         }
 
-        public function testSpawnBotStartsARepeatingMoveTimerOwnedByThisPid(): void
+        /**
+         * THE BOT #4 (lock form): the process-local (raw) Workerman timer id is
+         * NEVER shared — Timer::del() of another process's id kills an unrelated
+         * timer in this one. What names the owner ACROSS instances is now the
+         * host:pid:hex token at dc:lock:bot_owner:<location>, not the timer id.
+         */
+        public function testSpawnBotArmsRepeatingMoveTimerAndOwnsItViaLockToken(): void
         {
-            $global = $this->botFlagOn();
+            $this->botFlagOn();
 
             \Events::spawnBotForLocation(self::LOCATION);
 
@@ -217,15 +376,21 @@ namespace {
             $this->assertSame(\Events::BOT_MOVE_INTERVAL, $timers[0]['interval']);
             $this->assertSame(['Events', 'moveBot'], $timers[0]['func']);
 
-            // THE BOT #4: GlobalData carries the OWNING PROCESS (host-qualified); the
-            // raw (process-local) timer id must stay in the private static, because
-            // Timer::del() of another process's id kills an unrelated timer in this one.
-            $this->assertSame($this->selfMarker(), $global->raw('dc_bot_timer:'.self::LOCATION));
-            $this->assertNotSame($timers[0]['id'], $global->raw('dc_bot_timer:'.self::LOCATION));
+            $token = $this->ownerToken();
+            $this->assertNotNull($token, 'spawn records the ownership token process-locally');
+            $this->assertStringStartsWith(gethostname() . ':' . getmypid() . ':', $token,
+                'the token identifies THIS host+pid among the three datacentered instances');
+            $this->assertSame($token, $this->rawLockValue(), 'the raw lock value IS the ownership token (never JSON-encoded)');
 
-            $botTimers = new ReflectionProperty(\Events::class, 'botTimers');
-            $botTimers->setAccessible(true);
-            $this->assertSame([self::LOCATION => $timers[0]['id']], $botTimers->getValue());
+            // The raw timer id must stay process-local and must NOT be in Redis.
+            $this->assertNotSame((string) $timers[0]['id'], $this->rawLockValue());
+            $this->assertArrayHasKey(self::LOCATION, $this->getBotTimers());
+            $this->assertSame($timers[0]['id'], $this->getBotTimers()[self::LOCATION]);
+            $this->assertNotContains(
+                (string) $timers[0]['id'],
+                $this->redis->allKeys(),
+                'a process-local Workerman timer id must never leak into shared state'
+            );
         }
 
         /** The joined announcement goes out on the Gateway group, as an event. */
@@ -252,174 +417,222 @@ namespace {
 
         public function testSpawnBotSkippedWhenFlagCDisabled(): void
         {
-            $global = $this->botFlagOff();
+            $this->botFlagOff();
 
             \Events::spawnBotForLocation(self::LOCATION);
 
-            $this->assertNull($global->raw('dc_presence:client:'.self::BOT_ID));
-            $this->assertNull($global->raw('dc_bot_state:'.self::LOCATION));
+            $this->assertNull(SharedState::get($this->presenceKey(self::BOT_ID)));
+            $this->assertNull(SharedState::get($this->stateKey()));
+            $this->assertFalse($this->rawLockValue(), 'Flag C off acquires no ownership lock');
             $this->assertSame([], $this->botMoveTimers(), 'no timer may be armed with Flag C off');
             $this->assertSame([], \GatewayWorker\Lib\Gateway::$sentToGroup);
         }
 
-        /** A live bot with a live owner is not respawned. */
-        public function testSpawnBotIsIdempotentWhileTheOwnerIsAlive(): void
+        /** A live bot WE own (unexpired lock) is not respawned. */
+        public function testSpawnBotIsIdempotentWhileWeHoldTheOwnerLock(): void
         {
-            $global = $this->botFlagOn();
+            $this->botFlagOn();
 
             \Events::spawnBotForLocation(self::LOCATION);
-            $first = $global->raw('dc_bot_state:'.self::LOCATION);
+            $first = SharedState::get($this->stateKey());
+            $tokenBefore = $this->ownerToken();
             $timerCountAfterFirst = count($this->botMoveTimers());
 
             \Events::spawnBotForLocation(self::LOCATION);
 
-            $this->assertSame($first, $global->raw('dc_bot_state:'.self::LOCATION), 'state must not be rewritten');
+            $this->assertSame($first, SharedState::get($this->stateKey()), 'state must not be rewritten');
+            $this->assertSame($tokenBefore, $this->ownerToken(), 're-spawn while we own must keep the same lock token');
             $this->assertCount($timerCountAfterFirst, $this->botMoveTimers(), 'no second move timer');
         }
 
         /**
-         * A marker naming a DEAD pid means that worker's timer died with it, so
-         * the bot would sit frozen forever. Ownership must be taken here.
+         * A crashed owner leaves its bot-state behind (the 30s state TTL outlives
+         * the 10s lock) but its lock has LAPSED, so the bot would sit frozen
+         * forever. The next spawn acquires the free lock and takes over.
          */
-        public function testSpawnBotTakesOverWhenTheOwnerPidIsGone(): void
+        public function testSpawnBotTakesOverWhenTheOwnerLockHasLapsed(): void
         {
-            // pid 1 exists, so use an implausible one that is not us.
-            $deadPid = 4194303;
-            $global = $this->botFlagOn([
-                'dc_bot_timer:'.self::LOCATION => $deadPid,
-                'dc_bot_state:'.self::LOCATION => [
-                    'uid' => self::BOT_ID, 'name' => 'Ghost', 'x' => 1.0, 'z' => 2.0, 'yaw' => 0.0,
-                    'target_x' => 1.0, 'target_z' => 2.0, 'client_id' => self::BOT_ID,
-                    'location' => self::LOCATION,
-                ],
-            ]);
-            $this->assertFalse(is_dir('/proc/'.$deadPid), 'fixture pid must really be dead');
+            $this->botFlagOn();
+            $this->seedGhostState('Ghost');
+            $this->expireOwnerLock();
 
             \Events::spawnBotForLocation(self::LOCATION);
 
-            $this->assertSame(
-                $this->selfMarker(),
-                $global->raw('dc_bot_timer:'.self::LOCATION),
-                'ownership must transfer to the respawning worker'
-            );
+            $this->assertNotNull($this->ownerToken(), 'ownership transfers to the respawning worker');
+            $this->assertSame($this->ownerToken(), $this->rawLockValue(), 'the free lock is ours now');
             $this->assertCount(1, $this->botMoveTimers(), 'a fresh move timer is armed here');
             $this->assertNotSame(
                 'Ghost',
-                $global->raw('dc_bot_state:'.self::LOCATION)['name'],
+                SharedState::get($this->stateKey())['name'],
                 'the frozen bot is replaced, not adopted'
             );
         }
 
-        /** A marker with no state at all is stale: drop it and respawn. */
-        public function testSpawnBotClearsAStaleMarkerWithNoState(): void
+        /** A cold, unowned scene (no lock, no state) spawns a fresh bot. */
+        public function testSpawnBotSpawnsWhenNeitherStateNorLockExists(): void
         {
-            $global = $this->botFlagOn([
-                'dc_bot_timer:'.self::LOCATION => 4194303,
-            ]);
+            $this->botFlagOn();
 
             \Events::spawnBotForLocation(self::LOCATION);
 
-            $this->assertIsArray($global->raw('dc_bot_state:'.self::LOCATION));
-            $this->assertSame($this->selfMarker(), $global->raw('dc_bot_timer:'.self::LOCATION));
+            $this->assertIsArray(SharedState::get($this->stateKey()));
+            $this->assertSame($this->ownerToken(), $this->rawLockValue());
+            $this->assertCount(1, $this->botMoveTimers());
         }
 
         // ====================================================================
-        // Cross-host ownership (three datacentered instances, one GlobalData)
+        // Cross-instance ownership (three datacentered instances, one Redis)
         // ====================================================================
 
         /**
-         * A marker owned by ANOTHER instance whose bot is still being walked must be
-         * left completely alone. Pre-fix, ownership was a bare pid checked with a LOCAL
-         * is_dir('/proc/<pid>'), so a foreign pid that did not happen to exist on this
-         * box read as "owner gone" and this host spawned a SECOND bot over one another
-         * host was actively driving.
+         * A lock held (TTL not lapsed) by ANOTHER instance whose bot is still
+         * being walked must be left completely alone. Under the retired pid model
+         * this was the exact cross-host hazard; under the lock it is trivially
+         * correct — SET NX fails while the key is live, so no second bot spawns.
          */
-        public function testForeignHostBotWithFreshHeartbeatIsNotTakenOver(): void
+        public function testForeignOwnerWithLiveLockIsNotTakenOver(): void
         {
-            $global = $this->botFlagOn([
-                'dc_bot_timer:'.self::LOCATION => 'my-web-9.example.net:4194303',
-                'dc_bot_state:'.self::LOCATION => [
-                    'uid' => self::BOT_ID, 'name' => 'RemoteWalker',
-                    'x' => 5.0, 'z' => 6.0, 'yaw' => 0.0,
-                    'target_x' => 5.0, 'target_z' => 6.0, 'client_id' => self::BOT_ID,
-                    'location' => self::LOCATION,
-                    'ts' => time(),   // heartbeat: moveBot() refreshes this every 0.5s
-                ],
-            ]);
+            $this->botFlagOn();
+            $this->seedRivalOwnerLockAlive();
+            $this->seedGhostState('RemoteWalker', 5.0, 6.0);
 
             \Events::spawnBotForLocation(self::LOCATION);
 
             $this->assertSame(
-                'my-web-9.example.net:4194303',
-                $global->raw('dc_bot_timer:'.self::LOCATION),
+                'otherhost:999:deadbeef',
+                $this->rawLockValue(),
                 'must not steal ownership of a bot another instance is walking'
             );
             $this->assertSame(
                 'RemoteWalker',
-                $global->raw('dc_bot_state:'.self::LOCATION)['name'],
+                SharedState::get($this->stateKey())['name'],
                 'the remote bot state must be left intact'
             );
             $this->assertSame([], $this->botMoveTimers(), 'no competing move timer here');
+            $this->assertSame([], $this->getBotTimers(), 'this process holds no bot timer');
+            $this->assertSame([], $this->getBotLockTokens(), 'this process holds no ownership token');
         }
 
         /**
-         * ...but if that instance has stopped refreshing the heartbeat it is presumed
-         * dead and we DO take over — otherwise a bot orphaned by a dead host sits
-         * frozen forever, which is indistinguishable from "the bot is broken". We
-         * cannot inspect a remote /proc, so the bot's own ts is the liveness signal.
+         * SPAWN-side duplicate-timer retire branch (Events.php ~:5146-5153).
+         *
+         * Companion to testMoveBotRetiresItsOwnTimerWhenTheOwnerLockIsLost, which
+         * reaches the same "retire OUR timer" outcome through the moveBot renew
+         * path. Here a re-entrant spawn (a join hitting an already-walked bot)
+         * finds a live rival lock and must retire this process's now-orphaned move
+         * timer rather than respawn a bot it no longer owns.
+         *
+         * Production, verbatim (Events.php):
+         *   5145  $token = SharedState::lock(self::botOwnerLockName($location), self::BOT_OWNER_LOCK_TTL);
+         *   5146  if ($token === null) {
+         *   5147      if (isset(self::$botTimers[$location]) && !isset(self::$botLockTokens[$location])) {
+         *   5151          Timer::del(self::$botTimers[$location]);
+         *   5152          unset(self::$botTimers[$location]);
+         *   5153          Worker::safeEcho("[dc_bot] retiring duplicate bot timer ...");
+         *   5154      }
+         *   5155      return;
+         *   5156  }
+         *   5157  self::$botLockTokens[$location] = $token;   // NEVER reached: token is null
+         *
+         * The branch RETURNS at 5155, so it does not fall through to store a token
+         * at 5157 and never re-locks: a null token cannot be kept, and the rival's
+         * raw hold is left untouched.
          */
-        public function testForeignHostBotWithStaleHeartbeatIsTakenOver(): void
+        public function testSpawnRetiresOurOrphanedTimerWhenARivalHoldsTheLiveLock(): void
         {
-            $global = $this->botFlagOn([
-                'dc_bot_timer:'.self::LOCATION => 'my-web-9.example.net:4194303',
-                'dc_bot_state:'.self::LOCATION => [
-                    'uid' => self::BOT_ID, 'name' => 'Abandoned',
-                    'x' => 5.0, 'z' => 6.0, 'yaw' => 0.0,
-                    'target_x' => 5.0, 'target_z' => 6.0, 'client_id' => self::BOT_ID,
-                    'location' => self::LOCATION,
-                    'ts' => time() - (\Events::BOT_OWNER_HEARTBEAT_MAX_AGE + 5),
-                ],
-            ]);
+            // Spawn normally: this process acquires the lock (token) and arms the timer.
+            $this->botFlagOn();
+            \Events::spawnBotForLocation(self::LOCATION);
+            $ourTimerId = $this->botMoveTimers()[0]['id'];
+            $this->assertArrayHasKey(self::LOCATION, $this->getBotTimers(), 'precondition: we hold a move timer');
+            $this->assertArrayHasKey(self::LOCATION, $this->getBotLockTokens(), 'precondition: we initially own the bot');
+
+            // Our lock lapses on TTL, then a rival takes over with a RAW live hold.
+            $this->redis->fastForward(\Events::BOT_OWNER_LOCK_TTL + 1);
+            $this->seedRivalOwnerLockAlive();
+            $this->assertSame(
+                'otherhost:999:deadbeef',
+                $this->rawLockValue(),
+                'precondition: the rival now holds the lock'
+            );
+
+            // Force the branch precondition: timer retained, ownership slot emptied.
+            $this->dropOwnershipTokenOnly();
+            $this->assertArrayHasKey(self::LOCATION, $this->getBotTimers(), 'setup: the move timer is retained');
+            $this->assertArrayNotHasKey(self::LOCATION, $this->getBotLockTokens(), 'setup: the token slot is emptied');
+
+            // Re-spawn: the rival's live lock makes lock() return null, so the
+            // branch retires OUR orphaned timer and returns without taking over.
+            \Events::spawnBotForLocation(self::LOCATION);
+
+            $this->assertContains($ourTimerId, TestTimer::deleted(), 'we retire OUR orphaned timer');
+            $this->assertArrayNotHasKey(self::LOCATION, $this->getBotTimers(), 'the retired timer slot is cleared');
+            $this->assertSame([], $this->botMoveTimers(), 'no competing move timer remains here');
+            $this->assertArrayNotHasKey(
+                self::LOCATION,
+                $this->getBotLockTokens(),
+                'the null token is never stored — we do NOT re-acquire ownership'
+            );
+            $this->assertNull($this->ownerToken(), 'this process holds no ownership token after the retire branch');
+            $this->assertSame(
+                'otherhost:999:deadbeef',
+                $this->rawLockValue(),
+                'the rival keeps the lock — a retiring spawner must not steal or delete a foreign hold'
+            );
+        }
+
+        /**
+         * ...but when that instance's lock lapses (it crashed / stalled past the
+         * TTL) the bot IS orphaned and we DO take over — the lock's own enforced
+         * expiry is the liveness signal now, replacing the bot ts heartbeat the
+         * removed staleness window used to measure. The ghost state outlives the
+         * lock (state TTL > lock TTL), which is exactly why a takeover is possible
+         * and necessary.
+         */
+        public function testForeignOwnerWithLapsedLockIsTakenOver(): void
+        {
+            $this->botFlagOn();
+            $this->seedRivalOwnerLockAlive();
+            $this->seedGhostState('Abandoned', 5.0, 6.0);
+
+            $this->redis->fastForward(\Events::BOT_OWNER_LOCK_TTL + 1); // the rival stops renewing
+            $this->assertFalse($this->rawLockValue(), 'precondition: the foreign lock has lapsed');
 
             \Events::spawnBotForLocation(self::LOCATION);
 
-            $this->assertSame(
-                $this->selfMarker(),
-                $global->raw('dc_bot_timer:'.self::LOCATION),
-                'a heartbeat this stale means the owning instance is gone'
-            );
+            $this->assertNotNull($this->ownerToken(), 'a lapsed lock means the owning instance is gone');
+            $this->assertSame($this->ownerToken(), $this->rawLockValue(), 'we acquire the freed lock');
             $this->assertNotSame(
                 'Abandoned',
-                $global->raw('dc_bot_state:'.self::LOCATION)['name'],
+                SharedState::get($this->stateKey())['name'],
                 'the frozen bot is replaced, not adopted'
             );
             $this->assertCount(1, $this->botMoveTimers());
         }
 
         /**
-         * The owning process must recognise its OWN host-qualified marker. If it does
-         * not, moveBot()'s duplicate-timer guard retires the very timer that drives the
-         * bot, and the bot stops after a single tick.
+         * The owning process must recognise its OWN lock. Every moveBot() tick
+         * renews it; a successful renew means the duplicate-timer guard must keep
+         * driving, not retire the very timer that walks the bot.
          */
-        public function testOwningProcessRecognisesItsOwnHostQualifiedMarker(): void
+        public function testOwningProcessRenewsItsOwnLockAndKeepsItsTimer(): void
         {
-            $global = $this->botFlagOn();
+            $this->botFlagOn();
             \Events::spawnBotForLocation(self::LOCATION);
-            $this->assertSame($this->selfMarker(), $global->raw('dc_bot_timer:'.self::LOCATION));
-
             $before = $this->botMoveTimers();
             $this->assertCount(1, $before);
+            $token = $this->ownerToken();
+            $this->assertStringStartsWith(gethostname() . ':' . getmypid() . ':', $token);
 
             \Events::moveBot(self::LOCATION);
 
-            $botTimers = new ReflectionProperty(\Events::class, 'botTimers');
-            $botTimers->setAccessible(true);
             $this->assertSame(
                 [self::LOCATION => $before[0]['id']],
-                $botTimers->getValue(),
+                $this->getBotTimers(),
                 'the owner must NOT retire its own timer'
             );
-            $this->assertNotNull($global->raw('dc_bot_state:'.self::LOCATION));
+            $this->assertSame($token, $this->ownerToken(), 'the ownership token survives a successful renew');
+            $this->assertNotNull(SharedState::get($this->stateKey()));
         }
 
         // ====================================================================
@@ -432,17 +645,19 @@ namespace {
          */
         public function testSpawnPositionStaysInsideTheInsetFallbackBounds(): void
         {
-            $global = $this->botFlagOn();
+            $this->botFlagOn();
 
             \Events::spawnBotForLocation(self::LOCATION);
-            $state = $global->raw('dc_bot_state:'.self::LOCATION);
+            $state = SharedState::get($this->stateKey());
 
             $inset = \Events::BOT_BOUNDS_INSET;
             $this->assertGreaterThanOrEqual(\Events::BOT_BOUNDS_X_MIN + $inset, $state['x']);
             $this->assertLessThanOrEqual(\Events::BOT_BOUNDS_X_MAX - $inset, $state['x']);
             $this->assertGreaterThanOrEqual(\Events::BOT_BOUNDS_Z_MIN + $inset, $state['z']);
             $this->assertLessThanOrEqual(\Events::BOT_BOUNDS_Z_MAX - $inset, $state['z']);
-            $this->assertSame(
+            // The facade JSON round-trips integral floats to ints, so the inset
+            // box is compared NUMERICALLY (assertEquals), not type-strict.
+            $this->assertEquals(
                 [
                     'minX' => \Events::BOT_BOUNDS_X_MIN + $inset,
                     'maxX' => \Events::BOT_BOUNDS_X_MAX - $inset,
@@ -461,13 +676,13 @@ namespace {
          */
         public function testSpawnUsesBrowserReportedRoomBounds(): void
         {
-            $global = $this->botFlagOn();
+            $this->botFlagOn();
             $reported = ['minX' => -200.0, 'maxX' => -100.0, 'minZ' => -200.0, 'maxZ' => -100.0];
 
             \Events::spawnBotForLocation(self::LOCATION, null, $reported);
-            $state = $global->raw('dc_bot_state:'.self::LOCATION);
+            $state = SharedState::get($this->stateKey());
 
-            $this->assertSame($reported, $global->raw(\Events::DC_ROOM_BOUNDS_KEY_PREFIX.self::LOCATION));
+            $this->assertEquals($reported, SharedState::get($this->roomBoundsKey()), 'round-tripped numerically (facade JSON turns integral floats into ints)');
             $this->assertGreaterThanOrEqual(-198.0, $state['x'], 'inside the reported room, not the +/-50 box');
             $this->assertLessThanOrEqual(-102.0, $state['x']);
             $this->assertGreaterThanOrEqual(-198.0, $state['z']);
@@ -480,12 +695,12 @@ namespace {
          */
         public function testSpawnIsNearTheJoiningPlayer(): void
         {
-            $global = $this->botFlagOn();
+            $this->botFlagOn();
             $reported = ['minX' => -300.0, 'maxX' => 300.0, 'minZ' => -300.0, 'maxZ' => 300.0];
             $near = ['x' => 150.0, 'z' => -150.0];
 
             \Events::spawnBotForLocation(self::LOCATION, $near, $reported);
-            $state = $global->raw('dc_bot_state:'.self::LOCATION);
+            $state = SharedState::get($this->stateKey());
 
             $distance = sqrt(
                 ($state['x'] - $near['x']) ** 2 + ($state['z'] - $near['z']) ** 2
@@ -503,13 +718,14 @@ namespace {
          */
         public function testSpawnFallsBackToARealPlayerPositionWhenNoNearGiven(): void
         {
-            $global = $this->botFlagOn();
-            $reported = ['minX' => -400.0, 'maxX' => 400.0, 'minZ' => -400.0, 'maxZ' => 400.0];
-            $global->store[\Events::DC_ROOM_BOUNDS_KEY_PREFIX.self::LOCATION] = $reported;
-            $this->addRealUser($global, $this->userId, 300.0, 300.0);
+            $this->botFlagOn();
+            SharedState::set($this->roomBoundsKey(), [
+                'minX' => -400.0, 'maxX' => 400.0, 'minZ' => -400.0, 'maxZ' => 400.0,
+            ], \Events::PRESENCE_SESSION_TTL);
+            $this->addRealUser($this->userId, 300.0, 300.0);
 
             \Events::spawnBotForLocation(self::LOCATION);
-            $state = $global->raw('dc_bot_state:'.self::LOCATION);
+            $state = SharedState::get($this->stateKey());
 
             $distance = sqrt(($state['x'] - 300.0) ** 2 + ($state['z'] - 300.0) ** 2);
             $this->assertLessThanOrEqual(
@@ -546,21 +762,12 @@ namespace {
                 'precondition: one tick is longer than the arrival threshold, so the clamp is load-bearing'
             );
 
-            $global = $this->botFlagOn([
-                'dc_room_bounds:'.self::LOCATION => ['minX' => -100.0, 'maxX' => 100.0, 'minZ' => -100.0, 'maxZ' => 100.0],
-                'dc_bot_timer:'.self::LOCATION => getmypid(),
-                'dc_bot_state:'.self::LOCATION => [
-                    'uid' => self::BOT_ID, 'name' => 'Walker',
-                    'x' => 0.0, 'z' => 0.0, 'yaw' => 0.0,
-                    // 2.0 units away: more than the 1.0 threshold, less than a 5.85 tick.
-                    'target_x' => 2.0, 'target_z' => 0.0,
-                    'ts' => time(), 'client_id' => self::BOT_ID, 'location' => self::LOCATION,
-                ],
-            ]);
-            $this->addRealUser($global, $this->userId, 0.0, 0.0);
+            $this->seedRoomBounds(100.0, 100.0);
+            $this->takeOwnershipAndSeedState($this->walkState(2.0, 0.0));
+            $this->addRealUser($this->userId, 0.0, 0.0);
 
             \Events::moveBot(self::LOCATION);
-            $state = $global->raw('dc_bot_state:'.self::LOCATION);
+            $state = SharedState::get($this->stateKey());
 
             $this->assertEqualsWithDelta(
                 2.0,
@@ -589,23 +796,15 @@ namespace {
         public function testMoveBotWalksOneFullTickTowardADistantTarget(): void
         {
             $tick = \Events::BOT_WALK_SPEED * \Events::BOT_MOVE_INTERVAL;
-            $global = $this->botFlagOn([
-                'dc_room_bounds:'.self::LOCATION => ['minX' => -500.0, 'maxX' => 500.0, 'minZ' => -500.0, 'maxZ' => 500.0],
-                'dc_bot_timer:'.self::LOCATION => getmypid(),
-                'dc_bot_state:'.self::LOCATION => [
-                    'uid' => self::BOT_ID, 'name' => 'Walker',
-                    'x' => 0.0, 'z' => 0.0, 'yaw' => 0.0,
-                    'target_x' => 400.0, 'target_z' => 0.0,
-                    'ts' => time(), 'client_id' => self::BOT_ID, 'location' => self::LOCATION,
-                ],
-            ]);
-            $this->addRealUser($global, $this->userId, 0.0, 0.0);
+            $this->seedRoomBounds(500.0, 500.0);
+            $this->takeOwnershipAndSeedState($this->walkState(400.0, 0.0));
+            $this->addRealUser($this->userId, 0.0, 0.0);
 
             \Events::moveBot(self::LOCATION);
-            $state = $global->raw('dc_bot_state:'.self::LOCATION);
+            $state = SharedState::get($this->stateKey());
 
             $this->assertEqualsWithDelta($tick, $state['x'], 1e-9, 'one tick = speed * interval = 5.85 units');
-            $this->assertSame(400.0, $state['target_x'], 'a distant target is kept, not re-rolled');
+            $this->assertEqualsWithDelta(400.0, $state['target_x'], 1e-9, 'a distant target is kept, not re-rolled');
         }
 
         /**
@@ -614,23 +813,15 @@ namespace {
          */
         public function testRepeatedTicksConvergeOnTheTargetInsteadOfOscillating(): void
         {
-            $global = $this->botFlagOn([
-                'dc_room_bounds:'.self::LOCATION => ['minX' => -100.0, 'maxX' => 100.0, 'minZ' => -100.0, 'maxZ' => 100.0],
-                'dc_bot_timer:'.self::LOCATION => getmypid(),
-                'dc_bot_state:'.self::LOCATION => [
-                    'uid' => self::BOT_ID, 'name' => 'Walker',
-                    'x' => 0.0, 'z' => 0.0, 'yaw' => 0.0,
-                    'target_x' => 20.0, 'target_z' => 0.0,
-                    'ts' => time(), 'client_id' => self::BOT_ID, 'location' => self::LOCATION,
-                ],
-            ]);
+            $this->seedRoomBounds(100.0, 100.0);
+            $this->takeOwnershipAndSeedState($this->walkState(20.0, 0.0));
             // No real players: randomRealClientPosition() returns null, so a new
             // target would be uniform in bounds — but we assert convergence on the
             // ORIGINAL target, which is only reachable if the step is clamped.
             $arrived = false;
             for ($tick = 0; $tick < 4; $tick++) {
                 \Events::moveBot(self::LOCATION);
-                $state = $global->raw('dc_bot_state:'.self::LOCATION);
+                $state = SharedState::get($this->stateKey());
                 if (abs($state['x'] - 20.0) < \Events::BOT_TARGET_THRESHOLD && abs($state['z']) < 1e-9) {
                     $arrived = true;
                     break;
@@ -651,29 +842,19 @@ namespace {
         /** On arrival a new target is chosen, inside the room bounds. */
         public function testMoveBotPicksANewInBoundsTargetOnArrival(): void
         {
-            $bounds = ['minX' => -60.0, 'maxX' => 60.0, 'minZ' => -60.0, 'maxZ' => 60.0];
-            $global = $this->botFlagOn([
-                'dc_room_bounds:'.self::LOCATION => $bounds,
-                'dc_bot_timer:'.self::LOCATION => getmypid(),
-                'dc_bot_state:'.self::LOCATION => [
-                    'uid' => self::BOT_ID, 'name' => 'Walker',
-                    'x' => 0.0, 'z' => 0.0, 'yaw' => 0.0,
-                    // Already within BOT_TARGET_THRESHOLD of the target.
-                    'target_x' => 0.1, 'target_z' => 0.1,
-                    'ts' => time(), 'client_id' => self::BOT_ID, 'location' => self::LOCATION,
-                ],
-            ]);
-            $this->addRealUser($global, $this->userId, 10.0, 10.0);
+            $this->seedRoomBounds(60.0, 60.0);
+            $this->takeOwnershipAndSeedState($this->walkState(0.1, 0.1));
+            $this->addRealUser($this->userId, 10.0, 10.0);
 
             \Events::moveBot(self::LOCATION);
-            $state = $global->raw('dc_bot_state:'.self::LOCATION);
+            $state = SharedState::get($this->stateKey());
 
             $this->assertNotEquals(0.1, $state['target_x'], 'arrival must trigger a new target');
             $inset = \Events::BOT_BOUNDS_INSET;
-            $this->assertGreaterThanOrEqual($bounds['minX'] + $inset, $state['target_x']);
-            $this->assertLessThanOrEqual($bounds['maxX'] - $inset, $state['target_x']);
-            $this->assertGreaterThanOrEqual($bounds['minZ'] + $inset, $state['target_z']);
-            $this->assertLessThanOrEqual($bounds['maxZ'] - $inset, $state['target_z']);
+            $this->assertGreaterThanOrEqual(-60.0 + $inset, $state['target_x']);
+            $this->assertLessThanOrEqual(60.0 - $inset, $state['target_x']);
+            $this->assertGreaterThanOrEqual(-60.0 + $inset, $state['target_z']);
+            $this->assertLessThanOrEqual(60.0 - $inset, $state['target_z']);
 
             // THE BOT #3: the new target is near the only real player.
             $distance = sqrt(($state['target_x'] - 10.0) ** 2 + ($state['target_z'] - 10.0) ** 2);
@@ -687,25 +868,16 @@ namespace {
         /** Movement is queued for the shared batch flush (BUG-B7), not broadcast directly. */
         public function testMoveBotQueuesTheBatchAndArmsTheSharedFlush(): void
         {
-            $global = $this->botFlagOn([
-                'dc_room_bounds:'.self::LOCATION => ['minX' => -100.0, 'maxX' => 100.0, 'minZ' => -100.0, 'maxZ' => 100.0],
-                'dc_bot_timer:'.self::LOCATION => getmypid(),
-                'dc_bot_state:'.self::LOCATION => [
-                    'uid' => self::BOT_ID, 'name' => 'Walker',
-                    'x' => 0.0, 'z' => 0.0, 'yaw' => 0.0,
-                    'target_x' => 50.0, 'target_z' => 0.0,
-                    'ts' => time(), 'client_id' => self::BOT_ID, 'location' => self::LOCATION,
-                ],
-                'dc_presence:client:'.self::BOT_ID => ['uid' => self::BOT_ID, 'client_id' => self::BOT_ID],
-                'dc_presence_clients' => [self::BOT_ID],
-                'dc_active_clients' => [self::BOT_ID],
-            ]);
-            $this->addRealUser($global, $this->userId, 0.0, 0.0);
+            $this->seedRoomBounds(100.0, 100.0);
+            $this->takeOwnershipAndSeedState($this->walkState(50.0, 0.0));
+            // Clear the spawn announcement so the "no direct broadcast" assertion
+            // below is really about moveBot(), not about the earlier spawn().
+            \GatewayWorker\Lib\Gateway::reset();
 
             \Events::moveBot(self::LOCATION);
 
-            $queued = json_decode((string) $global->raw('dc_move_batch:'.self::BOT_ID), true);
-            $this->assertIsArray($queued, 'the bot move must be queued at dc_move_batch:bot_<location>');
+            $queued = SharedState::get($this->moveBatchKey());
+            $this->assertIsArray($queued, 'the bot move must be queued at dc:presence:move_batch:bot_<location>');
             $this->assertArrayHasKey('x', $queued);
             $this->assertArrayHasKey('yaw', $queued);
             $this->assertSame(
@@ -731,19 +903,11 @@ namespace {
          */
         public function testMoveBotFacesItsDirectionOfTravel(): void
         {
-            $global = $this->botFlagOn([
-                'dc_room_bounds:'.self::LOCATION => ['minX' => -100.0, 'maxX' => 100.0, 'minZ' => -100.0, 'maxZ' => 100.0],
-                'dc_bot_timer:'.self::LOCATION => getmypid(),
-                'dc_bot_state:'.self::LOCATION => [
-                    'uid' => self::BOT_ID, 'name' => 'Walker',
-                    'x' => 0.0, 'z' => 0.0, 'yaw' => 123.0,
-                    'target_x' => -50.0, 'target_z' => 50.0,   // north-west diagonal
-                    'ts' => time(), 'client_id' => self::BOT_ID, 'location' => self::LOCATION,
-                ],
-            ]);
+            $this->seedRoomBounds(100.0, 100.0);
+            $this->takeOwnershipAndSeedState($this->walkState(-50.0, 50.0, 'Walker', 123.0)); // north-west diagonal
 
             \Events::moveBot(self::LOCATION);
-            $state = $global->raw('dc_bot_state:'.self::LOCATION);
+            $state = SharedState::get($this->stateKey());
 
             // dirX = -1/sqrt(2), dirZ = +1/sqrt(2) => atan2(0.7071, -0.7071) = 3*PI/4.
             $this->assertEqualsWithDelta(3 * M_PI / 4, $state['yaw'], 1e-9);
@@ -759,24 +923,22 @@ namespace {
         /** Positions are clamped into the room even if state drifted outside it. */
         public function testMoveBotClampsPositionIntoTheRoomBounds(): void
         {
-            $bounds = ['minX' => -10.0, 'maxX' => 10.0, 'minZ' => -10.0, 'maxZ' => 10.0];
-            $global = $this->botFlagOn([
-                'dc_room_bounds:'.self::LOCATION => $bounds,
-                'dc_bot_timer:'.self::LOCATION => getmypid(),
-                'dc_bot_state:'.self::LOCATION => [
-                    'uid' => self::BOT_ID, 'name' => 'Walker',
-                    'x' => 7.0, 'z' => 0.0, 'yaw' => 0.0,
-                    'target_x' => 1000.0, 'target_z' => 0.0,   // far outside the room
-                    'ts' => time(), 'client_id' => self::BOT_ID, 'location' => self::LOCATION,
-                ],
-            ]);
+            $this->seedRoomBounds(10.0, 10.0);
+            $this->takeOwnershipAndSeedState(
+                array_merge($this->walkState(1000.0, 0.0), ['x' => 7.0]) // target far outside, start near the wall
+            );
 
             \Events::moveBot(self::LOCATION);
-            $state = $global->raw('dc_bot_state:'.self::LOCATION);
+            $state = SharedState::get($this->stateKey());
 
             $inset = min(\Events::BOT_BOUNDS_INSET, 20.0 / 4, 20.0 / 4);
-            $this->assertLessThanOrEqual($bounds['maxX'] - $inset, $state['x'], 'must never clip through a wall');
-            $this->assertGreaterThanOrEqual($bounds['minX'] + $inset, $state['x']);
+            // x=7 heading to 1000 is a full 5.85 step (12.85) that MUST clamp back
+            // to the inset wall (10 - inset = 8) — proving the clamp fires, not just
+            // that an interior step happens to stay inside.
+            $this->assertGreaterThan(8.0, 7.0 + \Events::BOT_WALK_SPEED * \Events::BOT_MOVE_INTERVAL,
+                'precondition: the unclamped step really would breach the wall, so the clamp is load-bearing');
+            $this->assertEqualsWithDelta(10.0 - $inset, $state['x'], 1e-9, 'must never clip through a wall');
+            $this->assertGreaterThanOrEqual(-10.0 + $inset, $state['x']);
         }
 
         // ====================================================================
@@ -785,59 +947,68 @@ namespace {
 
         public function testMoveBotCleansUpWhenFlagCGoesOff(): void
         {
-            $global = $this->botFlagOn();
+            $this->botFlagOn();
             \Events::spawnBotForLocation(self::LOCATION);
-            $this->assertIsArray($global->raw('dc_bot_state:'.self::LOCATION));
+            $this->assertIsArray(SharedState::get($this->stateKey()));
             $timerId = $this->botMoveTimers()[0]['id'];
 
-            $global->store[FeatureFlags::VAR_DC_BOT_PRESENCE] = 0;
+            $this->botFlagOff();
             \Events::moveBot(self::LOCATION);
 
-            $this->assertNull($global->raw('dc_bot_state:'.self::LOCATION), 'state removed');
-            $this->assertNull($global->raw('dc_presence:client:'.self::BOT_ID), 'avatar removed');
+            $this->assertNull(SharedState::get($this->stateKey()), 'state removed');
+            $this->assertNull(SharedState::get($this->presenceKey(self::BOT_ID)), 'avatar removed');
             $this->assertContains($timerId, TestTimer::deleted(), 'the move timer must be deleted');
+            $this->assertFalse($this->rawLockValue(), 'cleanup releases the ownership lock this process held');
         }
 
         public function testMoveBotCleansUpWhenBotStateVanishes(): void
         {
-            $global = $this->botFlagOn();
+            $this->botFlagOn();
             \Events::spawnBotForLocation(self::LOCATION);
             $timerId = $this->botMoveTimers()[0]['id'];
-            unset($global->store['dc_bot_state:'.self::LOCATION]);
+            SharedState::del($this->stateKey());
 
             \Events::moveBot(self::LOCATION);
 
             $this->assertContains($timerId, TestTimer::deleted());
-            $this->assertNotContains(self::BOT_ID, $global->raw('dc_presence_clients'));
+            $this->assertNotContains(self::BOT_ID, SharedState::zRange(\Events::DC_PRESENCE_INDEX_KEY, 0, -1));
         }
 
         /**
-         * THE BOT #4: if another worker owns the marker, this process retires ITS
-         * OWN timer instead of double-driving the shared state — and it must
-         * delete only the id it created itself.
+         * THE BOT #4 (lock form): if our ownership lock lapsed and ANOTHER
+         * instance has taken the bot over, this process retires ITS OWN timer and
+         * touches NOTHING of the new owner's — a renew against a foreign token
+         * fails, and a Workerman id may only be deleted by the process that made
+         * it. This is the whole point of the token-checked lock over the retired
+         * unconditional shared-store release.
          */
-        public function testMoveBotRetiresItsOwnTimerWhenAnotherWorkerOwnsTheBot(): void
+        public function testMoveBotRetiresItsOwnTimerWhenTheOwnerLockIsLost(): void
         {
-            $global = $this->botFlagOn();
+            $this->botFlagOn();
             \Events::spawnBotForLocation(self::LOCATION);
             $ourTimerId = $this->botMoveTimers()[0]['id'];
-            $stateBefore = $global->raw('dc_bot_state:'.self::LOCATION);
+            $stateBefore = SharedState::get($this->stateKey());
+            $ourToken = $this->ownerToken();
 
-            // Another BusinessWorker has taken ownership.
-            $global->store['dc_bot_timer:'.self::LOCATION] = 4194303;
+            // Our tick stalls long enough for the lock to lapse, then a rival takes it.
+            $this->redis->fastForward(\Events::BOT_OWNER_LOCK_TTL + 1);
+            $this->seedRivalOwnerLockAlive();
+            $this->assertNotSame($ourToken, $this->rawLockValue(), 'precondition: the rival now holds the lock');
 
             \Events::moveBot(self::LOCATION);
 
             $this->assertContains($ourTimerId, TestTimer::deleted(), 'we retire OUR timer');
+            $this->assertArrayNotHasKey(self::LOCATION, $this->getBotTimers(), 'the retired timer slot is cleared');
+            $this->assertArrayNotHasKey(self::LOCATION, $this->getBotLockTokens(), 'the stale ownership token is dropped');
             $this->assertSame(
                 $stateBefore,
-                $global->raw('dc_bot_state:'.self::LOCATION),
+                SharedState::get($this->stateKey()),
                 'the shared state must not be touched by the retiring process'
             );
             $this->assertSame(
-                4194303,
-                $global->raw('dc_bot_timer:'.self::LOCATION),
-                'the other worker keeps ownership'
+                'otherhost:999:deadbeef',
+                $this->rawLockValue(),
+                'the new owner keeps the lock — a stale renew must not resurrect or delete it'
             );
         }
 
@@ -847,19 +1018,19 @@ namespace {
 
         public function testCleanupRemovesEverythingAboutTheBot(): void
         {
-            $global = $this->botFlagOn();
+            $this->botFlagOn();
             \Events::spawnBotForLocation(self::LOCATION);
             $timerId = $this->botMoveTimers()[0]['id'];
-            $global->store['dc_move_batch:'.self::BOT_ID] = json_encode(['x' => 1]);
+            SharedState::set($this->moveBatchKey(), ['x' => 1], \Events::PRESENCE_MOVE_TTL);
 
             \Events::cleanupBotForLocation(self::LOCATION);
 
-            $this->assertNull($global->raw('dc_bot_state:'.self::LOCATION));
-            $this->assertNull($global->raw('dc_bot_timer:'.self::LOCATION));
-            $this->assertNull($global->raw('dc_presence:client:'.self::BOT_ID));
-            $this->assertNull($global->raw('dc_move_batch:'.self::BOT_ID));
-            $this->assertNotContains(self::BOT_ID, $global->raw('dc_presence_clients'));
-            $this->assertNotContains(self::BOT_ID, $global->raw('dc_active_clients'));
+            $this->assertNull(SharedState::get($this->stateKey()));
+            $this->assertFalse($this->rawLockValue(), 'the owner releases the lock');
+            $this->assertNull(SharedState::get($this->presenceKey(self::BOT_ID)));
+            $this->assertNull(SharedState::get($this->moveBatchKey()));
+            $this->assertNotContains(self::BOT_ID, SharedState::zRange(\Events::DC_PRESENCE_INDEX_KEY, 0, -1));
+            $this->assertNotContains(self::BOT_ID, SharedState::zRange(\Events::DC_ACTIVE_INDEX_KEY, 0, -1));
             $this->assertContains($timerId, TestTimer::deleted());
         }
 
@@ -887,35 +1058,38 @@ namespace {
 
         public function testCleanupLeavesRealUsersAlone(): void
         {
-            $global = $this->botFlagOn();
+            $this->botFlagOn();
             \Events::spawnBotForLocation(self::LOCATION);
-            $this->addRealUser($global, $this->userId, 5.0, 5.0);
+            $this->addRealUser($this->userId, 5.0, 5.0);
 
             \Events::cleanupBotForLocation(self::LOCATION);
 
-            $this->assertIsArray($global->raw('dc_presence:client:'.$this->userId));
-            $this->assertContains($this->userId, $global->raw('dc_presence_clients'));
-            $this->assertContains($this->userId, $global->raw('dc_active_clients'));
+            $this->assertIsArray(SharedState::get($this->presenceKey($this->userId)));
+            $this->assertContains($this->userId, SharedState::zRange(\Events::DC_PRESENCE_INDEX_KEY, 0, -1));
+            $this->assertContains($this->userId, SharedState::zRange(\Events::DC_ACTIVE_INDEX_KEY, 0, -1));
         }
 
         /**
-         * A process that does not own the timer must NOT delete a timer id it did
-         * not create; it clears the shared state and leaves the marker for the
-         * owner's next tick to reap.
+         * A process that does NOT own the lock may clear the shared bot-state (so
+         * the real owner's next tick self-reaps its own timer) but must NEVER
+         * unlock another instance's hold and must NEVER Timer::del() an id it did
+         * not create — a Workerman timer id is only valid in its creating process.
+         *
+         * This is the lock model's answer to the retired "leave the marker for the
+         * owner to reap" branch: the "reap" is now simply the lock lapsing on TTL
+         * after the state is cleared, and a non-owner is structurally incapable of
+         * touching either the foreign lock or a foreign timer.
          */
-        public function testCleanupFromANonOwningProcessDoesNotDeleteForeignTimers(): void
+        public function testCleanupFromANonOwningProcessNeverTouchesTheOwnerLock(): void
         {
-            $global = $this->botFlagOn([
-                'dc_bot_timer:'.self::LOCATION => 4194303,
-                'dc_bot_state:'.self::LOCATION => [
-                    'uid' => self::BOT_ID, 'name' => 'Walker', 'x' => 0.0, 'z' => 0.0, 'yaw' => 0.0,
-                    'target_x' => 0.0, 'target_z' => 0.0, 'client_id' => self::BOT_ID,
-                    'location' => self::LOCATION,
-                ],
-                'dc_presence_clients' => [self::BOT_ID],
-                'dc_active_clients' => [self::BOT_ID],
-                'dc_presence:client:'.self::BOT_ID => ['uid' => self::BOT_ID, 'client_id' => self::BOT_ID],
-            ]);
+            $this->botFlagOn();
+            $this->seedRivalOwnerLockAlive();          // another instance owns it
+            $this->seedGhostState('Walker');
+            SharedState::set($this->presenceKey(self::BOT_ID), ['uid' => self::BOT_ID, 'client_id' => self::BOT_ID], \Events::BOT_STATE_TTL);
+            SharedState::zAdd(\Events::DC_PRESENCE_INDEX_KEY, time(), self::BOT_ID);
+            SharedState::zAdd(\Events::DC_ACTIVE_INDEX_KEY, time(), self::BOT_ID);
+            // This process holds no timer and no token — it is not the owner.
+            $this->clearBotStatics();
 
             \Events::cleanupBotForLocation(self::LOCATION);
 
@@ -925,14 +1099,15 @@ namespace {
                 'a Workerman timer id is only valid in its creating process — never Timer::del() a foreign id'
             );
             $this->assertSame(
-                4194303,
-                $global->raw('dc_bot_timer:'.self::LOCATION),
-                'the marker is left for the owner to reap on its next tick'
+                'otherhost:999:deadbeef',
+                $this->rawLockValue(),
+                'a non-owner must never release a foreign ownership lock'
             );
             $this->assertNull(
-                $global->raw('dc_bot_state:'.self::LOCATION),
-                'clearing the state is what makes the owner stop next tick'
+                SharedState::get($this->stateKey()),
+                'clearing the state is what makes the real owner stop next tick and self-reap'
             );
+            $this->assertNotContains(self::BOT_ID, SharedState::zRange(\Events::DC_PRESENCE_INDEX_KEY, 0, -1));
         }
 
         // ====================================================================
@@ -956,9 +1131,9 @@ namespace {
 
         public function testHasRealUsersIsTrueWithAHexClientIdPresent(): void
         {
-            $global = $this->botFlagOn();
+            $this->botFlagOn();
             \Events::spawnBotForLocation(self::LOCATION);
-            $this->addRealUser($global, $this->userId);
+            $this->addRealUser($this->userId);
 
             $this->assertTrue($this->hasRealUsers(), 'a 20-char hex client_id is a real user, not a bot');
         }
@@ -977,10 +1152,10 @@ namespace {
          */
         public function testOnlyThePrefixMakesAClientIdABot(): void
         {
-            $global = $this->botFlagOn();
+            $this->botFlagOn();
             $lookalike = 'abbot_main';
-            $global->store['dc_presence:client:'.$lookalike] = ['uid' => 1, 'client_id' => $lookalike];
-            $global->store['dc_presence_clients'] = [$lookalike];
+            SharedState::set($this->presenceKey($lookalike), ['uid' => 1, 'client_id' => $lookalike], \Events::PRESENCE_STALE_TTL);
+            SharedState::zAdd(\Events::DC_PRESENCE_INDEX_KEY, time(), $lookalike);
 
             $this->assertTrue($this->hasRealUsers(), 'only a leading "bot_" marks a bot');
         }
@@ -991,7 +1166,7 @@ namespace {
 
         public function testRealUserJoinSpawnsTheBotNearThem(): void
         {
-            $global = $this->botFlagOn();
+            $this->botFlagOn();
             $_SESSION = [
                 'v1_authed' => true, 'uid' => 4242, 'name' => 'admin',
                 'ima' => 'admin', 'login' => true,
@@ -1005,7 +1180,7 @@ namespace {
                 ],
             ]);
 
-            $state = $global->raw('dc_bot_state:'.self::LOCATION);
+            $state = SharedState::get($this->stateKey());
             $this->assertIsArray($state, 'a real user joining must spawn the bot');
             $distance = sqrt(($state['x'] - 40.0) ** 2 + ($state['z'] + 40.0) ** 2);
             $this->assertLessThanOrEqual(
@@ -1025,7 +1200,7 @@ namespace {
 
         public function testLastRealUserLeavingDespawnsTheBot(): void
         {
-            $global = $this->botFlagOn();
+            $this->botFlagOn();
             $_SESSION = [
                 'v1_authed' => true, 'uid' => 4242, 'name' => 'admin',
                 'ima' => 'admin', 'login' => true,
@@ -1035,15 +1210,15 @@ namespace {
                 'v' => 1, 'id' => 'join-1', 'op' => 'dc.presence.join', 'ts' => time(),
                 'data' => ['x' => 0.0, 'z' => 0.0, 'yaw' => 0.0],
             ]);
-            $this->assertIsArray($global->raw('dc_bot_state:'.self::LOCATION));
+            $this->assertIsArray(SharedState::get($this->stateKey()));
             $timerId = $this->botMoveTimers()[0]['id'];
 
             \Events::dispatchV1($this->userId, [
                 'v' => 1, 'id' => 'leave-1', 'op' => 'dc.presence.leave', 'ts' => time(), 'data' => [],
             ]);
 
-            $this->assertNull($global->raw('dc_bot_state:'.self::LOCATION), 'the bot leaves with the last human');
-            $this->assertNull($global->raw('dc_presence:client:'.self::BOT_ID));
+            $this->assertNull(SharedState::get($this->stateKey()), 'the bot leaves with the last human');
+            $this->assertNull(SharedState::get($this->presenceKey(self::BOT_ID)));
             $this->assertContains($timerId, TestTimer::deleted());
 
             $left = $this->presenceGroupEvents('dc.presence.left');
@@ -1055,7 +1230,7 @@ namespace {
         /** A second human leaving while one remains must NOT despawn the bot. */
         public function testBotSurvivesWhileAnotherRealUserRemains(): void
         {
-            $global = $this->botFlagOn();
+            $this->botFlagOn();
             $other = dc_client_id(2002);
             $_SESSION = [
                 'v1_authed' => true, 'uid' => 4242, 'name' => 'admin',
@@ -1076,7 +1251,7 @@ namespace {
             ]);
 
             $this->assertIsArray(
-                $global->raw('dc_bot_state:'.self::LOCATION),
+                SharedState::get($this->stateKey()),
                 'the bot must stay while a human is still in the scene'
             );
         }
@@ -1104,7 +1279,7 @@ namespace {
                 'per-tick step exceeds the arrival threshold, so the step MUST be clamped in moveBot()'
             );
             // Retained as the FALLBACK bounds only — dcRoomBounds() now prefers the
-            // browser-reported dc_room_bounds:<location> when one has been recorded.
+            // browser-reported dc:presence:room_bounds:<location> when one has been recorded.
             $this->assertSame(-50.0, \Events::BOT_BOUNDS_X_MIN);
             $this->assertSame(50.0, \Events::BOT_BOUNDS_X_MAX);
             $this->assertSame(-50.0, \Events::BOT_BOUNDS_Z_MIN);
@@ -1113,7 +1288,27 @@ namespace {
             $this->assertSame(2.0, \Events::BOT_BOUNDS_INSET);
             $this->assertSame(25.0, \Events::BOT_SPAWN_RADIUS);
             $this->assertSame(30.0, \Events::BOT_WANDER_RADIUS);
-            $this->assertSame('dc_room_bounds:', \Events::DC_ROOM_BOUNDS_KEY_PREFIX);
+
+            // Migration A2 key + TTL contract. The owner lock is the whole
+            // ownership mechanism now; the state TTL deliberately EXCEEDS the lock
+            // TTL so a crashed owner's ghost state outlives its lock — the window a
+            // takeover relies on (proved in testSpawnBotTakesOverWhenTheOwnerLockHasLapsed).
+            $this->assertSame(10, \Events::BOT_OWNER_LOCK_TTL, 'bot owner lock TTL is the enforced heartbeat that replaced the retired staleness constant');
+            $this->assertGreaterThan(
+                \Events::BOT_OWNER_LOCK_TTL,
+                \Events::BOT_STATE_TTL,
+                'state TTL must outlive the owner lock so a dead owner leaves a takeable ghost, not an instant vanish'
+            );
+            $this->assertSame('dc:presence:room_bounds:', \Events::DC_ROOM_BOUNDS_KEY_PREFIX);
+            $this->assertSame('dc:presence:bot_state:', \Events::BOT_STATE_KEY_PREFIX);
+            $this->assertSame('dc:presence:client:', \Events::DC_PRESENCE_KEY_PREFIX);
+            $this->assertSame('dc:presence:index', \Events::DC_PRESENCE_INDEX_KEY);
+            $this->assertSame('dc:presence:active', \Events::DC_ACTIVE_INDEX_KEY);
+            // The owner lock name resolves under the facade's dc:lock: namespace.
+            $this->assertSame(
+                'dc:lock:bot_owner:' . self::LOCATION,
+                SharedState::PREFIX_LOCK . 'bot_owner:' . self::LOCATION
+            );
         }
     }
 }

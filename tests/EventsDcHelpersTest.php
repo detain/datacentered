@@ -9,17 +9,29 @@
  *   dcPresenceIsStale($pong,$sent,$now,$t) keepalive watchdog decision
  *   randomPointNear($anchor,$bounds,$r)   spawn/wander target selection
  *   randomRealClientPosition()            "wander where the humans are"
- *   botOwnerAlive($owner)                 is the timer-owning worker still up
  *   isInPeerViewport(...)                 per-recipient move filtering
+ *
+ * plus the bot-OWNERSHIP contract the spawn/move timers depend on:
+ *
+ *   SharedState lock 'bot_owner:<location>' (full key dc:lock:bot_owner:<loc>,
+ *   TTL Events::BOT_OWNER_LOCK_TTL) — acquire IS ownership, renew IS liveness,
+ *   expiry IS death. The retired botOwnerAlive() GlobalData owner-pid marker
+ *   probe (reading /proc across three hosts sharing one store) was replaced by
+ *   this real, enforced TTL lock in migration A2; the cases below pin the
+ *   lock semantics that probe used to approximate.
  *
  * These are the cheapest place to pin the contracts the integration tests then
  * rely on, and the only place where the hostile inputs (non-numeric, INF/NAN,
  * inverted, degenerate, absurd) can be enumerated exhaustively.
  *
- * All are private statics, so they are reached by reflection; that is
+ * All helpers are private statics, so they are reached by reflection; that is
  * deliberate — testing them through a handler would make the property-style
  * assertions below (hundreds of random draws staying inside the box) impossible
  * to write.
+ *
+ * Storage goes exclusively through the SharedState Redis facade backed by the
+ * InMemoryRedis double (GlobalData→Redis migration A2): no $GLOBALS['global']
+ * anywhere in this file.
  */
 
 namespace {
@@ -31,19 +43,30 @@ namespace {
     {
         use DcTransportAssertions;
 
+        /** @var InMemoryRedis the double injected by setUp() for every test */
+        private $redis;
+
         protected function setUp(): void
         {
             \GatewayWorker\Lib\Gateway::reset();
             \Channel\Client::reset();
-            \GlobalData\Client::resetConstructed();
             TestTimer::install();
-            unset($GLOBALS['global']);
             $_SESSION = [];
+
+            // FeatureFlagsTest-style injection discipline: a leaked
+            // $GLOBALS['redis'] or a leftover facade memo from another suite
+            // must never decide behaviour here, so drop both, then inject a
+            // FRESH double (fresh keyspace AND fresh controllable clock).
+            unset($GLOBALS['redis']);
+            \SharedState::reset();
+            $this->redis = new InMemoryRedis();
+            \SharedState::setClient($this->redis);
         }
 
         protected function tearDown(): void
         {
-            unset($GLOBALS['global']);
+            \SharedState::reset();
+            unset($GLOBALS['redis']);
         }
 
         /** Invoke a private static Events helper. */
@@ -52,6 +75,60 @@ namespace {
             $ref = new ReflectionMethod(\Events::class, $method);
             $ref->setAccessible(true);
             return $ref->invoke(null, ...$args);
+        }
+
+        /** The facade's raw GET on a lock key: token string, or false when absent. */
+        private function rawLock(string $name)
+        {
+            return $this->redis->get(\SharedState::PREFIX_LOCK.$name);
+        }
+
+        /**
+         * Seed a foreign lock HOLDER directly on the double.
+         *
+         * MUST be a raw SET, never SharedState::set: lock tokens are stored
+         * un-encoded because the compare-token Lua scripts string-compare GET
+         * against ARGV — the facade's JSON wrapping would break the compare.
+         */
+        private function seedForeignHolder(string $name, string $token): void
+        {
+            $this->assertSame(
+                true,
+                $this->redis->set(
+                    \SharedState::PREFIX_LOCK.$name,
+                    $token,
+                    ['nx', 'ex' => \Events::BOT_OWNER_LOCK_TTL]
+                )
+            );
+        }
+
+        /** Seed browser-reported bounds exactly as spawnBotForLocation stores them. */
+        private function seedReportedBounds(string $location, $bounds): void
+        {
+            $this->assertTrue(\SharedState::set(
+                \Events::DC_ROOM_BOUNDS_KEY_PREFIX.$location,
+                $bounds,
+                \Events::PRESENCE_SESSION_TTL
+            ), 'fixture: reported bounds stored at dc:presence:room_bounds:'.$location);
+        }
+
+        /**
+         * Seed one presence member exactly as handleDcPresenceJoin does:
+         * indexed in the dc:presence:index ZSET (score = last-seen ts) with a
+         * per-client STRING record carrying the EX90 staleness TTL.
+         *
+         * @param mixed $record null seeds the index member ONLY (orphan index entry)
+         */
+        private function seedPresenceMember(string $clientId, $record): void
+        {
+            $this->assertTrue(\SharedState::zAdd(\Events::DC_PRESENCE_INDEX_KEY, time(), $clientId));
+            if ($record !== null) {
+                $this->assertTrue(\SharedState::set(
+                    \Events::DC_PRESENCE_KEY_PREFIX.$clientId,
+                    $record,
+                    \Events::PRESENCE_STALE_TTL
+                ), 'fixture: presence record for '.$clientId);
+            }
         }
 
         // ====================================================================
@@ -172,11 +249,14 @@ namespace {
 
         // ====================================================================
         // dcRoomBounds — reported-or-fallback, inset
+        //
+        // Reported bounds live at dc:presence:room_bounds:<location> (SharedState
+        // STRING, JSON payload, written by spawnBotForLocation with the
+        // PRESENCE_SESSION_TTL 86400s carry-alive) — see Events::DC_ROOM_BOUNDS_KEY_PREFIX.
         // ====================================================================
 
         public function testDcRoomBoundsFallsBackToTheConstantsWhenNothingReported(): void
         {
-            $GLOBALS['global'] = new InMemoryGlobalData();
             $inset = \Events::BOT_BOUNDS_INSET;
 
             $this->assertSame([
@@ -187,21 +267,24 @@ namespace {
             ], self::call('dcRoomBounds', 'main'));
         }
 
-        public function testDcRoomBoundsWorksWithNoGlobalDataAtAll(): void
+        public function testDcRoomBoundsWorksWithNoRedisClientAtAll(): void
         {
-            $GLOBALS['global'] = null;
+            // The migration's fail-safe contract: with no client injected the
+            // facade resolves null, get() returns null — the OLD code had to
+            // survive a null $GLOBALS['global'] the same way, no fatal either way.
+            \SharedState::reset();
 
             $bounds = self::call('dcRoomBounds', 'main');
-            $this->assertIsArray($bounds, 'a null $global must not fatal — the fallback box is used');
+            $this->assertIsArray($bounds, 'a clientless facade must not fatal — the fallback box is used');
             $this->assertSame(\Events::BOT_BOUNDS_X_MIN + \Events::BOT_BOUNDS_INSET, $bounds['minX']);
+
+            \SharedState::setClient($this->redis);
         }
 
         public function testDcRoomBoundsPrefersTheReportedRoomAndInsetsIt(): void
         {
-            $GLOBALS['global'] = new InMemoryGlobalData([
-                \Events::DC_ROOM_BOUNDS_KEY_PREFIX.'main' => [
-                    'minX' => -200.0, 'maxX' => -100.0, 'minZ' => -300.0, 'maxZ' => -200.0,
-                ],
+            $this->seedReportedBounds('main', [
+                'minX' => -200.0, 'maxX' => -100.0, 'minZ' => -300.0, 'maxZ' => -200.0,
             ]);
             $inset = \Events::BOT_BOUNDS_INSET;
 
@@ -216,9 +299,7 @@ namespace {
         /** A stored value that no longer validates is ignored in favour of the fallback. */
         public function testDcRoomBoundsIgnoresAnInvalidStoredValue(): void
         {
-            $GLOBALS['global'] = new InMemoryGlobalData([
-                \Events::DC_ROOM_BOUNDS_KEY_PREFIX.'main' => ['minX' => 'x', 'maxX' => 1, 'minZ' => 0, 'maxZ' => 1],
-            ]);
+            $this->seedReportedBounds('main', ['minX' => 'x', 'maxX' => 1, 'minZ' => 0, 'maxZ' => 1]);
 
             $this->assertSame(
                 \Events::BOT_BOUNDS_X_MIN + \Events::BOT_BOUNDS_INSET,
@@ -232,10 +313,8 @@ namespace {
          */
         public function testDcRoomBoundsCapsTheInsetForSmallRooms(): void
         {
-            $GLOBALS['global'] = new InMemoryGlobalData([
-                \Events::DC_ROOM_BOUNDS_KEY_PREFIX.'tiny' => [
-                    'minX' => 0.0, 'maxX' => 4.0, 'minZ' => 0.0, 'maxZ' => 4.0,
-                ],
+            $this->seedReportedBounds('tiny', [
+                'minX' => 0.0, 'maxX' => 4.0, 'minZ' => 0.0, 'maxZ' => 4.0,
             ]);
 
             // inset = min(2.0, 4/4, 4/4) = 1.0
@@ -251,10 +330,8 @@ namespace {
         /** Bounds are per location. */
         public function testDcRoomBoundsAreScopedPerLocation(): void
         {
-            $GLOBALS['global'] = new InMemoryGlobalData([
-                \Events::DC_ROOM_BOUNDS_KEY_PREFIX.'main' => [
-                    'minX' => -80.0, 'maxX' => 80.0, 'minZ' => -80.0, 'maxZ' => 80.0,
-                ],
+            $this->seedReportedBounds('main', [
+                'minX' => -80.0, 'maxX' => 80.0, 'minZ' => -80.0, 'maxZ' => 80.0,
             ]);
 
             $this->assertSame(-78.0, self::call('dcRoomBounds', 'main')['minX']);
@@ -326,16 +403,17 @@ namespace {
          */
         public function testDcPresenceIsStaleIsPureAndTouchesNothing(): void
         {
-            $GLOBALS['global'] = new InMemoryGlobalData(['sentinel' => 1]);
-
             for ($i = 0; $i < 50; $i++) {
                 self::call('dcPresenceIsStale', $i, $i + 1, $i + 2, 90);
             }
 
-            $this->assertSame(['sentinel'], $GLOBALS['global']->keys(), 'no GlobalData writes');
+            // The fresh setUp double IS the sentinel: any SharedState write —
+            // however innocent it looks — leaves a key behind.
+            $this->assertSame([], $this->redis->allKeys(), 'no SharedState/Redis writes');
             $this->assertSame([], \GatewayWorker\Lib\Gateway::$sent, 'no sends');
             $this->assertSame([], \GatewayWorker\Lib\Gateway::$closed, 'no closes');
             $this->assertSame([], TestTimer::added(), 'no timers');
+            $this->assertDeadChannelTransportUnused('dcPresenceIsStale:');
         }
 
         // ====================================================================
@@ -414,27 +492,32 @@ namespace {
 
         // ====================================================================
         // randomRealClientPosition
+        //
+        // Membership comes from the dc:presence:index ZSET (members = client ids,
+        // score = last-seen ts) and positions from the per-client
+        // dc:presence:client:<id> STRING records (EX90 = PRESENCE_STALE_TTL) —
+        // the GlobalData dc_presence_clients array map is gone.
         // ====================================================================
 
-        public function testRandomRealClientPositionReturnsNullWithoutGlobalData(): void
+        public function testRandomRealClientPositionReturnsNullWithoutARedisClient(): void
         {
-            $GLOBALS['global'] = null;
-            $this->assertNull(self::call('randomRealClientPosition'));
+            \SharedState::reset();
+            $this->assertNull(self::call('randomRealClientPosition'), 'clientless zRange fail-safes to [] — no fatal');
+            \SharedState::setClient($this->redis);
         }
 
         public function testRandomRealClientPositionReturnsNullOnAnEmptyScene(): void
         {
-            $GLOBALS['global'] = new InMemoryGlobalData(['dc_presence_clients' => []]);
+            // Fresh double: the index ZSET does not exist yet. Redis has no
+            // NULL-vs-empty absent-key trap here — zRange on a missing key is
+            // simply [], so there is nothing to seed and nothing to livelock on.
             $this->assertNull(self::call('randomRealClientPosition'));
         }
 
         /** Bots are not real players, so a bot-only scene has no anchor. */
         public function testRandomRealClientPositionSkipsBots(): void
         {
-            $GLOBALS['global'] = new InMemoryGlobalData([
-                'dc_presence_clients' => ['bot_main'],
-                'dc_presence:client:bot_main' => ['uid' => 'bot_main', 'x' => 5.0, 'z' => 5.0],
-            ]);
+            $this->seedPresenceMember('bot_main', ['uid' => 'bot_main', 'x' => 5.0, 'z' => 5.0]);
 
             $this->assertNull(
                 self::call('randomRealClientPosition'),
@@ -445,11 +528,8 @@ namespace {
         public function testRandomRealClientPositionReturnsAHumanPosition(): void
         {
             $human = dc_client_id(7);
-            $GLOBALS['global'] = new InMemoryGlobalData([
-                'dc_presence_clients' => ['bot_main', $human],
-                'dc_presence:client:bot_main' => ['uid' => 'bot_main', 'x' => -999.0, 'z' => -999.0],
-                'dc_presence:client:'.$human => ['uid' => 42, 'x' => 12.5, 'z' => -7.25],
-            ]);
+            $this->seedPresenceMember('bot_main', ['uid' => 'bot_main', 'x' => -999.0, 'z' => -999.0]);
+            $this->seedPresenceMember($human, ['uid' => 42, 'x' => 12.5, 'z' => -7.25]);
 
             $this->assertSame(
                 ['x' => 12.5, 'z' => -7.25],
@@ -459,16 +539,13 @@ namespace {
         }
 
         /** Entries with missing or non-numeric coordinates are skipped, not fatal. */
-        public function testRandomRealClientPositionSkipsMalformedEntries(): void
+        public function testRandomRealClientPositionSkipsMalformedRecords(): void
         {
             $good = dc_client_id(8);
-            $GLOBALS['global'] = new InMemoryGlobalData([
-                'dc_presence_clients' => [dc_client_id(1), dc_client_id(2), dc_client_id(3), $good],
-                'dc_presence:client:'.dc_client_id(1) => 'not an array',
-                'dc_presence:client:'.dc_client_id(2) => ['uid' => 1],                        // no x/z
-                'dc_presence:client:'.dc_client_id(3) => ['uid' => 1, 'x' => 'left', 'z' => 0], // non-numeric
-                'dc_presence:client:'.$good => ['uid' => 1, 'x' => '3', 'z' => '4'],
-            ]);
+            $this->seedPresenceMember(dc_client_id(1), 'not an array');                        // STRING payload
+            $this->seedPresenceMember(dc_client_id(2), ['uid' => 1]);                          // no x/z
+            $this->seedPresenceMember(dc_client_id(3), ['uid' => 1, 'x' => 'left', 'z' => 0]); // non-numeric
+            $this->seedPresenceMember($good, ['uid' => 1, 'x' => '3', 'z' => '4']);
 
             $this->assertSame(['x' => 3.0, 'z' => 4.0], self::call('randomRealClientPosition'));
         }
@@ -478,11 +555,8 @@ namespace {
         {
             $a = dc_client_id(11);
             $b = dc_client_id(12);
-            $GLOBALS['global'] = new InMemoryGlobalData([
-                'dc_presence_clients' => [$a, $b],
-                'dc_presence:client:'.$a => ['uid' => 1, 'x' => 1.0, 'z' => 1.0],
-                'dc_presence:client:'.$b => ['uid' => 2, 'x' => 2.0, 'z' => 2.0],
-            ]);
+            $this->seedPresenceMember($a, ['uid' => 1, 'x' => 1.0, 'z' => 1.0]);
+            $this->seedPresenceMember($b, ['uid' => 2, 'x' => 2.0, 'z' => 2.0]);
 
             $seen = [];
             for ($i = 0; $i < 100; $i++) {
@@ -498,63 +572,201 @@ namespace {
             );
         }
 
-        /** A non-array index must not fatal. */
-        public function testRandomRealClientPositionToleratesACorruptIndex(): void
+        /**
+         * A corrupt non-array INDEX could not fatal here even in the old
+         * GlobalData model, and is now type-impossible: dc:presence:index is a
+         * ZSET, its members are just ids. The realistic analogue — a sweep/leave
+         * race where the index still names a member whose record key is already
+         * gone — must skip gracefully, never fatal and never anchor the bot on
+         * a phantom position.
+         */
+        public function testRandomRealClientPositionSkipsIndexedMemberWithAbsentRecord(): void
         {
-            $GLOBALS['global'] = new InMemoryGlobalData(['dc_presence_clients' => 'corrupt']);
-            $this->assertNull(self::call('randomRealClientPosition'));
-        }
+            $ghost = dc_client_id(13);
+            $good = dc_client_id(14);
+            $this->seedPresenceMember($ghost, null);   // index member only, NO record key
+            $this->seedPresenceMember($good, ['uid' => 1, 'x' => 6.5, 'z' => -2.25]);
 
-        // ====================================================================
-        // botOwnerAlive
-        // ====================================================================
+            for ($i = 0; $i < 30; $i++) {
+                $this->assertSame(
+                    ['x' => 6.5, 'z' => -2.25],
+                    self::call('randomRealClientPosition'),
+                    'the orphaned index member must be skipped, leaving the good human'
+                );
+            }
 
-        public function testBotOwnerAliveForOurOwnPid(): void
-        {
-            $this->assertTrue(self::call('botOwnerAlive', getmypid()));
-            $this->assertTrue(self::call('botOwnerAlive', (string) getmypid()), 'digit strings are pids too');
-        }
-
-        public function testBotOwnerAliveForADeadPid(): void
-        {
-            $dead = 4194303;   // above the usual pid_max, so it cannot exist
-            $this->assertFalse(is_dir('/proc/'.$dead), 'fixture pid must really be dead');
-            $this->assertFalse(
-                self::call('botOwnerAlive', $dead),
-                'a dead owner means its timers died with it and the bot must be respawned'
+            // Ghost-only scene degrades to "no anchor known", not a crash.
+            \SharedState::del(\Events::DC_PRESENCE_KEY_PREFIX.$good);
+            $this->assertNull(
+                self::call('randomRealClientPosition'),
+                'an index whose every member lost its record yields null'
             );
         }
 
-        public function testBotOwnerAliveForALivePidThatIsNotUs(): void
+        // ====================================================================
+        // Bot ownership — SharedState lock 'bot_owner:<location>'
+        //
+        // botOwnerAlive() is RETIRED: the GlobalData-era scheme stamped an
+        // owner-pid marker and probed /proc (across three hosts sharing one
+        // store, so a foreign pid meant nothing) plus a heartbeat staleness
+        // window. Migration A2 replaced that whole probe with one TTL lock —
+        // dc:lock:bot_owner:<location> @ Events::BOT_OWNER_LOCK_TTL (10s ≈ 20
+        // missed 0.5s moveBot ticks): acquiring IS taking ownership, renewing
+        // IS the liveness heartbeat, expiry IS death (next join self-heals).
+        // These are the lock-semantics equivalents of the old marker cases.
+        // ====================================================================
+
+        /** Old "our own pid marker" (and its digit-string twin) == we hold the lock. */
+        public function testBotOwnerLockOwnerRenewsItsHoldWhileRivalsAreRefused(): void
         {
-            // pid 1 always exists on Linux and is never this process.
-            $this->assertNotSame(1, getmypid());
-            $this->assertTrue(self::call('botOwnerAlive', 1));
+            $name = self::call('botOwnerLockName', 'main');
+            $this->assertSame('bot_owner:main', $name, 'facade lock name; the dc:lock: prefix is applied by SharedState');
+
+            $token = \SharedState::lock($name, \Events::BOT_OWNER_LOCK_TTL);
+            $this->assertNotNull($token, 'uncontended acquire of an unowned bot must succeed');
+            $this->assertMatchesRegularExpression(
+                '/^[^:]+:\d+:[0-9a-f]{16}$/',
+                (string) $this->rawLock($name),
+                'the key dc:lock:bot_owner:main holds the raw host:pid:hex token — stored un-encoded so the Lua scripts string-compare it'
+            );
+            $this->assertSame($token, $this->rawLock($name));
+
+            $this->assertTrue(
+                \SharedState::renew($name, $token, \Events::BOT_OWNER_LOCK_TTL),
+                'the holder renewing with its own token is the heartbeat moveBot runs every tick'
+            );
+            $this->assertNull(
+                \SharedState::lock($name, \Events::BOT_OWNER_LOCK_TTL),
+                'a second acquirer is refused while the owner is alive — the bot is already driven'
+            );
+        }
+
+        public function testBotOwnerLockForeignTokenRenewIsRefused(): void
+        {
+            $name = self::call('botOwnerLockName', 'main');
+            $token = \SharedState::lock($name, \Events::BOT_OWNER_LOCK_TTL);
+            $this->assertNotNull($token, 'precondition: this process owns the bot');
+
+            $this->assertFalse(
+                \SharedState::renew($name, 'rivalhost:999:deadbeef', \Events::BOT_OWNER_LOCK_TTL),
+                'a worker that lost ownership (TTL lapsed, taken over) can never extend the new owner\'s hold'
+            );
+            $this->assertFalse(
+                \SharedState::unlock($name, 'rivalhost:999:deadbeef'),
+                '…and can never release it either'
+            );
+            $this->assertSame($token, $this->rawLock($name), 'a refused renew leaves the holder untouched');
+
+            $this->assertTrue(\SharedState::renew($name, $token, \Events::BOT_OWNER_LOCK_TTL), 'the real owner still can');
+        }
+
+        /** Old "alive pid that is not ours" == another instance holds the lock: hands off. */
+        public function testBotOwnerLockRivalHostHolderIsNotTakeableWhileAlive(): void
+        {
+            $name = self::call('botOwnerLockName', 'main');
+            $this->seedForeignHolder($name, 'rivalhost:999:deadbeef');
+
+            $this->assertNull(
+                \SharedState::lock($name, \Events::BOT_OWNER_LOCK_TTL),
+                'a live owner on another datacentered instance keeps its bot'
+            );
+
+            $this->redis->fastForward(\Events::BOT_OWNER_LOCK_TTL + 1);
+            $this->assertNotNull(
+                \SharedState::lock($name, \Events::BOT_OWNER_LOCK_TTL),
+                'the rival\'s hold lasts exactly as long as its renewals — a crashed host self-heals with no reaper'
+            );
+        }
+
+        /** Old "dead pid must be respawnable" == expiry takeover on the controllable clock. */
+        public function testBotOwnerLockExpiryLetsTheNextJoinTakeOver(): void
+        {
+            $name = self::call('botOwnerLockName', 'main');
+            $deadOwnerToken = \SharedState::lock($name, \Events::BOT_OWNER_LOCK_TTL);
+            $this->assertNotNull($deadOwnerToken);
+            $this->assertNull(\SharedState::lock($name, \Events::BOT_OWNER_LOCK_TTL), 'precondition: held while alive');
+
+            $this->redis->fastForward(\Events::BOT_OWNER_LOCK_TTL + 1);   // 11s > the 10s TTL
+            $this->assertFalse($this->rawLock($name), 'the expired lock key is gone on the clock — no probe needed');
+            $this->assertFalse(
+                \SharedState::renew($name, $deadOwnerToken, \Events::BOT_OWNER_LOCK_TTL),
+                'the dead owner cannot resurrect its hold'
+            );
+
+            $newToken = \SharedState::lock($name, \Events::BOT_OWNER_LOCK_TTL);
+            $this->assertNotNull($newToken, 'a dead owner self-heals: the next join takes ownership once the TTL lapses');
+            $this->assertNotSame($deadOwnerToken, $newToken);
+
+            $this->assertFalse(
+                \SharedState::unlock($name, $deadOwnerToken),
+                'a slow dying owner must never delete the new holder\'s lock (token check)'
+            );
+            $this->assertSame($newToken, $this->rawLock($name));
+        }
+
+        /** Old "fresh heartbeat keeps ownership" == renewing faster than the TTL never loses it. */
+        public function testBotOwnerLockHeartbeatCadenceKeepsTheBotHome(): void
+        {
+            $name = self::call('botOwnerLockName', 'main');
+            $token = \SharedState::lock($name, \Events::BOT_OWNER_LOCK_TTL);
+            $this->assertNotNull($token);
+
+            // Emulate the owner beating every 4s — comfortably inside the 10s
+            // TTL (production renews every BOT_MOVE_INTERVAL = 0.5s).
+            for ($beat = 1; $beat <= 3; $beat++) {
+                $this->redis->fastForward(4);
+                $this->assertTrue(
+                    \SharedState::renew($name, $token, \Events::BOT_OWNER_LOCK_TTL),
+                    "heartbeat {$beat} renews the hold while the owner stays inside the TTL"
+                );
+                $this->assertNull(
+                    \SharedState::lock($name, \Events::BOT_OWNER_LOCK_TTL),
+                    "no takeover during heartbeat {$beat} — the last renew re-armed the full 10s TTL"
+                );
+                $this->assertSame($token, $this->rawLock($name), 'the holder never changes while beating');
+            }
+
+            // Ownership is only ever as alive as the last beat.
+            $this->redis->fastForward(\Events::BOT_OWNER_LOCK_TTL + 1);
+            $this->assertNotNull(
+                \SharedState::lock($name, \Events::BOT_OWNER_LOCK_TTL),
+                'silence for one full TTL reads exactly like a crash'
+            );
         }
 
         /**
-         * Non-pid markers are treated as ALIVE so pre-existing/legacy marker
-         * values are never mistaken for a crashed worker.
+         * The old rule "a marker that is not a pid tells us nothing, so assume
+         * alive" maps onto Redis string reality: whatever unparseable value a
+         * legacy writer left at the lock key, it BLOCKS takeover while held and
+         * lapses on the clock — never wedging the bot, never needing a probe.
+         * Values are the strings such markers could physically hold (Redis
+         * stores strings; null/array survive only as their serialised shapes).
          */
-        #[\PHPUnit\Framework\Attributes\DataProvider('nonPidMarkerProvider')]
-        public function testBotOwnerAliveTreatsNonPidMarkersAsAlive($marker): void
+        #[\PHPUnit\Framework\Attributes\DataProvider('legacyOwnerMarkerProvider')]
+        public function testUnparseableOwnerMarkersBlockTakeoverUntilTheyExpire(string $marker, string $why): void
         {
-            $this->assertTrue(
-                self::call('botOwnerAlive', $marker),
-                'a marker that is not a pid tells us nothing, so assume alive'
+            $name = self::call('botOwnerLockName', 'main');
+            $this->seedForeignHolder($name, $marker);
+
+            $this->assertNull(\SharedState::lock($name, \Events::BOT_OWNER_LOCK_TTL), $why.' — held is held; assume alive');
+
+            $this->redis->fastForward(\Events::BOT_OWNER_LOCK_TTL + 1);
+            $this->assertNotNull(
+                \SharedState::lock($name, \Events::BOT_OWNER_LOCK_TTL),
+                $why.' — but the TTL outlives no marker, so nothing is stuck forever'
             );
         }
 
-        public static function nonPidMarkerProvider(): array
+        public static function legacyOwnerMarkerProvider(): array
         {
             return [
-                'legacy timer label' => ['stale_timer_123'],
-                'empty string' => [''],
-                'null' => [null],
-                'float' => [1234.5],
-                'array' => [[1234]],
-                'bool' => [true],
-                'negative pid string' => ['-1'],
+                'legacy timer label' => ['stale_timer_123', 'a labelled marker is not a token'],
+                'empty string' => ['', 'Redis EXISTS has no NULL-vs-empty trap — "" is present'],
+                'serialised null' => ['N;', 'the GlobalData wire shape of a null marker'],
+                'float pid' => ['1234.5', 'a non-integer marker tells us nothing'],
+                'serialised array' => ['a:1:{i:0;i:1234;}', 'a structured marker predates the lock'],
+                'bool marker' => ['1', 'a bare flag string is not a host:pid:token'],
+                'negative pid string' => ['-1', 'an impossible pid is just an opaque string'],
             ];
         }
 

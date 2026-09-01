@@ -9,67 +9,24 @@
  * Same Gateway-stub technique as EventsV1CmdTest / EventsV1ChatTest: the shared
  * tests/V1TestSupport.php declares a lightweight fake \GatewayWorker\Lib\Gateway
  * *before* Events.php loads, capturing every reply/close and answering
- * getAllClientSessions() from an in-memory session map. The REAL handlers run
- * end to end (admin role gates, registry reshaping, empty-object encoding,
- * read-only guarantees) — nothing is reimplemented here.
+ * getClientSessionsByGroup() from an in-memory per-group session map. The REAL
+ * handlers run end to end (admin role gates, registry reshaping, empty-object
+ * encoding, read-only guarantees) — nothing is reimplemented here.
  *
- * The shared $global->hosts / $global->timers / $global->running registries are
- * backed by the same in-memory GlobalData client the other v1 tests use
- * (extends \GlobalData\Client so the FeatureFlags `instanceof` gate passes).
+ * The shared hosts / timers / running registries live in Redis through the
+ * SharedState facade (dc:state:hosts + dc:state:timers HASHes, and one
+ * dc:state:running:<run_id> STRING per run plus a dc:state:running_ids SET
+ * index), backed here by the InMemoryRedis double injected via
+ * SharedState::setClient() in setUp() — the same seam FeatureFlagsTest and
+ * SharedStateTest use.
  */
 
 namespace {
     use PHPUnit\Framework\TestCase;
 
-    // Declares the shared fake Gateway seam, then requires FeatureFlags + Events.
+    // Declares the shared fake Gateway seam, then requires FeatureFlags + Events
+    // (and, transitively, TestBootstrap's InMemoryRedis + SharedState).
     require_once __DIR__.'/V1TestSupport.php';
-
-    /**
-     * In-memory GlobalData client with a working CAS, reused for Flag A toggling
-     * AND for backing the admin.* read registries ($global->hosts/timers/running).
-     */
-    if (!class_exists('AdminFakeGlobalDataClient')) {
-        class AdminFakeGlobalDataClient extends \GlobalData\Client
-        {
-            /** @var array<string,mixed> */
-            public $store = [];
-
-            public function __construct()
-            {
-            }
-
-            public function __get($key)
-            {
-                return $this->store[$key] ?? null;
-            }
-
-            public function __set($key, $value)
-            {
-                $this->store[$key] = $value;
-            }
-
-            public function __isset($key)
-            {
-                return isset($this->store[$key]);
-            }
-
-            public function __unset($key)
-            {
-                unset($this->store[$key]);
-            }
-
-            /** Whole-map compare-and-swap (strict value equality, like the real client). */
-            public function cas($key, $old, $new)
-            {
-                $current = $this->store[$key] ?? null;
-                if ($current === $old) {
-                    $this->store[$key] = $new;
-                    return true;
-                }
-                return false;
-            }
-        }
-    }
 
     /**
      * Tests for the v1 admin.* handlers (WS-revamp Phase 2 step 2.8). Scope is
@@ -77,17 +34,26 @@ namespace {
      */
     class EventsV1AdminTest extends TestCase
     {
-        /** @var AdminFakeGlobalDataClient */
-        private $global;
+        /** @var InMemoryRedis the double backing SharedState for this suite */
+        private $redis;
 
         protected function setUp(): void
         {
+            // SharedState prefers $GLOBALS['redis'] over any injected client, so
+            // clear it first, then hand the facade a fresh in-memory double.
+            unset($GLOBALS['redis']);
+            $this->redis = new \InMemoryRedis();
+            \SharedState::setClient($this->redis);
+
             $this->resetState();
         }
 
         protected function tearDown(): void
         {
             $this->resetState();
+            \SharedState::setClient(null);
+            unset($GLOBALS['redis']);
+            \SharedState::reset();
         }
 
         private function resetState(): void
@@ -95,35 +61,86 @@ namespace {
             \GatewayWorker\Lib\Gateway::reset();
             $_SESSION = [];
             \Events::$db = null;
-            unset($GLOBALS['global']);
-
-            $ref = new ReflectionClass(FeatureFlags::class);
-            $prop = $ref->getProperty('client');
-            $prop->setAccessible(true);
-            $prop->setValue(null, null);
         }
 
         // ------------------------------------------------------------------
         // Fixtures / helpers
         // ------------------------------------------------------------------
 
-        /** Inject the in-memory GlobalData client and flip Flag A ON. */
-        private function flagAOn(): AdminFakeGlobalDataClient
+        /** Turn Flag A (ws_new_handling) ON through the SharedState facade. */
+        private function flagAOn(): void
         {
-            $client = new AdminFakeGlobalDataClient();
-            $client->store[FeatureFlags::VAR_NEW_HANDLING] = 1;
-            $GLOBALS['global'] = $client;
-            $this->global = $client;
-            return $client;
+            \SharedState::set(FeatureFlags::VAR_NEW_HANDLING, 1);
         }
 
-        /** Inject the in-memory GlobalData client WITHOUT flipping Flag A (dormant). */
-        private function flagAOff(): AdminFakeGlobalDataClient
+        /** Turn Flag A OFF explicitly (an unset flag reads ON — see FeatureFlags). */
+        private function flagAOff(): void
         {
-            $client = new AdminFakeGlobalDataClient();
-            $GLOBALS['global'] = $client;
-            $this->global = $client;
-            return $client;
+            \SharedState::set(FeatureFlags::VAR_NEW_HANDLING, 0);
+        }
+
+        /**
+         * Seed the shared dc:state:hosts Redis HASH (field = vps_id, value = JSON
+         * vps_masters row) the way handleAuthHello writes it — the registry
+         * fallback handleAdminHosts reads for sessions missing type/ip.
+         *
+         * @param array<int|string,array> $rows vps_id => row
+         */
+        private function seedHostsRegistry(array $rows): void
+        {
+            foreach ($rows as $vpsId => $row) {
+                \SharedState::hSet(\Events::HOSTS_REGISTRY_KEY, (string) $vpsId, $row);
+            }
+        }
+
+        /**
+         * Seed the shared dc:state:timers Redis HASH (field = timer name, value =
+         * JSON {interval,timer_id[,last_run]}), the registry handleAdminTimers reads.
+         *
+         * @param array<string,mixed> $timers name => info (array or legacy scalar id)
+         */
+        private function seedTimers(array $timers): void
+        {
+            foreach ($timers as $name => $info) {
+                \SharedState::hSet(\Events::TIMERS_REGISTRY_KEY, (string) $name, $info);
+            }
+        }
+
+        /**
+         * Seed the shared running registry the way the run paths write it: one
+         * dc:state:running:<run_id> STRING (JSON entry) plus the id in the
+         * dc:state:running_ids SET index handleAdminRunning enumerates.
+         *
+         * @param array<string,mixed> $runs run_id => entry
+         */
+        private function seedRunning(array $runs): void
+        {
+            foreach ($runs as $runId => $entry) {
+                \SharedState::set(\Events::RUNNING_KEY_PREFIX.$runId, $entry);
+                \SharedState::sAdd(\Events::RUNNING_INDEX_KEY, (string) $runId);
+            }
+        }
+
+        /**
+         * The raw running registry as a run_id => entry map, enumerated from the
+         * dc:state:running_ids index — used to prove admin.running is read-only.
+         *
+         * @return array<string,mixed>
+         */
+        private function runningRegistry(): array
+        {
+            $out = [];
+            foreach (\SharedState::sMembers(\Events::RUNNING_INDEX_KEY) as $runId) {
+                if (!is_string($runId) || $runId === '') {
+                    continue;
+                }
+                $entry = \SharedState::get(\Events::RUNNING_KEY_PREFIX.$runId);
+                if ($entry !== null) {
+                    $out[$runId] = $entry;
+                }
+            }
+
+            return $out;
         }
 
         /** Simulate an authenticated admin session with the given uid. */
@@ -138,10 +155,26 @@ namespace {
             $_SESSION = ['v1_authed' => true, 'ima' => 'host', 'uid' => $uid];
         }
 
-        /** Set the fake all-connection session map returned by getAllClientSessions(). */
+        /**
+         * Seed the fake per-group session maps returned by getClientSessionsByGroup().
+         * admin-ima sessions land in the 'admins' group, everything else in the
+         * 'hosts' group — exactly the split handleAdminHosts() then re-derives.
+         *
+         * @param array<int|string,array> $sessions client_id => session
+         */
         private function seedSessions(array $sessions): void
         {
-            \GatewayWorker\Lib\Gateway::$allSessions = $sessions;
+            $admins = [];
+            $hosts = [];
+            foreach ($sessions as $session) {
+                if (($session['ima'] ?? '') === 'admin') {
+                    $admins[] = $session;
+                } else {
+                    $hosts[] = $session;
+                }
+            }
+            \GatewayWorker\Lib\Gateway::$groupSessions['admins'] = $admins;
+            \GatewayWorker\Lib\Gateway::$groupSessions['hosts'] = $hosts;
         }
 
         /** Drive an admin.* op through the public dispatchV1 entry. */
@@ -200,7 +233,7 @@ namespace {
             $this->flagAOn();
             $this->asAdmin('admin-7');
 
-            // A vps host session missing type/ip (falls back to $global->hosts),
+            // A vps host session missing type/ip (falls back to the hosts registry),
             // a bot session (real ima "bot", stays in hosts), an admin session
             // (goes to admins), and a session with NO uid (skipped entirely).
             $this->seedSessions([
@@ -210,9 +243,9 @@ namespace {
                 104 => ['ima' => 'host', 'name' => 'no-uid-session'] // no uid -> skipped
             ]);
             // Registry fallback for vps1234's missing type/ip.
-            $this->global->store['hosts'] = [
+            $this->seedHostsRegistry([
                 1234 => ['vps_name' => 'reg-name', 'vps_type' => 11, 'vps_ip' => '192.168.1.34']
-            ];
+            ]);
 
             $this->dispatch('admin.hosts');
 
@@ -369,11 +402,11 @@ namespace {
             $this->asAdmin();
             // Registry as onWorkerStart writes it: name => {interval, timer_id}.
             // Plus one entry carrying an optional last_run, and one legacy scalar.
-            $this->global->store['timers'] = [
+            $this->seedTimers([
                 'processing_queue_timer' => ['interval' => 30, 'timer_id' => 11],
                 'map_queue_timer' => ['interval' => 60, 'timer_id' => 22, 'last_run' => 1719000000],
                 'legacy_scalar_timer' => 7 // bare Timer::add() id -> normalized
-            ];
+            ]);
 
             $this->dispatch('admin.timers');
 
@@ -406,7 +439,7 @@ namespace {
             // hide the distinction, so inspect the encoded string directly).
             $this->flagAOn();
             $this->asAdmin();
-            // No $global->timers seeded at all (registry absent).
+            // No timers seeded at all (dc:state:timers hash absent).
 
             $this->dispatch('admin.timers');
 
@@ -419,11 +452,20 @@ namespace {
             $this->assertStringNotContainsString('"timers":[]', $raw);
         }
 
-        public function testAdminTimersNonArrayRegistryTreatedEmpty(): void
+        /**
+         * Redis-port note (migration wave 5): the retired shared-variable store
+         * could hold a non-array scalar, which handleAdminTimers defended against with an
+         * is_array() guard. A Redis HASH can never read back as a scalar —
+         * SharedState::hGetAll always yields an array — so that exact state is now
+         * unrepresentable. The faithful analog is an EMPTY hash (key present, zero
+         * fields), which behaves like an absent one: an empty {} object, not [].
+         */
+        public function testAdminTimersEmptyHashRegistryTreatedEmpty(): void
         {
             $this->flagAOn();
             $this->asAdmin();
-            $this->global->store['timers'] = 'not-an-array';
+            $this->seedTimers(['x' => ['interval' => 1, 'timer_id' => 1]]);
+            \SharedState::hDel(\Events::TIMERS_REGISTRY_KEY, 'x');
 
             $this->dispatch('admin.timers');
 
@@ -436,7 +478,7 @@ namespace {
         {
             $this->flagAOn();
             $this->asHost('vps5');
-            $this->global->store['timers'] = ['x' => ['interval' => 1, 'timer_id' => 1]];
+            $this->seedTimers(['x' => ['interval' => 1, 'timer_id' => 1]]);
 
             $this->dispatch('admin.timers');
 
@@ -447,7 +489,7 @@ namespace {
         {
             $this->flagAOff();
             $this->asAdmin();
-            $this->global->store['timers'] = ['x' => ['interval' => 1, 'timer_id' => 1]];
+            $this->seedTimers(['x' => ['interval' => 1, 'timer_id' => 1]]);
 
             $this->dispatch('admin.timers');
 
@@ -478,7 +520,7 @@ namespace {
                 // no 'run_id', no 'started'
             ];
             $seeded = ['run-uuid-1' => $v1Entry, $legacyKey => $legacyEntry];
-            $this->global->store['running'] = $seeded;
+            $this->seedRunning($seeded);
 
             $this->dispatch('admin.running');
 
@@ -522,8 +564,12 @@ namespace {
             $this->assertSame(100, $legacy['cols']);
             $this->assertSame(0, $legacy['started'], 'legacy entry lacking started reports started:0');
 
-            // Read-only: registry byte-identical before/after.
-            $this->assertSame($seeded, $this->global->store['running'], 'admin.running must not mutate the registry');
+            // Read-only: every run entry identical before/after (round-tripped
+            // through the facade, so compare the enumerated registry to the seed).
+            // assertEquals, not assertSame: SMEMBERS order is unspecified in real
+            // Redis, so enumeration order is not part of the contract; the entry
+            // values themselves are what must not drift.
+            $this->assertEquals($seeded, $this->runningRegistry(), 'admin.running must not mutate the registry');
         }
 
         public function testAdminRunningLegacyRunIdFromRegistryKeyWhenNoIdField(): void
@@ -531,9 +577,9 @@ namespace {
             // Legacy entry with neither run_id nor a string id -> falls back to key.
             $this->flagAOn();
             $this->asAdmin();
-            $this->global->store['running'] = [
+            $this->seedRunning([
                 'md5key-xyz' => ['command' => 'ls', 'host' => 'vps1'] // no run_id, no id
-            ];
+            ]);
 
             $this->dispatch('admin.running');
 
@@ -547,7 +593,7 @@ namespace {
         {
             $this->flagAOn();
             $this->asAdmin();
-            $this->global->store['running'] = [];
+            // Nothing seeded: the dc:state:running_ids index is absent.
 
             $this->dispatch('admin.running');
 
@@ -559,10 +605,10 @@ namespace {
         {
             $this->flagAOn();
             $this->asAdmin();
-            $this->global->store['running'] = [
+            $this->seedRunning([
                 'ok' => ['run_id' => 'ok', 'host' => 'vps1', 'command' => 'x', 'started' => 5],
                 'junk' => 'not-an-array'
-            ];
+            ]);
 
             $this->dispatch('admin.running');
 
@@ -575,7 +621,7 @@ namespace {
         {
             $this->flagAOn();
             $this->asHost('vps5');
-            $this->global->store['running'] = ['r' => ['run_id' => 'r', 'host' => 'vps1', 'command' => 'x']];
+            $this->seedRunning(['r' => ['run_id' => 'r', 'host' => 'vps1', 'command' => 'x']]);
 
             $this->dispatch('admin.running');
 
@@ -586,7 +632,7 @@ namespace {
         {
             $this->flagAOff();
             $this->asAdmin();
-            $this->global->store['running'] = ['r' => ['run_id' => 'r', 'host' => 'vps1', 'command' => 'x']];
+            $this->seedRunning(['r' => ['run_id' => 'r', 'host' => 'vps1', 'command' => 'x']]);
 
             $this->dispatch('admin.running');
 
@@ -599,9 +645,9 @@ namespace {
             // array (or role) via data cannot change the reply.
             $this->flagAOn();
             $this->asAdmin();
-            $this->global->store['running'] = [
+            $this->seedRunning([
                 'real' => ['run_id' => 'real', 'host' => 'vps1', 'command' => 'true', 'started' => 9]
-            ];
+            ]);
 
             $this->dispatch('admin.running', [
                 'ima' => 'host', // must not downgrade authorization

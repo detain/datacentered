@@ -13,46 +13,9 @@
 namespace {
     use PHPUnit\Framework\TestCase;
 
-    // Declares the fake Gateway, then requires FeatureFlags.php + Events.php.
+    // Declares the fake Gateway, then requires FeatureFlags.php + Events.php
+    // (and, transitively, TestBootstrap's InMemoryRedis + SharedState).
     require_once __DIR__.'/V1TestSupport.php';
-
-    /**
-     * In-memory stand-in for \GlobalData\Client — same technique as
-     * FeatureFlagsTest's InMemoryGlobalDataClient: extend the real class so
-     * FeatureFlags' `instanceof \GlobalData\Client` gate passes, but back every
-     * variable with a plain array so nothing touches the network or a Workerman
-     * timer. Toggling $global->ws_new_handling here flips Flag A deterministically.
-     */
-    class V1FakeGlobalDataClient extends \GlobalData\Client
-    {
-        /** @var array<string,mixed> */
-        public $store = [];
-
-        public function __construct()
-        {
-            // No parent::__construct — no servers, no socket, no timer.
-        }
-
-        public function __get($key)
-        {
-            return $this->store[$key] ?? null;
-        }
-
-        public function __set($key, $value)
-        {
-            $this->store[$key] = $value;
-        }
-
-        public function __isset($key)
-        {
-            return isset($this->store[$key]);
-        }
-
-        public function __unset($key)
-        {
-            unset($this->store[$key]);
-        }
-    }
 
     /**
      * Tests for the protocol-v1 envelope router added in WS-revamp Phase 2 step
@@ -62,20 +25,34 @@ namespace {
      * ⛔ Core invariant proven here (plan CRITICAL INVARIANT / B8):
      *   - legacy {"type":...} messages are NEVER detected as v1 envelopes, so the
      *     legacy dispatch path is byte-unchanged regardless of Flag A;
-     *   - v1 handling is dormant unless Flag A is explicitly ON;
+     *   - v1 handling is dormant when Flag A is OFF — set explicitly to 0, or
+     *     reached through the fail-safe path when Redis is unreachable (an unset
+     *     flag over a live Redis reads ON, the shipped default);
      *   - with Flag A ON, ping round-trips to the exact frozen pong shape and any
      *     other op yields a clean not_implemented error (no crash, no legacy touch).
      */
     class EventsV1RouterTest extends TestCase
     {
+        /** @var InMemoryRedis the double backing SharedState for this suite */
+        private $redis;
+
         protected function setUp(): void
         {
+            // SharedState prefers $GLOBALS['redis'] over any injected client, so
+            // clear it first, then hand the facade a fresh in-memory double.
+            unset($GLOBALS['redis']);
+            $this->redis = new \InMemoryRedis();
+            \SharedState::setClient($this->redis);
+
             $this->resetState();
         }
 
         protected function tearDown(): void
         {
             $this->resetState();
+            \SharedState::setClient(null);
+            unset($GLOBALS['redis']);
+            \SharedState::reset();
         }
 
         private function resetState(): void
@@ -90,31 +67,31 @@ namespace {
             // clear it so no test leaks an authed state into the next.
             $_SESSION = [];
 
-            // Clear any injected DB and process-global client.
+            // Clear any injected DB.
             \Events::$db = null;
-            unset($GLOBALS['global']);
-
-            // Reset FeatureFlags' private static lazy client so each test re-resolves.
-            $ref = new ReflectionClass(FeatureFlags::class);
-            $prop = $ref->getProperty('client');
-            $prop->setAccessible(true);
-            $prop->setValue(null, null);
         }
 
-        /** Inject an in-memory GlobalData client as the process-wide $global. */
-        private function injectClient(): V1FakeGlobalDataClient
+        /**
+         * Drop the injected double so SharedState resolves a null client — the
+         * genuine "Redis unreachable" fail-safe state (Flag A defaults OFF).
+         */
+        private function withoutRedis(): void
         {
-            $client = new V1FakeGlobalDataClient();
-            $GLOBALS['global'] = $client;
-            return $client;
+            \SharedState::setClient(null);
+            \SharedState::reset();
+            unset($GLOBALS['redis']);
         }
 
-        /** Turn Flag A (ws_new_handling) ON globally via the injected client. */
-        private function flagAOn(): V1FakeGlobalDataClient
+        /** Turn Flag A (ws_new_handling) ON through the SharedState facade. */
+        private function flagAOn(): void
         {
-            $client = $this->injectClient();
-            $client->store[FeatureFlags::VAR_NEW_HANDLING] = 1;
-            return $client;
+            \SharedState::set(FeatureFlags::VAR_NEW_HANDLING, 1);
+        }
+
+        /** Turn Flag A OFF explicitly (an unset flag reads ON — see FeatureFlags). */
+        private function flagAOff(): void
+        {
+            \SharedState::set(FeatureFlags::VAR_NEW_HANDLING, 0);
         }
 
         /** Invoke the private Events::isV1Envelope() via reflection. */
@@ -196,10 +173,10 @@ namespace {
         {
             $legacyPing = ['type' => 'ping'];
 
-            // Flag A OFF (no client).
+            // Flag A unset (reads ON) — detection is unaffected either way.
             $this->assertFalse($this->isV1Envelope($legacyPing));
 
-            // Flag A ON.
+            // Flag A explicitly ON.
             $this->flagAOn();
             $this->assertFalse($this->isV1Envelope($legacyPing));
         }
@@ -277,13 +254,13 @@ namespace {
         }
 
         /**
-         * Flag A OFF (client present but flag unset): dispatchV1 is dormant — no
-         * reply, no side effects. This is the adoption-boundary case: GlobalData
-         * reachable, flag simply not turned on.
+         * Flag A explicitly OFF over a reachable Redis: dispatchV1 is dormant —
+         * no reply, no side effects. An UNSET flag reads ON (the shipped default),
+         * so dormancy requires writing 0.
          */
         public function testV1PingIsDormantWhenFlagAOffWithClient(): void
         {
-            $this->injectClient(); // client present, ws_new_handling NOT set -> OFF
+            $this->flagAOff(); // Redis reachable, ws_new_handling = 0 -> OFF
 
             \Events::dispatchV1(42, [
                 'v' => 1, 'id' => 'req-123', 'op' => 'ping', 'ts' => 1719700000, 'data' => []
@@ -293,33 +270,36 @@ namespace {
         }
 
         /**
-         * Flag A explicitly OFF (ws_new_handling = 0): still dormant.
+         * Flag A explicitly OFF (dc:flag:ws_new_handling = 0): the stronger
+         * dormancy check — neither a reply nor a close is emitted.
          */
         public function testV1PingIsDormantWhenFlagAExplicitlyZero(): void
         {
-            $client = $this->injectClient();
-            $client->store[FeatureFlags::VAR_NEW_HANDLING] = 0;
+            $this->flagAOff();
 
             \Events::dispatchV1(1, [
                 'v' => 1, 'id' => 'id-0', 'op' => 'ping', 'ts' => 1, 'data' => []
             ]);
 
             $this->assertCount(0, $this->sent());
+            $this->assertSame([], $this->closed(), 'Flag A OFF must not close');
         }
 
         // ------------------------------------------------------------------
-        // (c) Dormant-by-default: no flag set / GlobalData unreachable.
+        // (c) Dormant-by-default: Redis unreachable (no usable client).
         // ------------------------------------------------------------------
 
         /**
-         * With NO usable GlobalData client at all (the real PHPUnit/CLI state,
-         * same fail-safe condition FeatureFlagsTest exercises), a v1 ping produces
-         * NO reply — deploying the router is a runtime no-op. This is the core
-         * ship-dormant guarantee.
+         * With NO usable Redis client at all (client() resolves null, the same
+         * fail-safe condition FeatureFlagsTest exercises), a v1 ping produces NO
+         * reply — deploying the router is a runtime no-op while Redis is down.
+         * This is the core ship-dormant guarantee.
          */
-        public function testV1PingDormantByDefaultWhenGlobalDataUnavailable(): void
+        public function testV1PingDormantByDefaultWhenRedisUnavailable(): void
         {
-            // No $global injected; FeatureFlags lazy-connect fails/throws -> OFF.
+            // No client injected; useNewHandling() fail-safes OFF.
+            $this->withoutRedis();
+
             \Events::dispatchV1(9, [
                 'v' => 1, 'id' => 'id-x', 'op' => 'ping', 'ts' => 1, 'data' => []
             ]);
@@ -328,12 +308,14 @@ namespace {
         }
 
         /**
-         * Even a non-ping op is fully inert when GlobalData is unavailable — the
-         * flag gate short-circuits before any op handling, so nothing (not even a
+         * Even a non-ping op is fully inert when Redis is unavailable — the flag
+         * gate short-circuits before any op handling, so nothing (not even a
          * not_implemented error) is emitted.
          */
         public function testUnimplementedOpDormantByDefault(): void
         {
+            $this->withoutRedis();
+
             \Events::dispatchV1(9, [
                 'v' => 1, 'id' => 'id-y', 'op' => 'cmd.exec', 'ts' => 1, 'data' => []
             ]);
