@@ -4,6 +4,65 @@ use Workerman\Worker;
 
 require_once __DIR__.'/../Applications/Chat/SharedState.php';
 
+/**
+ * Put an un-drained tail of a queue batch back where it came from.
+ *
+ * The drain reads with a destructive lPop batch, so abandoning a partly-processed
+ * batch (lost drain lock, transport blip) would otherwise throw the remaining
+ * items away. Items are restored to the HEAD in reverse order so the queue's
+ * original FIFO order survives, and the next tick picks them up.
+ *
+ * The raw `queuein:<ip>` LIST is deliberately NOT routed through SharedState:
+ * per the project contract the queue DATA lives OUTSIDE the `dc:*` namespace
+ * (only the same-named drain LOCK goes through the facade), and prefixing it
+ * would orphan every entry the VPS hosts are writing to.
+ *
+ * @param array       $batchItems the full batch as popped
+ * @param int         $fromIndex  first index NOT yet processed
+ * @param string      $hostIp     queue owner host ip
+ * @param \Redis|null $redis      raw redis handle (USE_REDIS path)
+ * @param mixed       $memcache   memcached handle (fallback path)
+ * @return void
+ */
+function memcached_queue_requeue_tail(array $batchItems, int $fromIndex, string $hostIp, $redis, $memcache): void
+{
+    $tail = array_slice($batchItems, $fromIndex);
+    if ($tail === []) {
+        return;
+    }
+    $queueKey = 'queuein:'.$hostIp;
+    try {
+        if (USE_REDIS === true && $redis instanceof \Redis) {
+            // lPush pushes onto the head, so walk the tail backwards to leave
+            // $tail[0] at the head — i.e. exactly where lPop found it.
+            foreach (array_reverse($tail) as $item) {
+                $encoded = json_encode($item);
+                if ($encoded === false) {
+                    Worker::safeEcho('Could not re-encode a queue item for host '.$hostIp.' while requeueing — dropping that one item'.PHP_EOL);
+                    continue;
+                }
+                $redis->lPush($queueKey, $encoded);
+            }
+        } elseif (is_object($memcache)) {
+            $current = $memcache->get($queueKey);
+            if (!is_array($current)) {
+                $current = [];
+            }
+            $memcache->set($queueKey, array_merge($tail, $current));
+        } else {
+            Worker::safeEcho('No queue backend available to requeue '.count($tail).' items for host '.$hostIp.PHP_EOL);
+
+            return;
+        }
+        Worker::safeEcho('Requeued '.count($tail).' un-drained items for host '.$hostIp.PHP_EOL);
+    } catch (\Throwable $e) {
+        // Best effort: a failed requeue is the same data loss we are trying to
+        // avoid, so make it LOUD rather than silent. Never rethrow — this runs
+        // inside a TaskWorker function.
+        Worker::safeEcho('FAILED to requeue '.count($tail).' items for host '.$hostIp.': '.$e->getMessage().PHP_EOL);
+    }
+}
+
 function memcached_queue_task($args)
 {
     //require_once '/home/my/include/functions.inc.php';
@@ -101,7 +160,6 @@ function memcached_queue_task($args)
     // Use LMPOP with COUNT for atomic batch retrieval (Redis 7.0+)
     // Limit items per host per run to reduce lock contention
     $maxItemsPerHost = 300;  // Batch size per host per invocation
-    $lockTimeout = 30;      // Max seconds to hold lock before releasing
     $processedAny = false;
 
     foreach ($queuehosts as $hostIp) {
@@ -173,7 +231,7 @@ function memcached_queue_task($args)
             $processedAny = true;
 //            Worker::safeEcho('Processing '.count($batchItems).' items from host '.$hostIp.PHP_EOL);
 
-            foreach ($batchItems as $queue) {
+            foreach ($batchItems as $batchIndex => $queue) {
         // Keep the drain lock alive between batches so a host with a full
         // $maxItemsPerHost backlog can't outlive the 900s TTL mid-drain. A false
         // renew means ownership is gone (expired or taken) — stop draining THIS
@@ -182,6 +240,14 @@ function memcached_queue_task($args)
         // to the next host (cross-host parallelism stays per-host-key, by design).
         if (!SharedState::renew($lockName, $token, 900)) {
             Worker::safeEcho('Lost queuein lock for host '.$hostIp.' mid-drain — stopping this host this cycle (lock expired or taken)'.PHP_EOL);
+            // REVIEW-FIX (data loss): items were removed from the queue by the
+            // DESTRUCTIVE lPop batch above, so breaking here used to DISCARD every
+            // item from $batchIndex onward — gone from Redis and gone from memory,
+            // silently under-reporting bandwidth/CPU for this host. renew() also
+            // returns false for a mere transport blip, so a 2s Redis hiccup was
+            // enough to drop up to $maxItemsPerHost records. Put the untouched
+            // tail back before giving up.
+            memcached_queue_requeue_tail($batchItems, $batchIndex, $hostIp, $redis, $memcache);
             break;
         }
         $module = $queue['post']['module'] ?? 'vps';

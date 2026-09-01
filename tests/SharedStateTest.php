@@ -154,8 +154,13 @@ class DeadFallbackRedis
 }
 
 /**
- * Tests for Applications/Chat/SharedState.php (GlobalData→Redis migration,
- * Phase 1 — the facade ships dormant; no production call site uses it yet).
+ * Tests for Applications/Chat/SharedState.php (GlobalData→Redis migration).
+ *
+ * NOTE: this docblock used to say "Phase 1 — the facade ships dormant; no
+ * production call site uses it yet". That is long out of date and actively
+ * misleading: Applications/Chat/Events.php, Applications/Chat/FeatureFlags.php,
+ * Web/trigger_payment.php, scripts/boardctl_runner.php and six Tasks/ files all
+ * depend on this facade now. Treat this suite as load-bearing.
  *
  * Everything runs against the InMemoryRedis double injected through
  * SharedState::setClient(), whose semantics (SET NX/EX replies, EXISTS
@@ -286,6 +291,44 @@ class SharedStateTest extends TestCase
     // -----------------------------------------------------------------------
     // JSON round-trip
     // -----------------------------------------------------------------------
+
+    /**
+     * REVIEW-FIX (decision G): the suite must never be able to reach a REAL Redis.
+     *
+     * The GlobalData-era suite asserted this explicitly
+     * (assertSame('127.0.0.1', GLOBALDATA_IP, 'tests must never point at the
+     * production GlobalData host')). That guard was dropped in the port with no
+     * Redis equivalent, leaving safety resting on the mere ABSENCE of a USE_REDIS
+     * define — an implicit, unasserted property. If any test (or a sibling suite
+     * that pulls in config.settings.php) ever defines USE_REDIS/REDIS_HOST, then
+     * SharedState::client() will lazily connect and the suite will start reading
+     * and WRITING a real Redis — plausibly production's, since REDIS_HOST comes
+     * from the shared settings file and is a routable address.
+     *
+     * Restored here as a hard assertion on the two things that gate the lazy
+     * connect: the config constants, and the connect factory seam.
+     */
+    public function testSuiteCannotReachARealRedis(): void
+    {
+        SharedState::setClient(null);
+        SharedState::reset();
+        unset($GLOBALS['redis']);
+
+        $this->assertFalse(defined('USE_REDIS'), 'USE_REDIS must not be defined in the test process');
+        $this->assertFalse(defined('REDIS_HOST'), 'REDIS_HOST must not be defined in the test process');
+        $this->assertFalse(defined('REDIS_PORT'), 'REDIS_PORT must not be defined in the test process');
+
+        // With no double injected, no global handle and no factory, the facade must
+        // resolve nothing rather than dialling a socket.
+        $this->assertNull(
+            SharedState::client(),
+            'with nothing injected the facade must resolve no client, never lazy-connect to a real server'
+        );
+        $this->assertFalse(
+            SharedState::transportFailed(),
+            'an unconfigured store is a STATE, not a transport failure'
+        );
+    }
 
     public function testJsonRoundTripForArraysAndScalars(): void
     {

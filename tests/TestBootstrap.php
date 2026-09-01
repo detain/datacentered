@@ -644,6 +644,27 @@ namespace {
             });
         }
 
+        /**
+         * EXPIRE. Pipeline-queueable, because SharedState::rPushLtrim() sets the
+         * chat history's idle TTL inside its pipeline (decision E). Real Redis
+         * returns 1 when the TTL was applied and 0 when the key does not exist.
+         */
+        public function expire($key, $ttl)
+        {
+            return $this->queueOrRun(__FUNCTION__, func_get_args(), function ($key, $ttl) {
+                if (!$this->hasEntry($key)) {
+                    return 0;
+                }
+                if ((int) $ttl > 0) {
+                    $this->expires[$key] = $this->clock + (int) $ttl;
+                } else {
+                    $this->remove($key);
+                }
+
+                return 1;
+            });
+        }
+
         public function lRange($key, $start, $stop)
         {
             $this->guard();
@@ -865,6 +886,19 @@ namespace {
             $this->pipeline = [];
 
             return $this;
+        }
+
+        /**
+         * DISCARD — drop a queued pipeline without executing it. SharedState's
+         * rPushLtrim() calls this when the pipeline throws, so that a failure can
+         * never strand the shared handle in pipeline mode.
+         */
+        public function discard()
+        {
+            $this->pipeline = [];
+            $this->inPipeline = false;
+
+            return true;
         }
 
         public function exec()

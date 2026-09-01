@@ -30,10 +30,14 @@ require_once __DIR__.'/../Applications/Chat/SharedState.php';
  *
  * Frozen production lock families (name @ TTL from the migration contract):
  *   processing_queue    @900     Events::processing_queue_timer stale window
- *   vps_host_<id>       @900     per-VPS lifecycle family — raised 120→900 per ops
- *                                decision: HyperV ops (esp. GetVMList) can take 10+
- *                                minutes, so the TTL must match the old GlobalData
- *                                900s stale-reap window it replaced, never shorter.
+ *   vps_host_<id>       @1300    per-VPS lifecycle family (VPS_HOST_LOCK_TTL) —
+ *                                raised 120→900 per ops decision, then 900→1300 in
+ *                                review: HyperV GetVMList runs under
+ *                                default_socket_timeout=1200s and renew() only fires
+ *                                BETWEEN blocking calls, so a 900s TTL lapsed ~300s
+ *                                before the call it guarded even gave up. The TTL
+ *                                must exceed the longest SINGLE blocking call, not
+ *                                merely the old GlobalData reap window.
  *   boardctl_asset_<id> @22200   6h runner cap + 10min buffer
  *   queuein:<ip>        @900     name SHARED with the raw Redis queue LIST
  *                                (Web/queue.php rPushes 'queuein:<ip>' directly)
@@ -269,6 +273,104 @@ class SharedStateLockRegressionTest extends TestCase
         $this->assertFalse($this->rawLock('vps_host_11'), 'after the handoff release the lock is gone');
     }
 
+    /**
+     * REVIEW-FIX (decision B): the producer's hold must be USABLE by the consumer.
+     *
+     * Events::vps_queue_timer() takes dc:lock:vps_host_<id> and dispatches
+     * Tasks/vps_queue_task.php, which used to call SharedState::lock() on that
+     * SAME key — always null, so it skipped its whole body and returned ''. Every
+     * dispatch was a silent no-op (the same dead path existed under GlobalData's
+     * cas($var, 0, 1), so the migration preserved rather than caused it). The task
+     * now adopts args['lock_token'] and RENEWS it, which is what keeps the "one
+     * command per host at a time" invariant true across long SOAP work.
+     *
+     * This pins the two properties that path depends on: a re-acquire attempt on a
+     * held key still fails (so self-locking really was dead), and the handed-down
+     * token can renew and extend the producer's hold.
+     */
+    public function testHandedDownTokenCanRenewWhereASelfAcquireWouldFail(): void
+    {
+        $lock = 'vps_host_11';
+        $producerToken = SharedState::lock($lock, SharedState::VPS_HOST_LOCK_TTL);
+        $this->assertNotNull($producerToken, 'producer (Events) takes the per-host lock');
+
+        // What the consumer used to do, and why it was dead code.
+        $this->assertNull(
+            SharedState::lock($lock, SharedState::VPS_HOST_LOCK_TTL),
+            'a consumer re-acquiring the same key can NEVER succeed while the producer holds it'
+        );
+
+        // What it does now: renew the inherited hold to prove ownership before
+        // touching the host, and keep it alive across long work.
+        $this->assertTrue(
+            SharedState::renew($lock, $producerToken, SharedState::VPS_HOST_LOCK_TTL),
+            'the handed-down token authorizes the consumer to renew the producer hold'
+        );
+
+        // A stale/foreign inherited token must NOT be usable — that is the guard
+        // that makes the task skip a stale dispatch instead of working unprotected.
+        $this->assertFalse(
+            SharedState::renew($lock, 'someotherhost:1:deadbeef', SharedState::VPS_HOST_LOCK_TTL),
+            'a foreign token cannot renew, so a stale dispatch is detected and skipped'
+        );
+
+        // Ownership is still exactly one owner's to release.
+        $this->assertTrue(SharedState::unlock($lock, $producerToken));
+        $this->assertFalse($this->rawLock($lock), 'the producer release frees the host');
+    }
+
+    /**
+     * REVIEW-FIX: no WRITE primitive may address the dc:lock: namespace.
+     *
+     * guardKey() was prefix-only with PREFIX_LOCK in the allowed set, so the
+     * generic writers all accepted lock keys. Two concrete ways that breaks the
+     * lock protocol:
+     *   set('dc:lock:processing_queue', 1) overwrites a live token — the real
+     *     owner's renew()/unlock() then fail and the lock survives its full TTL;
+     *   hSet('dc:lock:vps_host_5', …) retypes the key to a TTL-less HASH, after
+     *     which SET NX can NEVER succeed again and that lock family is starved
+     *     permanently with no expiry to heal it.
+     * Reads and del() stay allowed (observability, and documented admin cleanup).
+     */
+    public function testWritePrimitivesCannotAddressTheLockNamespace(): void
+    {
+        $token = SharedState::lock('processing_queue', 900);
+        $this->assertNotNull($token);
+        $lockKey = SharedState::PREFIX_LOCK.'processing_queue';
+
+        foreach ([
+            'set' => fn () => SharedState::set($lockKey, 1),
+            'add' => fn () => SharedState::add($lockKey, 1, 60),
+            'expire' => fn () => SharedState::expire($lockKey, 60),
+            'hSet' => fn () => SharedState::hSet($lockKey, 'f', 1),
+            'hSetNx' => fn () => SharedState::hSetNx($lockKey, 'f', 1),
+            'hDel' => fn () => SharedState::hDel($lockKey, 'f'),
+            'hIncr' => fn () => SharedState::hIncr($lockKey, 'f'),
+            'rPushLtrim' => fn () => SharedState::rPushLtrim($lockKey, 1, 10),
+            'sAdd' => fn () => SharedState::sAdd($lockKey, 'm'),
+            'sRem' => fn () => SharedState::sRem($lockKey, 'm'),
+            'zAdd' => fn () => SharedState::zAdd($lockKey, 1, 'm'),
+            'zRemRangeByScore' => fn () => SharedState::zRemRangeByScore($lockKey, 0, 1),
+        ] as $name => $call) {
+            try {
+                $call();
+                $this->fail("SharedState::{$name}() must refuse a dc:lock: key");
+            } catch (\InvalidArgumentException $e) {
+                $this->assertStringContainsString('reserved lock namespace', $e->getMessage());
+            }
+        }
+
+        // The lock is intact and still ours after every refused write.
+        $this->assertSame($token, $this->rawLock('processing_queue'), 'the token was never clobbered');
+        $this->assertTrue(SharedState::renew('processing_queue', $token, 900), 'and the hold is still renewable');
+
+        // Reads and admin cleanup remain permitted.
+        $this->assertTrue(SharedState::exists($lockKey), 'exists() may inspect a lock key');
+        $this->assertNull(SharedState::get($lockKey), 'get() may read it (raw tokens are not JSON, so this is null)');
+        SharedState::del($lockKey);
+        $this->assertFalse($this->rawLock('processing_queue'), 'del() is the documented admin/stale cleanup path');
+    }
+
     // -----------------------------------------------------------------------
     // 6. Frozen production lock families — full-cycle regression matrix
     // -----------------------------------------------------------------------
@@ -290,8 +392,8 @@ class SharedStateLockRegressionTest extends TestCase
             ],
             'vps host lifecycle' => [
                 'vps_host_11',
-                900,
-                'per-VPS lifecycle family (vps_queue_task / async_hyperv / sync_hyperv share it); 900s mirrors the old GlobalData stale-reap window because GetVMList can take ~10min',
+                SharedState::VPS_HOST_LOCK_TTL,
+                'per-VPS lifecycle family (vps_queue_task / async_hyperv / sync_hyperv share it). REVIEW-FIX: was a hardcoded 900, which mirrored the old GlobalData stale-reap window but was SHORTER than the longest single call it guards — GetVMList runs under default_socket_timeout=1200s and renew() only fires BETWEEN blocking calls, so the lock lapsed ~300s before the SOAP call gave up and the 30s hyperv_queue_timer could issue a second command to a host still mid-GetVMList. Must stay > default_socket_timeout',
             ],
             'boardctl asset job' => [
                 'boardctl_asset_77',

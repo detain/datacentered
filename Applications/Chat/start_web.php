@@ -102,6 +102,17 @@ $web->onWorkerStart = function ($worker) {
             }
         } catch (\Exception $e) {
             Worker::safeEcho('Caught Exception #'.$e->getCode().':'.$e->getMessage().' on '.__LINE__.'@'.__FILE__);
+            // REVIEW-FIX: null the handle, matching start_task.php and
+            // Events::createRedisConnection(). \Redis::connect() THROWS on refusal
+            // rather than returning false, so without this the global keeps a
+            // \Redis object whose first connect never succeeded — and such a handle
+            // never re-handshakes, so every later command on it throws. SharedState
+            // prefers the global, so the WebServer (which serves
+            // Web/trigger_payment.php) sat in fail-safe until an operator restarted
+            // it. The facade's SHARED_HANDLE_GRACE_PROBES now routes around a dead
+            // global after ~2 windows, but leaving it null skips that degraded
+            // period entirely and lets the lazy connect work immediately.
+            $redis = null;
         }
     }
     $memcache = new \Memcached();

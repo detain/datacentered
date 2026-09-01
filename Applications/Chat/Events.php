@@ -200,6 +200,28 @@ class Events
     /** Presence record/index staleness window (seconds); records carry it as a real TTL. */
     const PRESENCE_STALE_TTL = 90;
 
+    /**
+     * How long a presence RECORD (and its index membership) is retained.
+     *
+     * REVIEW-FIX: PRESENCE_STALE_TTL used to serve three different jobs at once
+     * — record TTL, index-sweep window, and the missed-keepalive DROP threshold
+     * — and that conflation made the watchdog unreachable. touchPresence() writes
+     * the record and the index score from the SAME pong timestamp, so a client
+     * that went quiet had its record expire and its index membership swept in the
+     * very tick that the drop test first became true (the sweep's bound is
+     * inclusive, the drop test's is strict, and the sweep runs FIRST). The client
+     * was therefore never judged and Gateway::closeClient(..., 'missed_keepalive')
+     * never ran: a half-open socket leaked its Gateway connection and session
+     * indefinitely, which is exactly what this watchdog exists to prevent.
+     *
+     * Retention is now 3x the drop threshold, so a silent client survives long
+     * enough to be seen, judged and closed. The sweep is demoted to what it
+     * should always have been: a backstop for records orphaned by a dead worker.
+     *
+     * INVARIANT: must stay comfortably GREATER than PRESENCE_STALE_TTL.
+     */
+    const PRESENCE_RECORD_TTL = 270;
+
     /** Presence auxiliary per-client key TTLs (seconds) — safety nets; every delete path is deterministic. */
     const PRESENCE_PING_TTL = 3600;
     const PRESENCE_MOVE_TTL = 60;
@@ -208,17 +230,40 @@ class Events
     /** dc.presence.join/move window after which an idle channel's hot-cache tail is swept (seconds) — replaces the 60s chat reaper Timer. */
     const CHAT_CHANNEL_IDLE_TTL = 3600;
 
+    /** Minimum seconds between write-path chat sweeps (see sweepIdleChatChannelsThrottled()). */
+    const CHAT_SWEEP_MIN_INTERVAL = 300;
+
+    /** @var int unix ts of the last write-path chat sweep in THIS process */
+    private static $lastChatSweepAt = 0;
+
     /**
      * Bot ownership lock TTL (seconds) — the heartbeat cadence is
-     * BOT_MOVE_INTERVAL (0.5s), so this is ~20 missed ticks of silence before
+     * BOT_MOVE_INTERVAL (0.5s), so this is ~60 missed ticks of silence before
      * another instance may take the bot over. Replaces the GlobalData-era
      * BOT_OWNER_HEARTBEAT_MAX_AGE staleness constant with a real, enforced
      * expiry: a crashed owner frees the bot when the lock lapses, no reaper.
+     *
+     * REVIEW-FIX (decision D): was 10s. The GlobalData-era check used
+     * /proc/<pid> liveness for a same-host owner, so a LIVE local process was
+     * never robbed no matter how long it stalled; the pure-TTL rewrite dropped
+     * that protection. These BusinessWorkers do synchronous MySQL and SOAP work,
+     * so a >10s stall was entirely reachable, and losing the lock to a stall
+     * means another worker takes over and respawns the bot with a NEW random
+     * name and position (a visible teleport+rename, not a graceful handoff).
+     * 30s keeps the takeover bounded while making a stall-induced steal
+     * unlikely. BOT_STATE_TTL must stay strictly GREATER than this so a dead
+     * owner still leaves a takeable ghost state rather than an instant vanish.
      */
-    const BOT_OWNER_LOCK_TTL = 10;
+    const BOT_OWNER_LOCK_TTL = 30;
 
-    /** Bot state/presence record TTL (seconds) — refreshed every moveBot tick; lapses with a dead owner. */
-    const BOT_STATE_TTL = 30;
+    /**
+     * Bot state/presence record TTL (seconds) — refreshed every moveBot tick;
+     * lapses with a dead owner. MUST outlive BOT_OWNER_LOCK_TTL (see there):
+     * the lock frees the bot for takeover first, and the surviving state is
+     * what lets the new owner adopt the bot's existing identity and position
+     * instead of respawning it fresh.
+     */
+    const BOT_STATE_TTL = 90;
 
     // ====================================================================
     // Bot Presence System (DataCenter 3D)
@@ -541,18 +586,21 @@ class Events
                 // NO callback bodies are touched and scheduling is byte-identical.
                 // live last_run tracking is deliberately deferred (safer-minimal option);
                 // the only reader is v1 handleAdminTimers (legacy msgTimers ignores it).
-                $timers['processing_queue_timer'] = ['interval' => 30, 'timer_id' => Timer::add(30, ['Events', 'processing_queue_timer'], $args)];
-                $timers['processing_queue_reaper'] = ['interval' => 120, 'timer_id' => Timer::add(120, ['Events', 'processing_queue_reaper'], $args)];
-                $timers['boardctl_queue_timer'] = ['interval' => 15, 'timer_id' => Timer::add(15, function() {
-                    try {
-                        Events::boardctl_queue_timer();
-                    } catch (\Throwable $e) {
-                        Worker::safeEcho("boardctl_queue_timer error: {$e->getMessage()}\n");
-                    }
-                }, $args)];
-                $timers['vps_queue_timer'] = ['interval' => 30, 'timer_id' => Timer::add(30, ['Events', 'vps_queue_timer'], $args)];
-                $timers['memcache_queue_timer'] = ['interval' => 30, 'timer_id' => Timer::add(30, ['Events', 'memcache_queue_timer'], $args)];
-                $timers['map_queue_timer'] = ['interval' => 60, 'timer_id' => Timer::add(60, ['Events', 'map_queue_timer'], $args)];
+                // REVIEW-FIX (worker-kill): every callback below MUST be wrapped in
+                // safeTimerCallback(). Workerman does NOT contain a throwing timer
+                // callback: Select::tick() routes it through safeCall(), which hands
+                // the Throwable to the loop's errorHandler, and Worker::run() installs
+                // that handler as stopAll(250, $e) — i.e. an uncaught throw here EXITS
+                // the BusinessWorker and the master respawns it. processing_queue_timer()
+                // throws by design on a dead Redis transport (so trigger_payment can
+                // answer `unavailable`), which without this wrapper turned any Redis
+                // outage into a 30s crash-respawn loop for worker 0.
+                $timers['processing_queue_timer'] = ['interval' => 30, 'timer_id' => Timer::add(30, self::safeTimerCallback('processing_queue_timer', ['Events', 'processing_queue_timer']), $args)];
+                $timers['processing_queue_reaper'] = ['interval' => 120, 'timer_id' => Timer::add(120, self::safeTimerCallback('processing_queue_reaper', ['Events', 'processing_queue_reaper']), $args)];
+                $timers['boardctl_queue_timer'] = ['interval' => 15, 'timer_id' => Timer::add(15, self::safeTimerCallback('boardctl_queue_timer', ['Events', 'boardctl_queue_timer']), $args)];
+                $timers['vps_queue_timer'] = ['interval' => 30, 'timer_id' => Timer::add(30, self::safeTimerCallback('vps_queue_timer', ['Events', 'vps_queue_timer']), $args)];
+                $timers['memcache_queue_timer'] = ['interval' => 30, 'timer_id' => Timer::add(30, self::safeTimerCallback('memcache_queue_timer', ['Events', 'memcache_queue_timer']), $args)];
+                $timers['map_queue_timer'] = ['interval' => 60, 'timer_id' => Timer::add(60, self::safeTimerCallback('map_queue_timer', ['Events', 'map_queue_timer']), $args)];
                 //$timers[] = Timer::add(60, ['Events', 'queue_queue_timer'], $args);
                 //$timer_id = Timer::add(1, function() use (&$timer_id, $timers) { echo "worker[0] tick timer_id:$timer_id:'".print_r($timers,true)."\n"; });
 
@@ -571,12 +619,12 @@ class Events
                     if (is_array($rows)) {
                         foreach ($rows as $row) {
                             $lockKey = SharedState::PREFIX_LOCK.'vps_host_'.$row['vps_id'];
-                            SharedState::del($lockKey, $lockKey.':request');
+                            SharedState::del($lockKey, SharedState::requestKey('vps_host_'.$row['vps_id']));
                         }
                     }
                 }
-                $timers['hyperv_update_list_timer'] = ['interval' => 3600, 'timer_id' => Timer::add(3600, ['Events', 'hyperv_update_list_timer'], $args)];
-                $timers['hyperv_queue_timer'] = ['interval' => 30, 'timer_id' => Timer::add(30, ['Events', 'hyperv_queue_timer'], $args)];
+                $timers['hyperv_update_list_timer'] = ['interval' => 3600, 'timer_id' => Timer::add(3600, self::safeTimerCallback('hyperv_update_list_timer', ['Events', 'hyperv_update_list_timer']), $args)];
+                $timers['hyperv_queue_timer'] = ['interval' => 30, 'timer_id' => Timer::add(30, self::safeTimerCallback('hyperv_queue_timer', ['Events', 'hyperv_queue_timer']), $args)];
 
                 // The sysinfos (MAJOR-10) and channel-messages (MAJOR-11) reaper
                 // Timers that lived here are DELETED: both registries now carry
@@ -585,7 +633,31 @@ class Events
                 // handleChannelList), which is exactly what those CAS-spinning
                 // closure sweeps existed to emulate.
 
-                // Registry seed: name => {interval, timer_id}, one hash field each.
+                /*
+                 * Registry seed: name => {interval, timer_id}, one hash field each.
+                 *
+                 * REVIEW-FIX (stale timer fields): under GlobalData this was a
+                 * single whole-variable assignment ($global->timers = $timers), so a
+                 * renamed or removed timer simply vanished. Writing one field per
+                 * timer never deletes anything, and dc:state:timers has no TTL — so
+                 * every timer name the hub has EVER registered accumulates and
+                 * handleAdminTimers() reports phantom timers (with dead, process-
+                 * local timer_ids) to admins forever. This changeset already renames
+                 * vps_queue_queue_timer -> vps_queue_timer, which would leave both.
+                 *
+                 * Prune fields we are not registering to restore replace semantics.
+                 * Every instance registers the same timer NAMES, so this stays
+                 * correct with several datacentered instances sharing one Redis (it
+                 * cannot delete a name another instance still uses).
+                 */
+                $staleTimerFields = array_diff(
+                    array_keys(SharedState::hGetAll(self::TIMERS_REGISTRY_KEY)),
+                    array_keys($timers)
+                );
+                if ($staleTimerFields !== []) {
+                    SharedState::hDel(self::TIMERS_REGISTRY_KEY, ...array_map('strval', $staleTimerFields));
+                    Worker::safeEcho('pruned stale timer registry fields: '.implode(', ', $staleTimerFields)."\n");
+                }
                 foreach ($timers as $timerName => $timerInfo) {
                     SharedState::hSet(self::TIMERS_REGISTRY_KEY, (string) $timerName, $timerInfo);
                 }
@@ -771,7 +843,35 @@ class Events
     public static function dispatchV1($client_id, $envelope)
     {
         if (!FeatureFlags::useNewHandling()) {
-            // Flag A OFF: new handling is dormant — parse but do not act (plan B8 state 1).
+            /*
+             * Flag A OFF: new handling is dormant — parse but do not act
+             * (plan B8 state 1).
+             *
+             * REVIEW-FIX (decision C): useNewHandling() ALSO returns false when
+             * the flag could not be read at all, and the two cases must not look
+             * the same to a client. A dead Redis transport marks the whole facade
+             * fail-safe for REPROBE_INTERVAL, so every v1 frame arriving in that
+             * window was silently discarded — no reply, no log — and any client
+             * waiting on `re` hung until its own timeout. One brief blip became
+             * 30s of protocol black hole across all five BusinessWorkers.
+             *
+             * transportFailed() is exactly the "the answer I just gave you is not
+             * authoritative" signal, so escalate only that: tell the client
+             * `unavailable` and let it retry. A flag that is genuinely OFF, or a
+             * deployment with no Redis configured at all (client() === null
+             * without a dead window — a deliberate STATE, not a failure), stays
+             * inert as documented and as pinned by
+             * EventsV1RouterTest::testV1PingDormantByDefaultWhenRedisUnavailable.
+             */
+            if (SharedState::transportFailed()) {
+                self::sendV1Error(
+                    $client_id,
+                    $envelope['id'],
+                    'unavailable',
+                    'shared state is temporarily unreachable; retry shortly'
+                );
+            }
+
             return;
         }
         $op = $envelope['op'];
@@ -1572,6 +1672,8 @@ class Events
             // Mirror legacy msgRunning: silently drop input racing a finished run.
             return;
         }
+        // Activity keeps the run alive — see touchRun().
+        self::touchRun($run_id);
         $relay = self::v1Envelope('cmd.stdin', [
             'run_id' => $run_id,
             'data' => $data['data']
@@ -1617,6 +1719,8 @@ class Events
             self::sendV1Error($client_id, $re, 'forbidden', 'sender does not own this run');
             return;
         }
+        // Activity keeps the run alive — see touchRun().
+        self::touchRun($run_id);
         $relay = self::v1Envelope('cmd.output', [
             'run_id' => $run_id,
             'stream' => $stream,
@@ -1780,7 +1884,7 @@ class Events
             return;
         }
         $entry['ts'] = time();
-        SharedState::set($key, $entry, self::PRESENCE_STALE_TTL);
+        SharedState::set($key, $entry, self::PRESENCE_RECORD_TTL);
         self::presenceIndexAdd($client_id, $entry['ts']);
     }
 
@@ -1871,7 +1975,7 @@ class Events
             // The old call passed `false` as $args (a TypeError: bool is never
             // ?array) and left $persistent at its default TRUE, which would have
             // leaked a repeating 15s timer per session. $args must be [].
-            self::$sessionPruneTimers[$sessionId] = \Workerman\Timer::add(15, function () use ($sessionId, $pingedAt, $pingedClients) {
+            self::$sessionPruneTimers[$sessionId] = \Workerman\Timer::add(15, self::safeTimerCallback('sessionPrune', function () use ($sessionId, $pingedAt, $pingedClients) {
                 // REVIEW-FIX: the one-shot has fired, so drop both the local id
                 // and the shared marker (the latter only if it is still ours).
                 // The marker previously survived forever — one permanent key per
@@ -1928,7 +2032,7 @@ class Events
                     Gateway::closeClient($cid, 'session_pruned');
                     Worker::safeEcho("[dc_presence] pruned non-responsive client {$cid} from session {$sessionId}\n");
                 }
-            }, [], false);
+            }), [], false);
             SharedState::set($timerKey, getmypid(), self::PRESENCE_SESSION_TTL);
         }
         $clients[] = $client_id;
@@ -2059,8 +2163,35 @@ class Events
         // once, so two racing opens on different workers cannot both win, and
         // every other pty session stays untouched.
         if (!SharedState::hSetNx(self::PTYS_REGISTRY_KEY, $pty_id, $entry)) {
-            self::sendV1Error($client_id, $re, 'bad_request', "pty.open data.pty_id \"{$pty_id}\" is already in use by an open pty");
-            return;
+            /*
+             * REVIEW-FIX (ghost ptys): a field here is removed only by pty.close,
+             * and dc:state:ptys has no TTL. Under GlobalData the registry died with
+             * the store on any restart; in Redis it persists, so an admin or host
+             * that drops mid-session (or a hub killed hard) leaves the field behind
+             * and this guard then rejects that pty_id FOREVER — with no way to clear
+             * it short of editing Redis by hand.
+             *
+             * Before refusing, check whether the recorded session is actually still
+             * alive. Gateway::isUidOnline() answers via the register service, so it
+             * is accurate across all datacentered instances. If neither the host nor
+             * the owning admin is connected, the entry is a corpse: reclaim it and
+             * let the open proceed. A genuinely in-flight pty is still protected,
+             * which is what the collision guard is for.
+             */
+            $existing = SharedState::hGet(self::PTYS_REGISTRY_KEY, $pty_id);
+            $existingHost = is_array($existing) ? (string) ($existing['host'] ?? '') : '';
+            $existingOwner = is_array($existing) ? (string) ($existing['for'] ?? '') : '';
+            $stale = is_array($existing)
+                && ($existingHost === '' || Gateway::isUidOnline($existingHost) != true)
+                && ($existingOwner === '' || Gateway::isUidOnline($existingOwner) != true);
+            if ($stale) {
+                Worker::safeEcho("pty.open reclaiming orphaned pty_id {$pty_id} (host {$existingHost} and owner {$existingOwner} both offline)\n");
+                SharedState::hSet(self::PTYS_REGISTRY_KEY, $pty_id, $entry);
+            } else {
+                self::sendV1Error($client_id, $re, 'bad_request', "pty.open data.pty_id \"{$pty_id}\" is already in use by an open pty");
+
+                return;
+            }
         }
         // §5 structured audit: who/host/scope/command/pty_id/timestamp.
         self::ptyAudit('open', [
@@ -3260,8 +3391,20 @@ class Events
      */
     private static function chatCacheAppend($channel, $message)
     {
-        SharedState::rPushLtrim(self::CHAT_MSGS_KEY_PREFIX . $channel, $message, self::CHAT_HISTORY_MAX);
+        /*
+         * REVIEW-FIX (decision E): the message LIST now carries an idle TTL,
+         * refreshed on every append. Reclamation used to depend ENTIRELY on
+         * sweepIdleChatChannels(), which is reachable only from
+         * handleChannelList() — so on any deployment where no client sends
+         * channel.list (Flag A off, or a client that only joins and publishes)
+         * every channel ever published to kept a CHAT_HISTORY_MAX list forever,
+         * and dm:* channels are client-mintable. The LIST is the bulk of that
+         * footprint; the activity ZSET still needs the sweep, which is why the
+         * throttled call below exists.
+         */
+        SharedState::rPushLtrim(self::CHAT_MSGS_KEY_PREFIX . $channel, $message, self::CHAT_HISTORY_MAX, self::CHAT_CHANNEL_IDLE_TTL);
         SharedState::zAdd(self::CHAT_ACTIVITY_KEY, time(), $channel);
+        self::sweepIdleChatChannelsThrottled();
     }
 
     /**
@@ -3526,6 +3669,28 @@ class Events
      * Idempotent and cheap: one range read plus a delete per stale member, and
      * a no-op when the window is empty.
      */
+    /**
+     * sweepIdleChatChannels() on a write-path budget.
+     *
+     * The activity ZSET is one key holding every channel name, so no per-member
+     * TTL can bound it — only the sweep can. Hanging that solely off
+     * handleChannelList() left it unbounded on write-only deployments, but
+     * sweeping on EVERY message would add a zRangeByScore per chat frame. Run it
+     * at most once per CHAT_SWEEP_MIN_INTERVAL per process instead: the cost is
+     * negligible and reclamation no longer depends on anyone reading.
+     *
+     * @return void
+     */
+    private static function sweepIdleChatChannelsThrottled(): void
+    {
+        $now = time();
+        if ($now - self::$lastChatSweepAt < self::CHAT_SWEEP_MIN_INTERVAL) {
+            return;
+        }
+        self::$lastChatSweepAt = $now;
+        self::sweepIdleChatChannels();
+    }
+
     private static function sweepIdleChatChannels(): void
     {
         $staleBefore = time() - self::CHAT_CHANNEL_IDLE_TTL;
@@ -4292,11 +4457,19 @@ class Events
     /**
      * Stale-eviction sweep for the presence ZSET indexes (migration A2).
      *
-     * Members whose score (last-seen ts) is older than the PRESENCE_STALE_TTL
+     * Members whose score (last-seen ts) is older than the PRESENCE_RECORD_TTL
      * window are removed from both indexes and their record keys deleted. The
      * record keys carry the same TTL natively, so this primarily reclaims the
      * INDEX side — the eventual-consistency backstop for members whose
-     * deterministic removal (leave/onClose/cleanup) raced a dead worker. No
+     * deterministic removal (leave/onClose/cleanup) raced a dead worker.
+     *
+     * REVIEW-FIX: this used to sweep on PRESENCE_STALE_TTL, the SAME window the
+     * missed-keepalive watchdog drops on, and it runs FIRST in that callback —
+     * so it evicted every silent client one tick before the watchdog could judge
+     * it, and no socket was ever closed. It now sweeps on the longer retention
+     * window, leaving the watchdog as the primary path and this as the backstop.
+     *
+     * No
      * cross-key transaction is required: indexes are advisory membership
      * hints, and every consumer re-reads the record before trusting one, so a
      * window where the index lags a delete is inert.
@@ -4306,7 +4479,7 @@ class Events
      */
     private static function sweepPresenceStale(): void
     {
-        $staleBefore = time() - self::PRESENCE_STALE_TTL;
+        $staleBefore = time() - self::PRESENCE_RECORD_TTL;
         foreach ([self::DC_PRESENCE_INDEX_KEY, self::DC_ACTIVE_INDEX_KEY] as $indexKey) {
             $stale = SharedState::zRangeByScore($indexKey, 0, $staleBefore);
             if ($stale === []) {
@@ -4377,7 +4550,7 @@ class Events
         if ($client_id && SharedState::exists('dc:presence:cleanup:' . $client_id)) {
             Worker::safeEcho("dc.presence.join {$client_id}: cleanup in progress, overwriting anyway\n");
         }
-        SharedState::set($key, $newEntry, self::PRESENCE_STALE_TTL);
+        SharedState::set($key, $newEntry, self::PRESENCE_RECORD_TTL);
         // Index membership is two zAdds — no seed, no CAS loop, no retry
         // ceiling (see presenceIndexAdd()'s migration note for why the
         // GlobalData-era guards for those are gone).
@@ -4499,7 +4672,7 @@ class Events
         if (!isset($newEntry['client_id'])) {
             $newEntry['client_id'] = $client_id;
         }
-        SharedState::set($key, $newEntry, self::PRESENCE_STALE_TTL);
+        SharedState::set($key, $newEntry, self::PRESENCE_RECORD_TTL);
         // Refresh the index scores so the move keeps the member inside the
         // staleness sweep window (TTL on the record + score here == liveness).
         self::presenceIndexAdd($moveClientId, $newEntry['ts']);
@@ -4531,9 +4704,9 @@ class Events
         if (self::$moveBatchTimer !== null) {
             return;
         }
-        self::$moveBatchTimer = \Workerman\Timer::add(0.05, function () {
+        self::$moveBatchTimer = \Workerman\Timer::add(0.05, self::safeTimerCallback('flushPresenceBatch', function () {
             self::flushPresenceBatch();
-        }, [], false);
+        }), [], false);
     }
 
     /**
@@ -4773,7 +4946,7 @@ class Events
      */
     public static function setupSessionHealthTimer()
     {
-        \Workerman\Timer::add(30, function () {
+        \Workerman\Timer::add(30, self::safeTimerCallback('sessionHealth', function () {
             $now = time();
 
             // Iterate via the presence index ZSET to avoid reading a monolithic
@@ -4895,6 +5068,12 @@ class Events
                     // onClose() already did.
                     self::presenceIndexRemove($clientId);
                     SharedState::del($cleanupKey);
+                    // NOTE: deliberately NO closeClient() here. A record-less
+                    // index member is a ghost whose socket is already gone; the
+                    // half-open-socket case is handled on the drop path below,
+                    // which is now reachable because PRESENCE_RECORD_TTL outlives
+                    // PRESENCE_STALE_TTL (see that constant). Pinned by
+                    // EventsV1DcPresenceMultiTabTest::testHealthTimerPrunesGhostIndexEntries.
                     continue;
                 }
 
@@ -4924,7 +5103,7 @@ class Events
 
                 Worker::safeEcho("[dc_presence] dropped {$clientId} — missed keepalive\n");
             }
-        });
+        }));
     }
 
     // ====================================================================
@@ -5161,34 +5340,68 @@ class Events
             unset(self::$botTimers[$location]);
         }
 
-        // Pick a random bot name
-        $botName = self::$botNames[array_rand(self::$botNames)] . ' ' . substr(md5(uniqid((string)mt_rand(), true)), 0, 4);
-
-        // Spawn near the joining player (THE BOT #1/#3), clamped inside the room.
         $roomBounds = self::dcRoomBounds($location);
-        $anchor = null;
-        if (is_array($near) && isset($near['x'], $near['z']) && is_numeric($near['x']) && is_numeric($near['z'])) {
-            $anchor = ['x' => (float) $near['x'], 'z' => (float) $near['z']];
-        } else {
-            $anchor = self::randomRealClientPosition();
-        }
-        list($spawnX, $spawnZ) = self::randomPointNear($anchor, $roomBounds, self::BOT_SPAWN_RADIUS);
-        $spawnYaw = lcg_value() * 2 * M_PI;  // Random initial facing direction
 
-        // Initialize bot state
-        $botState = [
-            'uid' => $botId,
-            'name' => $botName,
-            'x' => $spawnX,
-            'z' => $spawnZ,
-            'yaw' => $spawnYaw,
-            'target_x' => $spawnX,
-            'target_z' => $spawnZ,
-            'ts' => time(),
-            'client_id' => $botId,
-            'location' => $location,
-            'bounds' => $roomBounds,
-        ];
+        // REVIEW-FIX (decision D): ADOPT a surviving bot state instead of always
+        // respawning a fresh one. BOT_STATE_TTL outlives BOT_OWNER_LOCK_TTL by
+        // design, so after a takeover (crashed owner, or an owner whose lock
+        // lapsed during a stall) the previous bot's identity and position are
+        // still in Redis. Rebuilding them from scratch made every handoff a
+        // visible teleport AND rename of the same avatar. Keep the existing
+        // uid/name/position/target and just re-stamp ts+bounds; only spawn fresh
+        // when there is genuinely no state to inherit.
+        $existingState = SharedState::get($botStateKey);
+        $adopted = is_array($existingState)
+            && isset($existingState['name'], $existingState['x'], $existingState['z']);
+
+        if ($adopted) {
+            $botState = $existingState;
+            $botName = (string) $botState['name'];
+            $spawnX = (float) $botState['x'];
+            $spawnZ = (float) $botState['z'];
+            $botState['uid'] = $botId;
+            $botState['client_id'] = $botId;
+            $botState['location'] = $location;
+            $botState['bounds'] = $roomBounds;
+            $botState['ts'] = time();
+            // Keep walking toward whatever it was heading for; moveBot() picks a
+            // new target on arrival anyway.
+            if (!isset($botState['target_x'], $botState['target_z'])) {
+                $botState['target_x'] = $spawnX;
+                $botState['target_z'] = $spawnZ;
+            }
+            if (!isset($botState['yaw'])) {
+                $botState['yaw'] = lcg_value() * 2 * M_PI;
+            }
+        } else {
+            // Pick a random bot name
+            $botName = self::$botNames[array_rand(self::$botNames)] . ' ' . substr(md5(uniqid((string)mt_rand(), true)), 0, 4);
+
+            // Spawn near the joining player (THE BOT #1/#3), clamped inside the room.
+            $anchor = null;
+            if (is_array($near) && isset($near['x'], $near['z']) && is_numeric($near['x']) && is_numeric($near['z'])) {
+                $anchor = ['x' => (float) $near['x'], 'z' => (float) $near['z']];
+            } else {
+                $anchor = self::randomRealClientPosition();
+            }
+            list($spawnX, $spawnZ) = self::randomPointNear($anchor, $roomBounds, self::BOT_SPAWN_RADIUS);
+            $spawnYaw = lcg_value() * 2 * M_PI;  // Random initial facing direction
+
+            // Initialize bot state
+            $botState = [
+                'uid' => $botId,
+                'name' => $botName,
+                'x' => $spawnX,
+                'z' => $spawnZ,
+                'yaw' => $spawnYaw,
+                'target_x' => $spawnX,
+                'target_z' => $spawnZ,
+                'ts' => time(),
+                'client_id' => $botId,
+                'location' => $location,
+                'bounds' => $roomBounds,
+            ];
+        }
         Worker::safeEcho('[dc_bot] spawn x=' . $botState['x'] . ' z=' . $botState['z'] . "\n");
         SharedState::set($botStateKey, $botState, self::BOT_STATE_TTL);
 
@@ -5217,7 +5430,8 @@ class Events
         // instance across all three datacentered hosts.
         self::$botTimers[$location] = $timerId;
 
-        Worker::safeEcho("[dc_bot] spawned bot '{$botName}' ({$botId}) at location '{$location}' at ({$spawnX}, {$spawnZ}) owned by {$token}\n");
+        $how = $adopted ? 'adopted' : 'spawned';
+        Worker::safeEcho("[dc_bot] {$how} bot '{$botName}' ({$botId}) at location '{$location}' at ({$spawnX}, {$spawnZ}) owned by {$token}\n");
     }
 
     /**
@@ -5235,6 +5449,26 @@ class Events
      */
     public static function moveBot(string $location = self::BOT_DEFAULT_LOCATION): void
     {
+        // Registered directly as ['Events','moveBot'] (an invariant pinned by
+        // EventsBotPresenceTest), so the worker-kill guard that other timers get
+        // from safeTimerCallback() has to live INSIDE the callback here. Without
+        // it a throw on this 0.5s-per-location tick reaches Workerman's loop
+        // errorHandler == stopAll(250) and exits the BusinessWorker.
+        try {
+            self::moveBotInner($location);
+        } catch (\Throwable $e) {
+            Worker::safeEcho("moveBot error for '{$location}': {$e->getMessage()}\n");
+        }
+    }
+
+    /**
+     * moveBot() body. See moveBot() for why the throw-guard is separate.
+     *
+     * @param string $location
+     * @return void
+     */
+    private static function moveBotInner(string $location = self::BOT_DEFAULT_LOCATION): void
+    {
         if (!FeatureFlags::dcBotPresenceEnabled()) {
             self::cleanupBotForLocation($location);
             return;
@@ -5248,8 +5482,23 @@ class Events
             return; // no timer here; nothing to drive
         }
         $token = self::$botLockTokens[$location] ?? null;
-        if ($token === null || !SharedState::renew(self::botOwnerLockName($location), $token, self::BOT_OWNER_LOCK_TTL)) {
-            // We no longer own it (expired + taken over, or Redis blipped).
+        if ($token !== null && !SharedState::renew(self::botOwnerLockName($location), $token, self::BOT_OWNER_LOCK_TTL)) {
+            // REVIEW-FIX (decision D): renew() returns the SAME false for "lost
+            // the lock" and "transport is dead", and retiring on the latter turned
+            // a ~30s Redis blip into a permanently dead bot — nothing respawns
+            // until the next dc.presence.join, and no dc.presence.left is sent, so
+            // frontends keep a frozen avatar. Distinguish the two: on transport
+            // death skip the tick and keep both the timer and our token, so the
+            // bot resumes by itself when the facade heals. We are not double-driving
+            // anything by holding on — no other process can have taken the lock,
+            // because nobody can reach Redis to take it.
+            if (SharedState::transportFailed()) {
+                return;
+            }
+            $token = null;
+        }
+        if ($token === null) {
+            // Genuinely lost (expired + taken over) or never held.
             // Stop driving; the current owner's state keys survive untouched.
             unset(self::$botLockTokens[$location]);
             Timer::del(self::$botTimers[$location]);
@@ -5526,6 +5775,33 @@ class Events
                     }
                 }
             }
+            /*
+             * REVIEW-FIX (ghost ptys): drop pty registry entries this connection
+             * owned. dc:state:ptys had NO cleanup here at all and no TTL — it was
+             * removed only by an explicit pty.close — so every session that dropped
+             * mid-pty leaked a field permanently. pty.open now reclaims a corpse on
+             * collision, but that only helps when the same pty_id comes back;
+             * without this the hash still grows without bound.
+             *
+             * Only prune when this is the LAST connection for the uid: another tab
+             * of the same admin may still be driving the pty.
+             */
+            if (count($clientIds) == 1) {
+                $ptyFieldsToDrop = [];
+                foreach (SharedState::hGetAll(self::PTYS_REGISTRY_KEY) as $ptyId => $ptyEntry) {
+                    if (!is_array($ptyEntry)) {
+                        continue;
+                    }
+                    if (($ptyEntry['for'] ?? null) === $_SESSION['uid']
+                        || ($ptyEntry['host'] ?? null) === $_SESSION['uid']) {
+                        $ptyFieldsToDrop[] = (string) $ptyId;
+                    }
+                }
+                if ($ptyFieldsToDrop !== []) {
+                    SharedState::hDel(self::PTYS_REGISTRY_KEY, ...$ptyFieldsToDrop);
+                    Worker::safeEcho('onClose: dropped pty registry entries '.implode(', ', $ptyFieldsToDrop).' for '.$_SESSION['uid']."\n");
+                }
+            }
             if (isset($_SESSION['ima'])) {
                 if ($_SESSION['ima'] == 'host') {
                     $id = str_replace('vps', '', $_SESSION['uid']);
@@ -5586,9 +5862,11 @@ class Events
      * operator nudging via Web/trigger_payment.php must get "unavailable", not
      * a silent ok-noop, when the payment chain could not even reach Redis.
      * Three consumers, three containments of that escalation:
-     *   - the 30s periodic tick (registered via Timer::add, run by Workerman's
-     *     Timer::tick): the tick handler safeCall()s everything a callback
-     *     throws, so escalating cannot kill a worker;
+     *   - the 30s periodic tick: contained by safeTimerCallback() at the
+     *     Timer::add() registration site. Workerman itself does NOT contain it
+     *     — Select::tick() safeCall()s the callback, but safeCall() forwards the
+     *     Throwable to the loop errorHandler, which Worker::run() installs as
+     *     stopAll(250, $e). An unwrapped throw here exits the worker;
      *   - Web/trigger_payment.php: catches \Throwable and answers the
      *     documented "unavailable";
      *   - legacy WS Events::msgPaymentprocess (onMessage): catches locally and
@@ -5644,18 +5922,98 @@ class Events
      * renew is token-checked: if the TTL lapsed and another holder took the
      * lock, this silently does nothing rather than resurrecting the old hold.
      */
-    private static function refreshProcessingLock()
+    private static function refreshProcessingLock(): bool
     {
         // Only renew a lock we actually hold; never resurrect a released one.
         if (self::$processingLockToken === null) {
-            return;
+            return false;
         }
-        SharedState::renew('processing_queue', self::$processingLockToken, 900);
+        if (SharedState::renew('processing_queue', self::$processingLockToken, 900)) {
+            return true;
+        }
+
+        /*
+         * REVIEW-FIX: the renew result used to be DISCARDED — the one renew site
+         * of ten that ignored it. renew() returning false means this chain no
+         * longer owns `processing_queue` (the TTL lapsed and the 30s timer
+         * re-acquired), and the lock is the ONLY mutual exclusion on the payment
+         * queue: dbUpdateWithRetry() updates queue_log by history_id with no
+         * `AND history_new_value='pending'` guard, so a second chain re-SELECTs
+         * the same still-pending rows and process_payment() runs twice for one
+         * history_id. Drop the stale token so releaseProcessingLock() cannot
+         * later delete the NEW owner's lock, and report the loss so the caller
+         * aborts instead of continuing to process rows it no longer owns.
+         */
+        Worker::safeEcho("processing_queue lock lost mid-chain (expired or taken) — aborting this chain\n");
+        self::$processingLockToken = null;
+
+        return false;
     }
 
     /**
      * Release the processing queue lock and record last-run time.
      */
+    /**
+     * Wrap a periodic-timer callback so a throw can never kill the worker.
+     *
+     * Workerman provides NO containment for a throwing timer callback, despite
+     * the name of the method that invokes it: Events\Select::tick() calls
+     * safeCall(), and safeCall() catches the Throwable only to hand it to the
+     * event loop's errorHandler — which Worker::run() sets to
+     * stopAll(250, $exception). So an uncaught throw in ANY timer callback
+     * terminates the BusinessWorker; the master respawns it and, if the cause
+     * is persistent (e.g. Redis unreachable), the worker crash-loops.
+     *
+     * Every Timer::add() in onWorkerStart() must therefore route through here.
+     * The wrapper logs and swallows, which is the correct contract for a
+     * periodic nudge: the next tick retries. Callers that need to OBSERVE the
+     * failure (Web/trigger_payment.php, msgPaymentprocess) call the underlying
+     * method directly and do their own catching.
+     *
+     * @param string   $name     timer name, for the log line
+     * @param callable $callback the real timer body
+     * @return callable safe to hand to Timer::add()
+     */
+    /**
+     * Refresh a run registry entry's TTL on activity.
+     *
+     * REVIEW-FIX: dc:state:running:<run_id> is written with RUNNING_ENTRY_TTL
+     * (3600s) and nothing ever refreshed it, while the GlobalData $global->running
+     * map it replaced had NO expiry and was removed only on cmd.exit / msgRan /
+     * onClose. So an interactive run (cmd.exec with interact:true — an ssh or
+     * shell session) simply stopped working after exactly one hour: every
+     * subsequent cmd.stdin, cmd.output, cmd.exit and cmd.kill found no entry and
+     * was SILENTLY DROPPED. Keystrokes vanished with no error, host output was
+     * discarded, the admin was never told the run ended, the run could no longer
+     * be killed, and the onClose stop_run sweep could not see it — so the host
+     * kept the child process alive after the admin disconnected.
+     *
+     * Traffic in either direction is proof the run is alive, so both relay paths
+     * extend the window. The TTL is kept (rather than removed) so a genuinely
+     * abandoned entry still self-reclaims, which is what bounds the
+     * dc:state:running_ids index.
+     *
+     * @param string $run_id
+     * @return void
+     */
+    private static function touchRun(string $run_id): void
+    {
+        SharedState::expire(self::RUNNING_KEY_PREFIX . $run_id, self::RUNNING_ENTRY_TTL);
+    }
+
+    private static function safeTimerCallback(string $name, callable $callback): callable
+    {
+        return static function (...$args) use ($name, $callback) {
+            try {
+                return $callback(...$args);
+            } catch (\Throwable $e) {
+                Worker::safeEcho("{$name} error: {$e->getMessage()}\n");
+
+                return null;
+            }
+        };
+    }
+
     private static function releaseProcessingLock()
     {
         if (self::$processingLockToken === null) {
@@ -5699,7 +6057,7 @@ class Events
         // hard) and get marked failed so they can be re-queued.
         $logDir = '/home/my/logs/boardctl';
         try {
-            $rows = self::$db->select('history_id')->from('queue_log')
+            $rows = self::$db->select('history_id, history_type')->from('queue_log')
                 ->where("history_section='boardctl' AND history_new_value='processing'")
                 ->query();
         } catch (\Exception $e) {
@@ -5733,6 +6091,33 @@ class Events
                     ." WHERE history_id=".$historyId);
             } catch (\Exception $e) {
                 Worker::safeEcho("boardctl_startup_reap DB error for history_id={$historyId}: {$e->getMessage()}\n");
+            }
+
+            /*
+             * REVIEW-FIX: also free the per-asset lock this dead runner was
+             * holding. Under GlobalData the lock server was an in-process
+             * Workerman worker, so `php start.php restart` wiped every lock and a
+             * stuck boardctl_asset lock was cleared by the very restart that runs
+             * this reap. Redis is external and persists, and nothing else clears
+             * these: the cold-start pre-clean covers only dc:lock:vps_host_* for
+             * vps_type=11. So a SIGKILLed runner (or a reboot) left
+             * dc:lock:boardctl_asset_<id> held for its full 22200s TTL — 6h10m —
+             * during which boardctl_queue_timer got null from lock() and silently
+             * `continue`d every 15s. The asset looked permanently dead and a
+             * restart no longer helped.
+             *
+             * The token-less unlock() is an UNCONDITIONAL delete, which is
+             * normally forbidden — it is correct here precisely because this is
+             * the documented admin/stale-cleanup path: we have just proven the
+             * holder is gone (no pidfile, or a dead pid) and marked its row failed.
+             */
+            $parts = explode(':', (string) ($row['history_type'] ?? ''), 2);
+            $assetId = isset($parts[1]) ? intval($parts[1]) : intval($row['history_type'] ?? 0);
+            if ($assetId > 0) {
+                SharedState::unlock('boardctl_asset_'.$assetId);
+                Worker::safeEcho("boardctl_startup_reap: released orphaned boardctl_asset_{$assetId} lock (history_id={$historyId})\n");
+            } else {
+                Worker::safeEcho("boardctl_startup_reap: history_id={$historyId} has unparseable history_type '".($row['history_type'] ?? '')."' — asset lock NOT released\n");
             }
         }
     }
@@ -5811,9 +6196,9 @@ class Events
                 return;
             }
             self::$db = self::createDbConnection();
-            Timer::add(1, function () use ($status, $historyId, $onSuccess, $try, $maxTries) {
+            Timer::add(1, self::safeTimerCallback('dbUpdateWithRetry', function () use ($status, $historyId, $onSuccess, $try, $maxTries) {
                 self::dbUpdateWithRetry($status, $historyId, $onSuccess, $try, $maxTries);
-            }, [], false);
+            }), [], false);
         }
     }
 
@@ -5833,7 +6218,14 @@ class Events
          * that is merely slow. (boardctl solves the same problem by pinning its
          * timeout above a known runner cap; there is no equivalent cap here.)
          */
-        self::refreshProcessingLock();
+        if (!self::refreshProcessingLock()) {
+            // Ownership is gone (or was never held): another chain legitimately
+            // holds the lock and is working these rows. Stop — do NOT touch the
+            // work, per the SharedState renew contract. The token has already
+            // been cleared, so no unlock is issued here: deleting the lock now
+            // would hand a third chain the same rows.
+            return;
+        }
         $result = array_shift($results);
         self::dbUpdateWithRetry('processing', $result['history_id'], function () use ($result, $results) {
             Worker::safeEcho("payment processing about to spawn task for ".json_encode($result, true)."\n");
@@ -5870,7 +6262,39 @@ class Events
         // the Redis hash are the vps ids (migration A2 — the old live
         // $global->hosts reads were whole-map fetches on every check).
         $hostRegistry = SharedState::hGetAll(self::HOSTS_REGISTRY_KEY);
-        $hostIds = array_keys($hostRegistry);
+        /*
+         * REVIEW-FIX (ghost hosts): reconcile the registry against live
+         * connections before trusting it.
+         *
+         * dc:state:hosts is written once, when a host authenticates, and removed
+         * only in onClose(). Under GlobalData that was safe by accident: the store
+         * was an in-process Workerman worker, so a kill -9 / OOM / reboot wiped it
+         * and onWorkerStart re-seeded from live connections. Redis is external and
+         * persists, and the cold-start blanking was (correctly) dropped because
+         * several datacentered instances share one Redis — truncating here would
+         * delete hosts that are live on ANOTHER instance.
+         *
+         * So a hub that dies without running onClose leaves every host row behind
+         * permanently, and this timer treats that hash as the authority for "which
+         * hosts exist" — it would keep dispatching vps_queue_task at decommissioned
+         * or offline hosts every 30s, forever.
+         *
+         * Gateway::isUidOnline() is the right authority instead: it answers through
+         * the register service, so it is accurate across all instances (the same
+         * idiom handleCmdExec/handlePtyOpen/telemetry already use). Offline rows are
+         * pruned as we go, which also stops the hash growing without bound.
+         */
+        $hostIds = [];
+        foreach (array_keys($hostRegistry) as $registryId) {
+            if (Gateway::isUidOnline('vps'.$registryId) == true) {
+                $hostIds[] = $registryId;
+                continue;
+            }
+            SharedState::hDel(self::HOSTS_REGISTRY_KEY, (string) $registryId);
+            SharedState::del(self::ADMIN_HOSTS_CACHE_KEY);
+            unset($hostRegistry[$registryId]);
+            Worker::safeEcho('vps_queue_timer: pruned offline host '.$registryId." from the hosts registry\n");
+        }
         try {
             /*
              * The vpsqueuedone anti-join is what Tasks/vps_queue_task.php has always
@@ -5949,25 +6373,39 @@ class Events
                     //}
                     /*
                      * GlobalData→Redis migration (A1): per-host dispatch lock via
-                     * SharedState. TTL 900s is a FROZEN CONTRACT with the Tasks
-                     * track (vps_queue_task contends on the same key). SET NX maps
-                     * the old cas($var, 0, 1) faithfully — a Tasks-side acquire
-                     * failing while Events holds the lock is correct behaviour, and
-                     * the token makes the release owner-checked.
+                     * SharedState. Cross-host parallelism is preserved (per-host
+                     * lock keys); this only guards <=1 concurrent command per VPS
+                     * host, which is the platform's concurrency contract.
                      *
-                     * Ops decision: 900s TTL mirrors the old 900s GlobalData stale-reap
-                     * window because HyperV ops (esp. GetVMList) can take 10+ minutes —
-                     * a shorter TTL could expire mid-operation and let a second worker
-                     * race the same host. Cross-host parallelism is preserved (per-host
-                     * lock keys); this only guards ≤1 concurrent command per VPS host.
+                     * REVIEW-FIX (decision B): the token is now HANDED DOWN to
+                     * vps_queue_task in args['lock_token'], the same way
+                     * boardctl_queue_timer hands its hold to the detached runner.
+                     *
+                     * Previously this comment claimed "a Tasks-side acquire failing
+                     * while Events holds the lock is correct behaviour" — but the
+                     * Task's first act was to lock the SAME key, so it always got
+                     * null, skipped its entire body and returned ''. The dispatch
+                     * could never do any work; the timer was dead (identically so
+                     * under GlobalData's cas($var, 0, 1), so this is a long-standing
+                     * bug the migration faithfully preserved rather than caused).
+                     *
+                     * Handing the token down also lets the Task RENEW the hold
+                     * during its long SOAP work. This side takes the lock and then
+                     * waits on an untimed dispatchTask round trip with no renewal of
+                     * its own, so without that the TTL could lapse mid-operation and
+                     * the next 30s tick would dispatch a duplicate for the same host.
+                     *
+                     * Release stays here, on BOTH dispatchTask legs (result and
+                     * error), so ownership has exactly one owner; the Task only
+                     * releases a lock it acquired itself.
                      */
                     $lockName = 'vps_host_'.$server_id;
-                    $token = SharedState::lock($lockName, 900);
+                    $token = SharedState::lock($lockName, SharedState::VPS_HOST_LOCK_TTL);
                     if ($token !== null) {
                         $releaseLock = function () use ($lockName, $token) {
                             SharedState::unlock($lockName, $token);
                         };
-                        self::dispatchTask('vps_queue_task', ['id' => $server_id], function ($task_result) use ($server_id, $releaseLock) {
+                        self::dispatchTask('vps_queue_task', ['id' => $server_id, 'lock_token' => $token], function ($task_result) use ($server_id, $releaseLock) {
                             $task_result = json_decode($task_result, true);
                             if (trim($task_result['return']) != '') {
                                 self::run_command($server_id, $task_result['return'], false, 'room_1', 80, 24, true);
@@ -6103,6 +6541,24 @@ class Events
                     'content' => nl2br(htmlspecialchars($content)),
                     'time' => date('Y-m-d H:i:s'),
                 ];
+                /*
+                 * REVIEW-FIX: trim this log. Nothing ever read it back and nothing
+                 * ever bounded it — the only thing that used to keep it in check was
+                 * GlobalData dying on every restart. In Redis dc:state:rooms has no
+                 * TTL, so the array grows forever, and because it lives in ONE hash
+                 * field every message JSON-decodes the whole history, appends one
+                 * entry and re-encodes it: O(n) CPU and O(n) network per message,
+                 * unbounded. It is driven by machine traffic too — say() is called
+                 * from msgRan for every legacy run completion, not just by humans.
+                 *
+                 * SharedState.php names this very array as the defect the v1
+                 * chat cache was designed to replace; the legacy say() path was
+                 * simply left writing to it. Bounded to the same window as the v1
+                 * hot cache.
+                 */
+                if (count($room['messages']) > self::CHAT_HISTORY_MAX) {
+                    $room['messages'] = array_slice($room['messages'], -self::CHAT_HISTORY_MAX);
+                }
                 SharedState::hSet(self::ROOMS_REGISTRY_KEY, self::DEFAULT_ROOM_ID, $room);
             }
             return Gateway::sendToGroup($to, json_encode($new_message));

@@ -373,12 +373,54 @@ namespace {
             ];
             // Field 'dup' exists in the hash, so the handler's HSETNX must lose.
             \SharedState::hSet(\Events::PTYS_REGISTRY_KEY, 'dup', $existing);
+            // REVIEW-FIX: the existing pty must be represented as GENUINELY LIVE,
+            // or this test no longer exercises what it claims. The registry entry
+            // alone is not enough now: pty.open reclaims an entry whose host AND
+            // owning admin are both offline, because dc:state:ptys has no TTL and is
+            // cleared only by pty.close, so a dropped session used to block its
+            // pty_id forever. Mark the recorded host online so this remains a
+            // collision with a live pty — the case the guard exists for.
+            $this->online('vps777');
 
             $this->dispatch('pty.open', ['pty_id' => 'dup', 'host' => 1234, 'command' => 'whoami']);
 
             $this->assertErrorReply('bad_request');
             $this->assertCount(0, $this->sentToUid(), 'collision must NOT relay a pty.open to the host');
             $this->assertSame($existing, $this->ptys()['dup'], 'existing pty entry must be untouched');
+        }
+
+        /**
+         * REVIEW-FIX (ghost ptys): an entry whose host and owning admin are BOTH
+         * offline is a corpse, not an in-flight session, and must not block its
+         * pty_id forever.
+         *
+         * dc:state:ptys carries no TTL and is removed only by pty.close. Under
+         * GlobalData the whole registry died with the store on every restart, so
+         * this self-healed; in Redis it persists, so an admin or host dropping
+         * mid-session (or a hard-killed hub) permanently poisoned that pty_id with
+         * no recovery short of editing Redis by hand.
+         */
+        public function testPtyOpenReclaimsAnOrphanedPtyIdWhoseSessionsAreGone(): void
+        {
+            $this->flagAOn();
+            $this->asAdmin('admin-new');
+            $this->online('vps1234');
+
+            // Left behind by a session that never got to run pty.close.
+            \SharedState::hSet(\Events::PTYS_REGISTRY_KEY, 'dup', [
+                'pty_id' => 'dup', 'host' => 'vps777', 'for' => 'admin-original',
+                'scope' => 'command', 'command' => 'sleep 999',
+                'cols' => 80, 'rows' => 24, 'started' => 111
+            ]);
+            // Deliberately do NOT mark vps777 / admin-original online.
+
+            $this->dispatch('pty.open', ['pty_id' => 'dup', 'host' => 1234, 'command' => 'whoami']);
+
+            $reclaimed = $this->ptys()['dup'];
+            $this->assertSame('vps1234', $reclaimed['host'], 'the orphaned pty_id is reclaimed by the new open');
+            $this->assertSame('admin-new', $reclaimed['for']);
+            $this->assertSame('whoami', $reclaimed['command']);
+            $this->assertCount(1, $this->sentToUid(), 'the reclaimed open is relayed to the host');
         }
 
         public function testPtyOpenHostOfflineNotOnline(): void

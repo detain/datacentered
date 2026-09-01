@@ -55,16 +55,16 @@ function async_hyperv_get_list_server($service_master, $token)
 {
     $lockName = 'vps_host_'.$service_master['vps_id'];
     // Debug sibling of the lock: pure observability (op currently running); each set() below
-    // passes TTL 900 with the lock family — overwritten every cycle, the TTL only bounds orphans.
-    $requestKey = 'dc:lock:vps_host_'.$service_master['vps_id'].':request';
+    // passes the lock family's TTL — overwritten every cycle, the TTL only bounds orphans.
+    $requestKey = SharedState::requestKey('vps_host_'.$service_master['vps_id']);
     // The finally below is the ONLY unlock site. It runs on every exit path: normal
     // completion, the SoapFault early return, either renew-abort early return, and —
     // the gap this closes — an \Error/\TypeError escaping vps_queue_handler, which
     // catch(\Exception) cannot catch; without the finally that lock would sit held
-    // for its full 900s TTL. The unlock is token-checked, so after a failed renew
+    // for its full TTL. The unlock is token-checked, so after a failed renew
     // (lock expired or taken) it is a safe no-op, and while still held it releases.
     try {
-        SharedState::set($requestKey, 'get_list__soap_call', 900);
+        SharedState::set($requestKey, 'get_list__soap_call', SharedState::VPS_HOST_LOCK_TTL);
         $url = "https://{$service_master['vps_ip']}/HyperVService/HyperVService.asmx?WSDL";
         $streamContext = stream_context_create([
             'ssl' => [
@@ -89,14 +89,15 @@ function async_hyperv_get_list_server($service_master, $token)
             return;
         }
         $statStart = microtime(true);
-        SharedState::set($requestKey, 'get_vm_list', 900);
+        SharedState::set($requestKey, 'get_vm_list', SharedState::VPS_HOST_LOCK_TTL);
         // Renew before the blocking GetVMList round-trip so the drain lock outlives a
         // slow host instead of expiring mid-call (the GlobalData lock had no TTL at all).
-        // 900s matches the acquire TTL: HyperV GetVMList can take 10+ minutes, the lock
+        // Matches the acquire TTL (VPS_HOST_LOCK_TTL, > default_socket_timeout):
+        // HyperV GetVMList can take 10+ minutes, the lock
         // must never expire before the call it guards. A false renew means ownership is
         // gone (expired or taken) — abort before starting the op; the token-checked
         // unlock at the end of this function no-ops on a lost lock, so nothing to clean.
-        if (!SharedState::renew($lockName, $token, 900)) {
+        if (!SharedState::renew($lockName, $token, SharedState::VPS_HOST_LOCK_TTL)) {
             Worker::safeEcho($service_master['vps_name'].' lost lock before GetVMList — skipping this host this cycle'.PHP_EOL);
             return;
         }
@@ -114,11 +115,11 @@ function async_hyperv_get_list_server($service_master, $token)
                 } else {
                     $result->VMList->VirtualMachineSummary = [];
                 }
-                SharedState::set($requestKey, 'server_list', 900);
+                SharedState::set($requestKey, 'server_list', SharedState::VPS_HOST_LOCK_TTL);
                 // Same discipline as the GetVMList renew: never run the server_list
                 // handler after losing the host lock — abort; the finally-unlock is
                 // token-checked and would no-op on a lost lock anyway.
-                if (!SharedState::renew($lockName, $token, 900)) {
+                if (!SharedState::renew($lockName, $token, SharedState::VPS_HOST_LOCK_TTL)) {
                     Worker::safeEcho($service_master['vps_name'].' lost lock before server_list — skipping this host this cycle'.PHP_EOL);
                     return;
                 }
@@ -127,7 +128,7 @@ function async_hyperv_get_list_server($service_master, $token)
             } else {
                 async_hyperv_report_metric('GetVMList', $statStart, false, 100, 'Missing expected output fields', $service_master['vps_id']);
                 echo $service_master['vps_name'].' ERROR: Command Completed but missing expected fields! Output: '.json_encode($result).PHP_EOL;
-                SharedState::set($requestKey, 'cleanup_resources', 900);
+                SharedState::set($requestKey, 'cleanup_resources', SharedState::VPS_HOST_LOCK_TTL);
                 // KNOWN dead/buggy branch (pre-existing, preserved verbatim — do NOT "fix"):
                 // the old `$global->$var < 3` read the lock var, which cas($var, 0, time()) had
                 // just set to a time() timestamp; a timestamp is never < 3, so this
@@ -168,16 +169,16 @@ function async_hyperv_get_list($args)
     foreach ($rows as $service_id => $service_master) {
         $lockName = 'vps_host_'.$service_id;
         // Debug sibling of the lock: pure observability (op currently running); set() passes
-        // TTL 900 with the lock family — the TTL only bounds orphans from decommissioned hosts.
-        $requestKey = 'dc:lock:vps_host_'.$service_id.':request';
-        // SET NX + TTL 900 replaces cas($var, 0, time()); absence == free so the
+        // the lock family's TTL — which only bounds orphans from decommissioned hosts.
+        $requestKey = SharedState::requestKey('vps_host_'.$service_id);
+        // SET NX + TTL VPS_HOST_LOCK_TTL replaces cas($var, 0, time()); absence == free so the
         // isset-seed is gone. A null token means the host is already being polled
         // (or Redis is unavailable) — the same "skip this host" outcome as before.
-        // The 900s TTL mirrors the old GlobalData 900s stale-reap window (never
+        // The TTL exceeds the old GlobalData 900s stale-reap window (never
         // shorter per ops rule): GetVMList below can run 10+ minutes on one host.
-        $token = SharedState::lock($lockName, 900);
+        $token = SharedState::lock($lockName, SharedState::VPS_HOST_LOCK_TTL);
         if ($token !== null) {
-            SharedState::set($requestKey, 'none', 900);
+            SharedState::set($requestKey, 'none', SharedState::VPS_HOST_LOCK_TTL);
             // async_hyperv_get_list_server owns releasing this lock (unlock via token).
             async_hyperv_get_list_server($service_master, $token);
         }

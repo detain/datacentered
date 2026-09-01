@@ -119,6 +119,29 @@ final class SharedState
     public const REPROBE_INTERVAL = 30;
 
     /**
+     * TTL (seconds) for the `vps_host_<id>` lock family — the per-host mutex
+     * that serializes commands against one VPS host. Events and the Tasks all
+     * contend on the same key, so the value lives here, in the one file both
+     * sides require_once.
+     *
+     * REVIEW-FIX: was a hardcoded 900 at every call site. 900s satisfied the
+     * documented ops rule ("match or exceed the old GlobalData reap window")
+     * but NOT the physically necessary one: the TTL must exceed the longest
+     * single blocking call it guards. HyperV `GetVMList` runs under
+     * default_socket_timeout = 1200s (Tasks/async_hyperv_get_list.php,
+     * Tasks/hyperv_cleanupresources.php, Applications/Chat/start_task.php), and
+     * renew() can only fire BETWEEN blocking calls — never during one — so a
+     * slow host lost its lock ~300s before its SOAP call even gave up, and the
+     * 30s hyperv_queue_timer then issued a second command to a host still
+     * mid-GetVMList. 1300 > 1200 keeps the lock alive across the worst-case
+     * single call with 100s of headroom.
+     *
+     * INVARIANT: keep this strictly greater than default_socket_timeout. If
+     * that ini value is ever raised, raise this with it.
+     */
+    public const VPS_HOST_LOCK_TTL = 1300;
+
+    /**
      * Consecutive failed re-probe PINGs tolerated from the shared $redis
      * handle before the facade stops preferring it for the rest of the
      * process (never closed, replaced, or re-PINGed — just skipped) and
@@ -129,6 +152,9 @@ final class SharedState
      * non-persistent handle can never recover.
      */
     public const SHARED_HANDLE_GRACE_PROBES = 2;
+
+    /** @var bool has the missing-ext-redis deployment error been announced in this process? */
+    private static $loggedMissingExtension = false;
 
     /** Every key written through this facade must start with one of these. */
     private static $prefixes = [
@@ -208,7 +234,7 @@ final class SharedState
     // Client lifecycle
     // -----------------------------------------------------------------------
     /**
-     * Resolve the Redis client: the process-wide $global['redis'] while it is
+     * Resolve the Redis client: the process-wide $redis global while it is
      * a live \Redis AND still in grace (never replaced, never closed —
      * MyAdmin shares it), else the facade's own lazily-connected fallback,
      * else a test-injected double.
@@ -248,10 +274,11 @@ final class SharedState
                 if (self::sharedHandleInGrace()) {
                     $reason = 'shared $redis handle answered PING with false';
                     try {
-                        if ($redis->ping() !== false) {
+                        if (self::pingHealthy($redis)) {
                             // The shared handle re-handshook: resume it as-is
                             // and clear the streak — preference is restored.
                             self::$sharedPingFailures = 0;
+                            self::rearmOutageLogs();
 
                             return $redis;
                         }
@@ -337,13 +364,35 @@ final class SharedState
             return;
         }
         try {
-            if (self::$client->ping() !== false) {
+            if (self::pingHealthy(self::$client)) {
                 return;
             }
         } catch (\Throwable $e) {
             // Dead like the throw says — drop it below.
         }
         self::$client = null;
+    }
+
+    /**
+     * Does this client answer PING like a healthy Redis connection?
+     *
+     * REVIEW-FIX: the probes used to accept `ping() !== false`, which treats
+     * ANY truthy reply as healthy — including the client object itself. A
+     * handle stranded in pipeline/multi mode returns $this from every command,
+     * so `!== false` re-blessed a handle on which no command actually executes,
+     * and the documented 30s self-heal could never fire. Require a real PONG:
+     * phpredis returns bool true on current builds and the '+PONG' / 'PONG'
+     * string on older ones; nothing else qualifies.
+     *
+     * @param object $client
+     * @return bool
+     */
+    private static function pingHealthy($client): bool
+    {
+        $reply = $client->ping();
+
+        return $reply === true
+            || (is_string($reply) && ($reply === '+PONG' || $reply === 'PONG'));
     }
 
     /**
@@ -377,12 +426,15 @@ final class SharedState
                 }
             }
             // No auth() — matches the existing init idiom (trusted LAN).
-            if ($candidate->ping() === false) {
+            if (!self::pingHealthy($candidate)) {
                 self::markTransportDead('connect', ($fromFactory ? 'factory' : REDIS_HOST.':'.REDIS_PORT).' client answered PING with false');
 
                 return null;
             }
             self::$client = $candidate;
+            // A fresh PING-verified handle IS a recovery — re-arm the outage
+            // memos here too, not only on the shared-handle path.
+            self::rearmOutageLogs();
 
             return self::$client;
         } catch (\Throwable $e) {
@@ -412,7 +464,17 @@ final class SharedState
      */
     public static function transportFailed(): bool
     {
-        return self::$deadUntil !== 0;
+        /*
+         * REVIEW-FIX: this returned `self::$deadUntil !== 0`, which is only
+         * cleared inside client(). A caller that reads this WITHOUT first
+         * performing a facade operation therefore got true forever — long after
+         * the window elapsed and Redis came back — contradicting the class
+         * contract that death is timed, not sticky. Every current caller happens
+         * to run an operation first (FeatureFlags::readFlag, processing_queue_timer,
+         * boardctl_runner), so it was latent; make the accessor honest so the next
+         * caller does not inherit a trap.
+         */
+        return self::$deadUntil !== 0 && self::now() < self::$deadUntil;
     }
 
     /**
@@ -482,6 +544,7 @@ final class SharedState
         self::$deadUntil = 0;
         self::$loggedUnavailable = false;
         self::$loggedTransport = false;
+        self::$loggedMissingExtension = false;
         self::$sharedPingFailures = 0;
         self::$testNow = null;
         self::$connectFactory = null;
@@ -499,7 +562,7 @@ final class SharedState
      */
     public static function get(string $key)
     {
-        self::guardKey($key);
+        self::guardKey($key, true);
 
         return self::attempt('get', static function ($client) use ($key) {
             $raw = $client->get($key);
@@ -522,7 +585,7 @@ final class SharedState
     public static function set(string $key, $value, int $ttl = 0): bool
     {
         self::guardKey($key);
-        $json = json_encode($value);
+        $json = self::encode($value, 'set');
         if ($json === false) {
             return false;
         }
@@ -550,7 +613,7 @@ final class SharedState
     public static function add(string $key, $value, int $ttl = 0): bool
     {
         self::guardKey($key);
-        $json = json_encode($value);
+        $json = self::encode($value, 'add');
         if ($json === false) {
             return false;
         }
@@ -574,7 +637,11 @@ final class SharedState
     public static function del(string ...$keys): void
     {
         foreach ($keys as $key) {
-            self::guardKey($key);
+            // del() is the ONE primitive allowed into dc:lock:, because
+            // stale/admin lock cleanup is a documented path (cold-start pre-clean,
+            // boardctl_startup_reap). Every other primitive is refused — see
+            // guardKey().
+            self::guardKey($key, true);
         }
         if ($keys === []) {
             return;
@@ -590,9 +657,29 @@ final class SharedState
      * @param string $key
      * @return bool false when absent OR Redis is unavailable
      */
-    public static function exists(string $key): bool
+    /**
+     * Refresh a key's TTL without rewriting its value (Redis EXPIRE).
+     *
+     * @param string $key
+     * @param int    $ttlSeconds must be positive; a non-positive TTL is ignored
+     *                           rather than deleting the key
+     * @return bool true when the TTL was applied
+     */
+    public static function expire(string $key, int $ttlSeconds): bool
     {
         self::guardKey($key);
+        if ($ttlSeconds < 1) {
+            return false;
+        }
+
+        return (bool) self::attempt('expire', static function ($client) use ($key, $ttlSeconds) {
+            return $client->expire($key, $ttlSeconds);
+        }, false);
+    }
+
+    public static function exists(string $key): bool
+    {
+        self::guardKey($key, true);
 
         return self::attempt('exists', static fn ($client) => (bool) $client->exists($key), false);
     }
@@ -609,6 +696,25 @@ final class SharedState
      * @param int    $ttlSeconds mandatory positive TTL — no unbounded locks
      * @return string|null the ownership token, or null when held/unavailable
      */
+    /**
+     * Key for the human-readable "what is this lock doing" sibling of a lock.
+     *
+     * REVIEW-FIX: these lived at `dc:lock:<name>:request`, inside the one
+     * namespace whose type and TTL invariants the lock protocol depends on. They
+     * are plain observability strings written with set(), not tokens, so any
+     * lock-inventory or admin sweep over `dc:lock:*` counted them as held locks —
+     * and it was one dropped `:request` suffix away from a set() clobbering a live
+     * token. They belong in `dc:state:`, and guardKey() now enforces that by
+     * refusing `dc:lock:` for every primitive except del().
+     *
+     * @param string $lockName the lock this describes (unprefixed)
+     * @return string
+     */
+    public static function requestKey(string $lockName): string
+    {
+        return self::PREFIX_STATE.$lockName.':request';
+    }
+
     public static function lock(string $name, int $ttlSeconds)
     {
         self::guardLockArgs($name, $ttlSeconds);
@@ -680,7 +786,7 @@ final class SharedState
     public static function hSet(string $key, string $field, $value): void
     {
         self::guardKey($key);
-        $json = json_encode($value);
+        $json = self::encode($value, 'hSet');
         if ($json === false) {
             return;
         }
@@ -700,7 +806,7 @@ final class SharedState
     public static function hSetNx(string $key, string $field, $value): bool
     {
         self::guardKey($key);
-        $json = json_encode($value);
+        $json = self::encode($value, 'hSetNx');
         if ($json === false) {
             return false;
         }
@@ -715,7 +821,7 @@ final class SharedState
      */
     public static function hGet(string $key, string $field)
     {
-        self::guardKey($key);
+        self::guardKey($key, true);
 
         return self::attempt('hGet', static function ($client) use ($key, $field) {
             $raw = $client->hGet($key, $field);
@@ -733,7 +839,7 @@ final class SharedState
      */
     public static function hGetAll(string $key): array
     {
-        self::guardKey($key);
+        self::guardKey($key, true);
 
         return self::attempt('hGetAll', static function ($client) use ($key) {
             $raw = $client->hGetAll($key);
@@ -802,22 +908,58 @@ final class SharedState
      * @param int    $max   retained element count (newest kept)
      * @return void
      */
-    public static function rPushLtrim(string $listKey, $value, int $max): void
+    public static function rPushLtrim(string $listKey, $value, int $max, int $ttlSeconds = 0): void
     {
         self::guardKey($listKey);
         if ($max < 1) {
             throw new \InvalidArgumentException("SharedState::rPushLtrim requires max >= 1, got {$max}");
         }
-        $json = json_encode($value);
+        $json = self::encode($value, 'rPushLtrim');
         if ($json === false) {
             return;
         }
-        self::attempt('rPushLtrim', static function ($client) use ($listKey, $json, $max) {
+        self::attempt('rPushLtrim', static function ($client) use ($listKey, $json, $max, $ttlSeconds) {
             $pipelineMode = defined('\Redis::PIPELINE') ? \Redis::PIPELINE : 2;
             $client->multi($pipelineMode);
-            $client->rPush($listKey, $json);
-            $client->lTrim($listKey, -$max, -1);
-            $client->exec();
+            /*
+             * REVIEW-FIX: this is the facade's ONLY pipeline, and $client is
+             * usually the process-wide $redis global that the whole app shares.
+             * If anything between multi() and exec() throws, attempt() swallows
+             * it and the handle is left in PIPELINE mode — in which phpredis
+             * returns $this from EVERY subsequent command. That state is quietly
+             * catastrophic: set() reports true for writes that never happened,
+             * exists() reports true for absent keys, and the re-probe's PING
+             * returns the object rather than false, so the handle is re-blessed
+             * as healthy forever (restart-only recovery).
+             *
+             * In practice PIPELINE buffers client-side, so rPush/lTrim do not
+             * touch the socket and cannot throw, and a killed connection makes
+             * exec() itself throw AFTER phpredis has already left pipeline mode
+             * — I could not reach the stuck state on phpredis 5.3.7. This
+             * finally is defence-in-depth for other/older builds: discard()
+             * leaves the handle usable no matter how we exit.
+             */
+            try {
+                $client->rPush($listKey, $json);
+                $client->lTrim($listKey, -$max, -1);
+                if ($ttlSeconds > 0) {
+                    // Refreshed on every append, so the list lives $ttlSeconds
+                    // past the LAST message rather than forever. Without this the
+                    // only reclamation was a read-time sweep that a deployment
+                    // with no channel.list traffic never triggers.
+                    $client->expire($listKey, $ttlSeconds);
+                }
+                $client->exec();
+            } catch (\Throwable $e) {
+                try {
+                    $client->discard();
+                } catch (\Throwable $ignored) {
+                    // Already out of pipeline mode (or the handle is gone) —
+                    // either way the original throw is what matters.
+                }
+
+                throw $e;
+            }
 
             return null;
         }, null);
@@ -831,7 +973,7 @@ final class SharedState
      */
     public static function lRange(string $key, int $start, int $stop): array
     {
-        self::guardKey($key);
+        self::guardKey($key, true);
 
         return self::attempt('lRange', static fn ($client) => self::decodeList($client->lRange($key, $start, $stop)), []);
     }
@@ -848,7 +990,7 @@ final class SharedState
         return self::attempt('sAdd', static function ($client) use ($key, $members) {
             $added = 0;
             foreach ($members as $member) {
-                $json = json_encode($member);
+                $json = self::encode($member, 'sAdd');
                 if ($json === false) {
                     continue;
                 }
@@ -871,7 +1013,7 @@ final class SharedState
         return self::attempt('sRem', static function ($client) use ($key, $members) {
             $removed = 0;
             foreach ($members as $member) {
-                $json = json_encode($member);
+                $json = self::encode($member, 'sRem');
                 if ($json === false) {
                     continue;
                 }
@@ -888,7 +1030,7 @@ final class SharedState
      */
     public static function sMembers(string $key): array
     {
-        self::guardKey($key);
+        self::guardKey($key, true);
 
         return self::attempt('sMembers', static fn ($client) => self::decodeList($client->sMembers($key)), []);
     }
@@ -902,7 +1044,7 @@ final class SharedState
     public static function zAdd(string $key, $score, $value): bool
     {
         self::guardKey($key);
-        $json = json_encode($value);
+        $json = self::encode($value, 'zAdd');
         if ($json === false) {
             return false;
         }
@@ -940,7 +1082,7 @@ final class SharedState
      */
     public static function zRange(string $key, int $start, int $stop): array
     {
-        self::guardKey($key);
+        self::guardKey($key, true);
 
         return self::attempt('zRange', static fn ($client) => self::decodeList($client->zRange($key, $start, $stop)), []);
     }
@@ -959,7 +1101,7 @@ final class SharedState
      */
     public static function zRangeByScore(string $key, $min, $max): array
     {
-        self::guardKey($key);
+        self::guardKey($key, true);
 
         return self::attempt('zRangeByScore', static fn ($client) => self::decodeList($client->zRangeByScore($key, $min, $max)), []);
     }
@@ -984,7 +1126,7 @@ final class SharedState
         return self::attempt('zRem', static function ($client) use ($key, $members) {
             $removed = 0;
             foreach ($members as $member) {
-                $json = json_encode($member);
+                $json = self::encode($member, 'zRem');
                 if ($json === false) {
                     continue;
                 }
@@ -1073,8 +1215,64 @@ final class SharedState
      * @return void
      * @throws \InvalidArgumentException
      */
-    private static function guardKey(string $key): void
+    /**
+     * JSON-encode a value for storage, loudly.
+     *
+     * REVIEW-FIX: every call site did a bare `json_encode()` and silently
+     * returned/skipped on false. GlobalData stored PHP `serialize()` over its own
+     * socket protocol, which is BYTE-TRANSPARENT — arbitrary binary and latin1
+     * round-tripped fine. JSON is strict UTF-8, so this migration narrowed what
+     * can be stored, and the failure was invisible: a v1 chat body carrying a lone
+     * 0x80 byte (a legacy-encoded paste, or any non-UTF-8 client) was dropped by
+     * rPushLtrim() while zAdd() still marked the channel active, so history and
+     * the live tail silently lost messages with nothing logged anywhere.
+     *
+     * JSON_INVALID_UTF8_SUBSTITUTE keeps the write (replacing the offending bytes)
+     * instead of losing it, and anything still unencodable is logged rather than
+     * dropped in silence.
+     *
+     * @param mixed  $value
+     * @param string $operation for the log line
+     * @return string|false
+     */
+    private static function encode($value, string $operation)
     {
+        $json = json_encode($value, JSON_INVALID_UTF8_SUBSTITUTE);
+        if ($json === false) {
+            self::log("SharedState::{$operation}: value could not be JSON-encoded (".json_last_error_msg().") — the write was DROPPED\n");
+
+            return false;
+        }
+
+        return $json;
+    }
+
+    private static function guardKey(string $key, bool $allowLockNamespace = false): void
+    {
+        /*
+         * REVIEW-FIX: the guard was prefix-only and PREFIX_LOCK was in the allowed
+         * set, so set()/hSet()/rPushLtrim()/sAdd()/zAdd() all accepted `dc:lock:*`
+         * — the one namespace the lock protocol's correctness depends on.
+         *   set('dc:lock:processing_queue', 1)  overwrites a live token, after
+         *     which the real owner's renew()/unlock() fail and the lock survives to
+         *     its full TTL.
+         *   hSet('dc:lock:vps_host_5', …)       converts the key to a HASH with NO
+         *     TTL, so SET NX can never succeed on it again — that lock family is
+         *     starved PERMANENTLY, with no expiry to heal it.
+         * Refused for every WRITE primitive. Reads (get/exists/hGet/hGetAll/
+         * lRange/sMembers/zRange/zRangeByScore) and del() are allowed: reads
+         * cannot corrupt a token or retype a key and are genuinely useful for
+         * observability, and stale/admin lock cleanup via del() is a documented
+         * path (cold-start pre-clean, boardctl_startup_reap). The lock primitives
+         * build their own keys and never come through here.
+         */
+        if (!$allowLockNamespace && strpos($key, self::PREFIX_LOCK) === 0) {
+            throw new \InvalidArgumentException(
+                "SharedState key '{$key}' is in the reserved lock namespace ("
+                .self::PREFIX_LOCK.'); use lock()/renew()/unlock() for locks, '
+                .'SharedState::requestKey() for a lock\'s observability sibling'
+            );
+        }
         foreach (self::$prefixes as $prefix) {
             if (strpos($key, $prefix) === 0) {
                 return;
@@ -1109,11 +1307,50 @@ final class SharedState
      */
     private static function redisConfigured(): bool
     {
-        return defined('USE_REDIS')
+        $configured = defined('USE_REDIS')
             && USE_REDIS === true
             && defined('REDIS_HOST')
-            && defined('REDIS_PORT')
-            && class_exists('\Redis');
+            && defined('REDIS_PORT');
+
+        if ($configured && !class_exists('\Redis')) {
+            /*
+             * REVIEW-FIX: this is a DEPLOYMENT error, not a runtime state, and it
+             * used to be indistinguishable from "Redis intentionally disabled" —
+             * the facade just returned null forever and every lock, registry,
+             * flag and presence read silently degraded to its fail-safe. A hub
+             * running with no cross-process coordination at all, quietly, is far
+             * worse than one that says so.
+             *
+             * composer.json now declares ext-redis in require (so `composer install`
+             * refuses a host without it), but that only guards INSTALL time — an
+             * extension disabled after the fact, or a --ignore-platform-reqs
+             * install, still reaches this code path. So the runtime check stays,
+             * and it is loud.
+             */
+            self::logConfigErrorOnce();
+
+            return false;
+        }
+
+        return $configured;
+    }
+
+    /**
+     * Announce a missing phpredis extension once per process.
+     *
+     * @return void
+     */
+    private static function logConfigErrorOnce(): void
+    {
+        if (self::$loggedMissingExtension) {
+            return;
+        }
+        self::$loggedMissingExtension = true;
+        self::log(
+            "SharedState: USE_REDIS is on but the phpredis extension (ext-redis) is NOT loaded — "
+            ."ALL cross-process state (locks, registries, feature flags, presence) is running fail-safe/degraded. "
+            ."Install php-redis on this host.\n"
+        );
     }
 
     /**
@@ -1161,6 +1398,30 @@ final class SharedState
      * @param string $reason
      * @return void
      */
+    /**
+     * Re-arm the once-per-outage log memos after a successful recovery.
+     *
+     * REVIEW-FIX: $loggedUnavailable / $loggedTransport were only ever cleared by
+     * reset() and setClient(), both of which are test-only seams. In production a
+     * BusinessWorker runs for days or weeks, so the FIRST transient blip consumed
+     * the memo and every later outage — including a multi-hour one, during which
+     * every lock fails, all v1 traffic blackholes and payment nudges no-op —
+     * produced ZERO log output. The docblocks described a per-CYCLE line, which
+     * was unreachable.
+     *
+     * Clearing the memos when the transport verifiably recovers restores the
+     * documented intent: one line per outage, not one line per process, with no
+     * flooding while an outage persists (the memo still suppresses within a
+     * single outage).
+     *
+     * @return void
+     */
+    private static function rearmOutageLogs(): void
+    {
+        self::$loggedUnavailable = false;
+        self::$loggedTransport = false;
+    }
+
     private static function logTransportOnce(string $operation, string $reason): void
     {
         if (self::$loggedTransport) {

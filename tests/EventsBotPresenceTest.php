@@ -461,10 +461,20 @@ namespace {
             $this->assertNotNull($this->ownerToken(), 'ownership transfers to the respawning worker');
             $this->assertSame($this->ownerToken(), $this->rawLockValue(), 'the free lock is ours now');
             $this->assertCount(1, $this->botMoveTimers(), 'a fresh move timer is armed here');
-            $this->assertNotSame(
-                'Ghost',
-                SharedState::get($this->stateKey())['name'],
-                'the frozen bot is replaced, not adopted'
+            // REVIEW-FIX (decision D): the takeover now ADOPTS the surviving state
+            // instead of replacing it. The bot's clientId is always
+            // 'bot_<location>', so a "replace" renamed AND teleported the very same
+            // avatar on every handoff; frontends saw one continuous bot suddenly
+            // become someone else somewhere else. What a takeover must guarantee is
+            // that the bot is owned and MOVING again, which the assertions above
+            // cover; identity continuity is the point of the ghost state outliving
+            // the lock.
+            $adoptedState = SharedState::get($this->stateKey());
+            $this->assertSame('Ghost', $adoptedState['name'], 'the frozen bot is adopted, keeping its identity');
+            $this->assertGreaterThanOrEqual(
+                time() - 5,
+                (int) $adoptedState['ts'],
+                'ts is re-stamped on adoption so the adopted bot is not itself seen as stale'
             );
         }
 
@@ -602,11 +612,12 @@ namespace {
 
             $this->assertNotNull($this->ownerToken(), 'a lapsed lock means the owning instance is gone');
             $this->assertSame($this->ownerToken(), $this->rawLockValue(), 'we acquire the freed lock');
-            $this->assertNotSame(
-                'Abandoned',
-                SharedState::get($this->stateKey())['name'],
-                'the frozen bot is replaced, not adopted'
-            );
+            // REVIEW-FIX (decision D): adopted, not replaced — see
+            // testSpawnBotTakesOverWhenTheOwnerLockHasLapsed for the reasoning.
+            $adoptedState = SharedState::get($this->stateKey());
+            $this->assertSame('Abandoned', $adoptedState['name'], 'the orphaned bot keeps its identity across the takeover');
+            $this->assertSame(5.0, (float) $adoptedState['x'], 'and its last known position');
+            $this->assertSame(6.0, (float) $adoptedState['z']);
             $this->assertCount(1, $this->botMoveTimers());
         }
 
@@ -1293,7 +1304,13 @@ namespace {
             // ownership mechanism now; the state TTL deliberately EXCEEDS the lock
             // TTL so a crashed owner's ghost state outlives its lock — the window a
             // takeover relies on (proved in testSpawnBotTakesOverWhenTheOwnerLockHasLapsed).
-            $this->assertSame(10, \Events::BOT_OWNER_LOCK_TTL, 'bot owner lock TTL is the enforced heartbeat that replaced the retired staleness constant');
+            // REVIEW-FIX (decision D): raised 10 -> 30. The GlobalData-era owner
+            // check used /proc/<pid> liveness, so a live-but-stalled same-host owner
+            // was never robbed; the pure-TTL rewrite lost that, and these workers do
+            // synchronous MySQL/SOAP work where a >10s stall is reachable. A steal
+            // caused by a stall respawns the bot with a new name+position, so the
+            // window is widened rather than left at ~20 ticks.
+            $this->assertSame(30, \Events::BOT_OWNER_LOCK_TTL, 'bot owner lock TTL is the enforced heartbeat that replaced the retired staleness constant');
             $this->assertGreaterThan(
                 \Events::BOT_OWNER_LOCK_TTL,
                 \Events::BOT_STATE_TTL,

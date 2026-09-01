@@ -308,6 +308,51 @@ namespace {
         }
 
         /**
+         * REVIEW-FIX (decision C): a DEAD TRANSPORT is not the same as a flag
+         * that is genuinely off, and the client must be able to tell.
+         *
+         * The two tests around this one cover the not-configured state, where
+         * SharedState::client() is null WITHOUT a dead window — a deliberate
+         * deployment state that stays inert. This covers the other case: Redis
+         * was there and its commands started throwing. The facade then marks the
+         * transport dead for REPROBE_INTERVAL and every flag read fail-safes OFF,
+         * so v1 frames used to be dropped in total silence for the whole window
+         * and clients waiting on `re` hung. Now they get `unavailable` and can
+         * retry.
+         */
+        public function testV1FrameGetsUnavailableWhenTheTransportIsDeadRatherThanSilence(): void
+        {
+            // A handle that is present but whose commands throw — the live-but-dead
+            // case, distinct from "no client configured".
+            \SharedState::setClient(new class {
+                public function ping()
+                {
+                    throw new \RedisException('simulated: server went away');
+                }
+
+                public function get($key)
+                {
+                    throw new \RedisException('simulated: server went away');
+                }
+            });
+
+            \Events::dispatchV1(9, [
+                'v' => 1, 'id' => 'id-dead', 'op' => 'ping', 'ts' => 1, 'data' => []
+            ]);
+
+            $this->assertTrue(
+                \SharedState::transportFailed(),
+                'precondition: the throwing handle marked the transport dead'
+            );
+            $sent = $this->sent();
+            $this->assertCount(1, $sent, 'a dead transport must not be answered with silence');
+            $reply = json_decode($sent[0]['message'], true);
+            $this->assertSame('id-dead', $reply['re'], 'the error correlates to the request id');
+            $this->assertFalse($reply['ok']);
+            $this->assertSame('unavailable', $reply['error']['code']);
+        }
+
+        /**
          * Even a non-ping op is fully inert when Redis is unavailable — the flag
          * gate short-circuits before any op handling, so nothing (not even a
          * not_implemented error) is emitted.

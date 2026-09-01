@@ -40,7 +40,20 @@ $historyId = isset($opts['history-id']) ? intval($opts['history-id']) : 0;
 $ownerId   = isset($opts['owner']) ? intval($opts['owner']) : 0;
 $lockVar   = isset($opts['lock']) ? (string)$opts['lock'] : '';
 $assetId   = isset($opts['asset']) ? intval($opts['asset']) : 0;
-$lockToken = isset($opts['token']) ? (string)$opts['token'] : '';
+/*
+ * REVIEW-FIX: prefer the token from the environment. It used to arrive as
+ * --token= on the command line, readable by any local account via
+ * /proc/<pid>/cmdline for the whole (up to 6 hour) life of the job;
+ * /proc/<pid>/environ is owner-only. --token is still accepted so an in-flight
+ * job spawned by the previous code still releases its lock correctly.
+ */
+$lockToken = (string) (getenv('BOARDCTL_LOCK_TOKEN') ?: '');
+if ($lockToken === '' && isset($opts['token'])) {
+    $lockToken = (string)$opts['token'];
+}
+// Do not leave it readable to anything this process later spawns.
+putenv('BOARDCTL_LOCK_TOKEN');
+unset($_ENV['BOARDCTL_LOCK_TOKEN'], $_SERVER['BOARDCTL_LOCK_TOKEN']);
 if ($historyId <= 0) {
     fwrite(STDERR, "boardctl_runner: missing/invalid --history-id\n");
     exit(2);
@@ -73,16 +86,38 @@ $pidFile = $logDir.'/'.$historyId.'.pid';
 // Resolve the SharedState lock name (the producer's bare name, before the
 // dc:lock: prefix it applies). Prefer the explicit --asset; fall back to the
 // legacy --lock var, which already carries the 'boardctl_asset_' prefix, so an
-// old invocation still frees the right key. An empty token means force-release.
+// old invocation still frees the right key.
 $lockName = '';
 if ($assetId > 0) {
     $lockName = 'boardctl_asset_'.$assetId;
 } elseif ($lockVar !== '') {
     $lockName = $lockVar;
 }
-// SharedState::unlock() treats a null token as an unconditional delete and a
-// string token as owner-checked; "" must become null or it would never match.
+/*
+ * SharedState::unlock() treats a null token as an unconditional delete and a
+ * string token as owner-checked.
+ *
+ * REVIEW-FIX: this used to map an EMPTY token to null, putting an unconditional
+ * DEL on the NORMAL completion path — the one thing the project rule says never
+ * to do. The failure it enables is concrete: if runner A's own 22200s lock
+ * lapses, the timer legitimately re-acquires and spawns runner B; when A then
+ * finishes it blind-DELs B's live lock and a third job can start on the same
+ * asset — exactly the duplicate-concurrent-job the token was introduced to
+ * prevent. Tasks/boardctl_task.php already defaults the token to '', so any
+ * dispatcher that omitted it got the blind delete.
+ *
+ * A missing token now means "release nothing" and say so: the producer's TTL is
+ * the correct fallback, and it is bounded. Only a genuine legacy invocation
+ * (--lock without --asset, i.e. a pre-token runner still in flight) keeps the
+ * force-release, because there is no token to check and its lock would otherwise
+ * be held for six hours.
+ */
+$legacyInvocation = $assetId <= 0 && $lockVar !== '';
 $unlockToken = $lockToken !== '' ? $lockToken : null;
+if ($unlockToken === null && !$legacyInvocation) {
+    fwrite(STDERR, "boardctl_runner: no ownership token supplied; the asset lock will be left to its TTL rather than force-deleted\n");
+    $lockName = '';
+}
 
 /**
  * Is the process-wide $GLOBALS['redis'] handle present and answering PING? A

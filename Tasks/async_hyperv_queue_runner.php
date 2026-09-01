@@ -24,42 +24,43 @@ function async_hyperv_queue_runner($args)
     $lockName = 'vps_host_'.$service_id;
     // Debug sibling of the lock: the op currently running. JSON value under the full
     // dc:lock: key (guard passes it), read back below when this process fails to acquire.
-    // Pure observability: every set() below passes TTL 900 with the lock family — keys are
+    // Pure observability: every set() below passes the lock family's TTL — keys are
     // overwritten each cycle, so the TTL only bounds orphans left by decommissioned hosts.
-    $requestKey = 'dc:lock:vps_host_'.$service_id.':request';
-    // SET NX + TTL 900 replaces cas($var, 0, time()). The former 900s stale-lock reaper
-    // is gone: a crashed holder's lock now simply expires on its own — and 900s keeps
+    $requestKey = SharedState::requestKey('vps_host_'.$service_id);
+    // SET NX + TTL VPS_HOST_LOCK_TTL replaces cas($var, 0, time()). The former 900s
+    // stale-lock reaper is gone: a crashed holder's lock now simply expires on its own
+    // — and the TTL (>= the old 900s window) keeps
     // that self-heal window identical to the reaper it replaced, per ops requirement:
     // HyperV GetVMList can take 10+ minutes, so the lock must never expire before the
     // operation it guards. Every handler below renews while the lock is still owned.
-    $token = SharedState::lock($lockName, 900);
+    $token = SharedState::lock($lockName, SharedState::VPS_HOST_LOCK_TTL);
     if ($token !== null) {
         try {
-            SharedState::set($requestKey, 'get_new_vps', 900);
+            SharedState::set($requestKey, 'get_new_vps', SharedState::VPS_HOST_LOCK_TTL);
             Worker::safeEcho("timer running hyperv async queue processing for {$service_id} {$service_master['vps_name']}\n");
             function_requirements('vps_queue_handler');
             if (sizeof($service_master['newvps']) > 0) {
                 // A failed renew means the lock expired or was taken — never start
                 // another HyperV op holding nothing. Return still runs the finally;
                 // the owner-checked unlock no-ops on a lost lock.
-                if (!SharedState::renew($lockName, $token, 900)) {
+                if (!SharedState::renew($lockName, $token, SharedState::VPS_HOST_LOCK_TTL)) {
                     Worker::safeEcho("timer lost lock to run hyperv async get_new_vps for {$service_master['vps_name']} — aborting remaining handlers (lock expired or taken)\n");
                     return;
                 }
                 myadmin_log('myadmin', 'info', 'Processing New VPS for '.$service_master['vps_name'], __LINE__, __FILE__, 'vps');
                 vps_queue_handler($service_master, 'get_new_vps', $service_master['newvps']);
             }
-            SharedState::set($requestKey, 'get_queue', 900);
+            SharedState::set($requestKey, 'get_queue', SharedState::VPS_HOST_LOCK_TTL);
             if (sizeof($service_master['queue']) > 0) {
-                if (!SharedState::renew($lockName, $token, 900)) {
+                if (!SharedState::renew($lockName, $token, SharedState::VPS_HOST_LOCK_TTL)) {
                     Worker::safeEcho("timer lost lock to run hyperv async get_queue for {$service_master['vps_name']} — aborting remaining handlers (lock expired or taken)\n");
                     return;
                 }
                 myadmin_log('myadmin', 'info', 'Processing VPS Queue for '.$service_master['vps_name'], __LINE__, __FILE__, 'vps');
                 vps_queue_handler($service_master, 'get_queue', $service_master['queue']);
             }
-            SharedState::set($requestKey, 'server_list', 900);
-            if (!SharedState::renew($lockName, $token, 900)) {
+            SharedState::set($requestKey, 'server_list', SharedState::VPS_HOST_LOCK_TTL);
+            if (!SharedState::renew($lockName, $token, SharedState::VPS_HOST_LOCK_TTL)) {
                 Worker::safeEcho("timer lost lock to run hyperv async server_list for {$service_master['vps_name']} — aborting remaining handlers (lock expired or taken)\n");
                 return;
             }

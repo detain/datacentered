@@ -77,10 +77,29 @@ function boardctl_task($args)
         // the new runner prefers --asset/--token via SharedState and uses --lock
         // only as a key-derivation fallback when --asset is missing or <= 0.
         . ' --lock=' . escapeshellarg($lockVar)
-        . ' --asset=' . escapeshellarg((string)$assetId)
-        . ' --token=' . escapeshellarg($lockToken);
+        . ' --asset=' . escapeshellarg((string)$assetId);
 
-    $proc = proc_open($cmd, $descriptorspec, $pipes);
+    /*
+     * REVIEW-FIX: the lock ownership token used to be passed as --token=<token>
+     * on the command line, where it is world-readable via /proc/<pid>/cmdline and
+     * `ps auxww` for the entire life of a job that can run SIX HOURS. Any local
+     * account could read a live token and release another asset's in-flight lock,
+     * which is exactly the duplicate-concurrent-job the token exists to prevent.
+     * (The pre-token code passed only --lock=<name>, a non-secret, so this was a
+     * regression introduced with the handoff.)
+     *
+     * The environment is not world-readable (/proc/<pid>/environ is 0400, owner
+     * only), so hand it over that way instead.
+     */
+    $childEnv = $_ENV ?: [];
+    foreach (['PATH', 'HOME', 'USER', 'LANG', 'TMPDIR'] as $passthru) {
+        if (!isset($childEnv[$passthru]) && ($fromServer = getenv($passthru)) !== false) {
+            $childEnv[$passthru] = $fromServer;
+        }
+    }
+    $childEnv['BOARDCTL_LOCK_TOKEN'] = $lockToken;
+
+    $proc = proc_open($cmd, $descriptorspec, $pipes, null, $childEnv);
     if ($proc === false || $proc === 0) {
         Worker::safeEcho("boardctl_task: failed to spawn runner for history_id={$historyId}\n");
         return json_encode(['ok' => false, 'error' => 'spawn failed', 'history_id' => $historyId]);

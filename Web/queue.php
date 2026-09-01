@@ -154,7 +154,16 @@ if (isset($_POST['action']) && $_POST['action'] == 'map') {
         if (USE_REDIS === true) {
             $redis->rPush('queuein:'.$_SERVER['REMOTE_ADDR'], json_encode($item));
         } else {
-            $queuein = 'queuein'.$_SERVER['REMOTE_ADDR'];
+            /*
+             * REVIEW-FIX: the key was 'queuein'.<ip> — NO colon — while the only
+             * consumer, Tasks/memcached_queue_task.php, reads 'queuein:'.<ip>. The
+             * Memcached fallback therefore drained nothing and never has; only the
+             * Redis path above (which does use the colon) ever worked. Harmless
+             * while USE_REDIS is on, but the migration makes "Redis unavailable" a
+             * routine, fail-safe state, so a fallback that silently discards every
+             * queued bandwidth/CPU record is worth having actually work.
+             */
+            $queuein = 'queuein:'.$_SERVER['REMOTE_ADDR'];
             $loopCount = 0;
             /*
             $response = $memcache->get($queuein, function($memcache, $key, &$value) { $value = []; return true; }, \Memcached::GET_EXTENDED);

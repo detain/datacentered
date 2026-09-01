@@ -527,6 +527,75 @@ namespace {
         }
 
         /**
+         * REVIEW-FIX (missed-keepalive watchdog was unreachable in production).
+         *
+         * testHealthTimerDropsOnlyTheConnectionWhosePongIsStale above seeds a
+         * STALE pong next to a FRESH index score, which cannot happen in
+         * production: touchPresence() writes the presence record and BOTH index
+         * scores from the same pong timestamp, so a client that goes quiet ages
+         * its pong and its index score together. That fixture divergence is why
+         * the watchdog stayed green while being dead.
+         *
+         * Modelled faithfully here — record ts, index score and last pong all
+         * 200s old — the ordering inside the health callback used to guarantee
+         * the client was never judged: sweepPresenceStale() runs FIRST and used
+         * the same PRESENCE_STALE_TTL window with an INCLUSIVE bound, while the
+         * drop test is strict, so the member was evicted from the index (and its
+         * record deleted) one tick before it could ever be dropped. The socket
+         * was left open forever — the exact leak this watchdog exists to close.
+         *
+         * The fix splits retention (PRESENCE_RECORD_TTL) from the drop threshold
+         * (PRESENCE_STALE_TTL), so a silent client survives long enough to be
+         * seen, judged and closed.
+         */
+        public function testHealthTimerClosesSilentConnectionWhoseIndexScoreAgedWithItsPong(): void
+        {
+            $now = time();
+            $silentFor = 200;   // > PRESENCE_STALE_TTL (90), < PRESENCE_RECORD_TTL (270)
+            $this->authedSession();
+
+            // Exactly what touchPresence() leaves behind for a client whose last
+            // pong was $silentFor seconds ago: record + both index scores stamped
+            // from that same moment, record retained for PRESENCE_RECORD_TTL.
+            $record = $this->entry($this->tabA);
+            $record['ts'] = $now - $silentFor;
+            $this->assertTrue(\SharedState::set(
+                \Events::DC_PRESENCE_KEY_PREFIX.$this->tabA,
+                $record,
+                \Events::PRESENCE_RECORD_TTL
+            ), 'fixture: retained presence record');
+            $this->seedIndexMembership($this->tabA, $now - $silentFor);
+            $this->seedLiveness($this->tabA, $now - $silentFor, $now - 30);
+
+            // A healthy peer, so a bug that drops everything is distinguishable
+            // from the fix.
+            $this->seedPresenceMember($this->tabB, $this->entry($this->tabB));
+            $this->seedLiveness($this->tabB, $now - 5, $now - 30);
+
+            $this->assertGreaterThan(
+                \Events::PRESENCE_STALE_TTL,
+                \Events::PRESENCE_RECORD_TTL,
+                'retention must outlive the drop threshold or the watchdog is unreachable'
+            );
+
+            TestTimer::run($this->armHealthTimer());
+
+            $this->assertContains(
+                $this->tabA,
+                \GatewayWorker\Lib\Gateway::$closed,
+                'a half-open socket must actually be closed — not silently swept out of the index'
+            );
+            $this->assertNotContains(
+                $this->tabB,
+                \GatewayWorker\Lib\Gateway::$closed,
+                'the responsive peer is untouched'
+            );
+            $this->assertNull($this->presenceRecord($this->tabA), 'the dropped record is removed');
+            $this->assertSame([$this->tabB], $this->indexMembers(\Events::DC_PRESENCE_INDEX_KEY));
+            $this->assertSame([$this->tabB], $this->indexMembers(\Events::DC_ACTIVE_INDEX_KEY));
+        }
+
+        /**
          * BUG-B4: the watchdog drops a connection whose last PONG is older than
          * 90s — and only that one. Phase 2 used to overwrite the very value
          * Phase 3 tests, so the 90s check could never be true and this watchdog
