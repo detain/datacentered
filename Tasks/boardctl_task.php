@@ -9,8 +9,12 @@ use Workerman\Worker;
  * Applications/Chat/Events.php. Rather than running boardctl_run_job() inline
  * (which blocked a port-2208 TaskWorker for the entire, up-to-6hr SSH run and
  * left 2208 bound across a stop/restart), it launches scripts/boardctl_runner.php
- * in a new session via `setsid ... &` and returns immediately. The detached job
- * survives a datacentered restart and never keeps the task port bound.
+ * with `setsid bash -c '<fd cleanup>; exec ...' &`: sh forks the job and exits at
+ * once, so proc_close() returns immediately and neither the TaskWorker process nor
+ * the dispatchTask connection is held for the run. setsid gives the job its own
+ * session (immune to stop/restart signals) and the fd loop drops the inherited,
+ * non-CLOEXEC listen sockets. The detached job survives a datacentered restart and
+ * never keeps the task port bound.
  *
  * The runner owns the per-asset SharedState (Redis) lock for the job's lifetime,
  * released by the ownership token handed to it here, and writes a pidfile so
@@ -53,31 +57,39 @@ function boardctl_task($args)
     }
     $logFile = $logDir.'/'.$historyId.'.log';
 
-    // Spawn the runner fully detached using proc_open:
-    //  - setsid => new session, so a datacentered stop/restart (SIGHUP/SIGTERM to
-    //    the process group) does not kill the in-flight job.
-    //  - File descriptors 0/1/2 are explicitly redirected; the child should
-    //    close any inherited descriptors >= 3 before exec (PHP listen sockets
-    //    are not O_CLOEXEC, so without cleanup the runner would inherit the
-    //    TaskWorker's port-2208 socket).
-    //  - proc_close() returns immediately while the detached child continues.
+    // stdio for the detached child. proc_open maps fds 0/1/2 here, so the fd
+    // cleanup loop in the command below only has to deal with descriptors >= 3.
     $descriptorspec = [
         0 => ['file', '/dev/null', 'r'],  // stdin from /dev/null
         1 => ['file', $logFile, 'a'],     // stdout append to log
         2 => ['file', $logFile, 'a'],     // stderr append to log
     ];
 
-    // Build command as a single string for setsid; each arg is individually
-    // escaped to avoid shell injection while keeping the command readable.
-    $cmd = 'setsid '
-        . PHP_BINARY . ' ' . escapeshellarg($runner)
-        . ' --history-id=' . $historyId
-        . ' --owner=' . $ownerId
-        // Legacy compat during rollout: --lock is still carried for an old runner;
-        // the new runner prefers --asset/--token via SharedState and uses --lock
-        // only as a key-derivation fallback when --asset is missing or <= 0.
-        . ' --lock=' . escapeshellarg($lockVar)
-        . ' --asset=' . escapeshellarg((string)$assetId);
+    // Spawn fully detached (restores pre-ae6688e mechanics; see 3738ad9):
+    //  - trailing '&' => sh forks the job and exits at once, so proc_close()
+    //    returns IMMEDIATELY (without it, sh exec-chains into setsid and the
+    //    waitable child IS the 6h job: the TaskWorker process and the
+    //    dispatchTask connection are held for the whole run -> serialized runs
+    //    and pool starvation).
+    //  - setsid => new session/process group, immune to stop/restart signals.
+    //  - the `for fd in /proc/self/fd/*` loop closes every inherited descriptor
+    //    >= 3 BEFORE exec'ing php. PHP listen sockets are NOT O_CLOEXEC, so
+    //    without this the detached runner keeps 2208 (and every other listen
+    //    fd) bound for the life of the job -> stop/restart cannot rebind.
+    //    stdio 0/1/2 are already redirected by proc_open's descriptor spec.
+    //  - the lock ownership token travels ONLY via BOARDCTL_LOCK_TOKEN env
+    //    (never argv — visible in ps); env passes through sh -> bash -> exec.
+    //
+    // Each arg is individually escaped to avoid shell injection. --lock is legacy
+    // rollout compat: an old runner derives the key from it when --asset is
+    // missing; the current runner uses --asset plus the BOARDCTL_LOCK_TOKEN env.
+    $inner = 'for fd in /proc/self/fd/*; do n=${fd##*/}; [ "$n" -ge 3 ] && eval "exec $n>&-" 2>/dev/null; done; '
+        .'exec '.escapeshellarg(PHP_BINARY).' '.escapeshellarg($runner)
+        .' --history-id='.$historyId
+        .' --owner='.$ownerId
+        .' --lock='.escapeshellarg($lockVar)
+        .' --asset='.escapeshellarg((string)$assetId);
+    $cmd = 'setsid bash -c '.escapeshellarg($inner).' &';
 
     /*
      * REVIEW-FIX: the lock ownership token used to be passed as --token=<token>
@@ -100,10 +112,16 @@ function boardctl_task($args)
     $childEnv['BOARDCTL_LOCK_TOKEN'] = $lockToken;
 
     $proc = proc_open($cmd, $descriptorspec, $pipes, null, $childEnv);
-    if ($proc === false || $proc === 0) {
+    if ($proc === false) {
         Worker::safeEcho("boardctl_task: failed to spawn runner for history_id={$historyId}\n");
         return json_encode(['ok' => false, 'error' => 'spawn failed', 'history_id' => $historyId]);
     }
+    // The trailing '&' means the waitable child is the short-lived sh, not the
+    // runner, so $rc only reflects sh's exit (~always 0) and cannot report a
+    // runner start failure — same as the pre-regression behaviour. A runner that
+    // never came up surfaces downstream via a missing pidfile/heartbeat (and the
+    // boardctl_startup_reap path), not here. proc_close() is still called to reap
+    // sh and avoid a zombie.
     $rc = proc_close($proc);
     Worker::safeEcho("boardctl_task: spawned detached runner for history_id={$historyId} asset={$assetId}\n");
     return json_encode(['ok' => true, 'spawned' => true, 'history_id' => $historyId]);

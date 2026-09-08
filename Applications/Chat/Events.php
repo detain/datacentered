@@ -6056,11 +6056,12 @@ class Events
     }
 
     /**
-     * Recover boardctl jobs orphaned by a datacentered restart. A boardctl run is
-     * a proc_open ssh child of the TaskWorker process, so a full restart kills it
-     * while its queue_log row is still 'processing' — and boardctl_queue_job then
-     * refuses to queue a rerun for that asset (duplicate guard). This resets such
-     * rows to 'failed' so an operator can re-queue.
+     * Recover boardctl jobs orphaned by a datacentered restart. Runs are now
+     * detached `setsid` runners (scripts/boardctl_runner.php) that SURVIVE
+     * stop/restart, so a row is orphaned only when its runner dies hard
+     * (SIGKILL, OOM, reboot) and stays 'processing' — and boardctl_queue_job
+     * then refuses a rerun for that asset (duplicate guard). This resets
+     * genuinely-dead rows to 'failed' and frees their per-asset locks.
      *
      * Called ONLY from the onWorkerStart cold-start gate in
      * Events (SharedState::lock('startup_reap') winning), which fires at most
