@@ -1667,3 +1667,5 @@ plus sign-off per the plan's review gates.
 | *(none — new)* | `dc.presence.joined` / `dc.presence.updated` / `dc.presence.left` |
 | `paymentprocess` | *(not carried — becomes HTTP `POST /trigger/payment`, plan P2.9)* |
 | `self_update` broadcast relay, `run_local`, rooms UI messages | *(dropped — dead chat layer, P7.1)* |
+
+Queue endpoint auth (HTTP leg, `Web/queue.php` on :55151 included): see mystage `docs/queue_encryption.md` (Q1. envelope protocol).
