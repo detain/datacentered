@@ -7,9 +7,15 @@ function hyperv_cleanupresources($args)
         ini_set('default_socket_timeout', 1200);
     }
     $service_master = $args['service_master'];
+    // opened right before use; one that will not open is alerted and nothing is sent to the host (MyAdmin plan_2way §5.11)
+    require_once __DIR__.'/../Applications/Chat/HyperVHostSecret.php';
+    $adminPassword = \HyperVHostSecret::password($service_master, 'hyperv_cleanupresources');
+    if ($adminPassword === false) {
+        return false;
+    }
     $parameters = [
         'hyperVAdmin' => 'Administrator',
-        'adminPassword' => $service_master['vps_root']
+        'adminPassword' => $adminPassword
     ];
     try {
         $soap = new SoapClient("https://{$service_master['vps_ip']}/HyperVService/HyperVService.asmx?WSDL", \Detain\MyAdminHyperv\Plugin::getSoapClientParams());

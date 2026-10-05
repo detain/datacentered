@@ -64,6 +64,9 @@ $task_worker->onWorkerStart = function ($worker) {
     $memcache = new \Memcached();
     $memcache->addServer('localhost', 11211);
     $memcache->set('queuehosts', $queuehosts);
+    // MyAdmin SecretBox per-worker version probe (plan_2way §5.0.5): which /home/my HEAD and flags this process holds
+    require_once __DIR__.'/SecretBoxProbe.php';
+    \SecretBoxProbe::register($worker);
 };
 
 $task_worker->onConnect = function ($connection) { // When the client is connected, set the connection onWebSocketConnect, that is, when the websocket handshake callback

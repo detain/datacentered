@@ -81,6 +81,9 @@ $worker->onWorkerStart = function ($worker) {
     if ($worker->id === 0) {
         \Events::setupSessionHealthTimer();
     }
+    // MyAdmin SecretBox per-worker version probe (plan_2way §5.0.5): which /home/my HEAD and flags this process holds
+    require_once __DIR__.'/SecretBoxProbe.php';
+    \SecretBoxProbe::register($worker);
 };
 
 /*

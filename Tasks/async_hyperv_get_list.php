@@ -101,8 +101,14 @@ function async_hyperv_get_list_server($service_master, $token)
             Worker::safeEcho($service_master['vps_name'].' lost lock before GetVMList — skipping this host this cycle'.PHP_EOL);
             return;
         }
+        // opened right before use; one that will not open is alerted and this host is skipped (MyAdmin plan_2way §5.11)
+        require_once __DIR__.'/../Applications/Chat/HyperVHostSecret.php';
+        $adminPassword = \HyperVHostSecret::password($service_master, 'async_hyperv_get_list');
+        if ($adminPassword === false) {
+            return;
+        }
         try {
-            $result = $client->GetVMList(['hyperVAdmin' => 'Administrator', 'adminPassword' => $service_master['vps_root']]);
+            $result = $client->GetVMList(['hyperVAdmin' => 'Administrator', 'adminPassword' => $adminPassword]);
             if (isset($result->GetVMListResult->Success)) {
                 $result = $result->GetVMListResult;
             }

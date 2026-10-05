@@ -132,6 +132,9 @@ $web->onWorkerStart = function ($worker) {
     \MyAdmin\App::session()->sessionid = 'WorkerManWeb';
     \MyAdmin\App::session()->account_id = 160308;
     \MyAdmin\App::session()->appnocache('ima', 'services');
+    // MyAdmin SecretBox per-worker version probe (plan_2way §5.0.5): which /home/my HEAD and flags this process holds
+    require_once __DIR__.'/SecretBoxProbe.php';
+    \SecretBoxProbe::register($worker);
 };
 
 $web->onWorkerStop = function ($worker) {
