@@ -4,57 +4,37 @@ use Workerman\Worker;
 
 require_once __DIR__.'/../Applications/Chat/SharedState.php';
 
+require_once __DIR__.'/../Applications/Chat/QueueStore.php';
+
 /**
  * Put an un-drained tail of a queue batch back where it came from.
  *
- * The drain reads with a destructive lPop batch, so abandoning a partly-processed
- * batch (lost drain lock, transport blip) would otherwise throw the remaining
- * items away. Items are restored to the HEAD in reverse order so the queue's
- * original FIFO order survives, and the next tick picks them up.
+ * The drain reads with a destructive pop batch, so abandoning a partly-processed
+ * batch (lost drain lock, transport blip, a failing item) would otherwise throw
+ * the remaining items away. QueueStore puts them back at the HEAD of the host's
+ * queue in their original order — in Redis when it is reachable, else at the
+ * front of the local disk spill — so the next tick picks them up.
  *
- * The raw `queuein:<ip>` LIST is deliberately NOT routed through SharedState:
- * per the project contract the queue DATA lives OUTSIDE the `dc:*` namespace
- * (only the same-named drain LOCK goes through the facade), and prefixing it
- * would orphan every entry the VPS hosts are writing to.
+ * The raw `queuein:<ip>` data is deliberately NOT a SharedState dc:* key: per
+ * the project contract the queue DATA lives OUTSIDE the `dc:*` namespace (only
+ * the same-named drain LOCK goes through the facade), and prefixing it would
+ * orphan every entry the VPS hosts are writing to.
  *
- * @param array       $batchItems the full batch as popped
- * @param int         $fromIndex  first index NOT yet processed
- * @param string      $hostIp     queue owner host ip
- * @param \Redis|null $redis      raw redis handle (USE_REDIS path)
- * @param mixed       $memcache   memcached handle (fallback path)
+ * @param array  $batchItems the full batch as popped
+ * @param int    $fromIndex  first index NOT yet processed
+ * @param string $hostIp     queue owner host ip
  * @return void
  */
-function memcached_queue_requeue_tail(array $batchItems, int $fromIndex, string $hostIp, $redis, $memcache): void
+function memcached_queue_requeue_tail(array $batchItems, int $fromIndex, string $hostIp): void
 {
     $tail = array_slice($batchItems, $fromIndex);
     if ($tail === []) {
         return;
     }
-    $queueKey = 'queuein:'.$hostIp;
     try {
-        if (USE_REDIS === true && $redis instanceof \Redis) {
-            // lPush pushes onto the head, so walk the tail backwards to leave
-            // $tail[0] at the head — i.e. exactly where lPop found it.
-            foreach (array_reverse($tail) as $item) {
-                $encoded = json_encode($item);
-                if ($encoded === false) {
-                    Worker::safeEcho('Could not re-encode a queue item for host '.$hostIp.' while requeueing — dropping that one item'.PHP_EOL);
-                    continue;
-                }
-                $redis->lPush($queueKey, $encoded);
-            }
-        } elseif (is_object($memcache)) {
-            $current = $memcache->get($queueKey);
-            if (!is_array($current)) {
-                $current = [];
-            }
-            $memcache->set($queueKey, array_merge($tail, $current));
-        } else {
-            Worker::safeEcho('No queue backend available to requeue '.count($tail).' items for host '.$hostIp.PHP_EOL);
-
-            return;
+        if (\QueueStore::requeueInbound($hostIp, $tail)) {
+            Worker::safeEcho('Requeued '.count($tail).' un-drained items for host '.$hostIp.PHP_EOL);
         }
-        Worker::safeEcho('Requeued '.count($tail).' un-drained items for host '.$hostIp.PHP_EOL);
     } catch (\Throwable $e) {
         // Best effort: a failed requeue is the same data loss we are trying to
         // avoid, so make it LOUD rather than silent. Never rethrow — this runs
@@ -75,16 +55,9 @@ function memcached_queue_task($args)
     */
     global $influx_v2_client;
     global $influx_v2_database;
-    /**
-    * @var \Redis
-    */
-    global $redis;
-    if (USE_REDIS !== true) {
-        /**
-        * @var \Memcached
-        */
-        global $memcache;
-    }
+    // No raw $redis / $memcache here any more: every queue and cache access
+    // goes through QueueStore, which survives a Redis outage (disk spill +
+    // fallback lock) and recovers on its own once Redis answers again.
     $start = time();
     $maxTries = 5;
     //Worker::safeEcho('Task handler Started memcached_queue_task'.PHP_EOL);
@@ -157,30 +130,29 @@ function memcached_queue_task($args)
     }
 
     // Per-host locking: process one host at a time per worker
-    // Use LMPOP with COUNT for atomic batch retrieval (Redis 7.0+)
     // Limit items per host per run to reduce lock contention
     $maxItemsPerHost = 300;  // Batch size per host per invocation
     $processedAny = false;
 
     foreach ($queuehosts as $hostIp) {
-        // Drain lock name for this host. lock() prepends the dc:lock: namespace, so the
-        // LOCK key becomes `dc:lock:queuein:<ip>`. This is DISTINCT from the production
-        // queue DATA list `queuein:<ip>` popped further below — that raw Redis LIST (and
-        // its Memcached fallback) intentionally lives OUTSIDE the dc:* namespace and is
-        // left completely untouched by this migration.
-        $lockName = 'queuein:'.$hostIp;
-
+        // Drain lock for this host: QueueStore names it 'queuein:<ip>' and the facade
+        // prepends dc:lock:, so the LOCK key is `dc:lock:queuein:<ip>` (a local flock()
+        // on <spill>/locks/<ip>.lock while Redis is down). This is DISTINCT from the queue DATA list
+        // `queuein:<ip>` popped below, which intentionally lives OUTSIDE dc:*.
+        //
         // Try to acquire the per-host drain lock with retries and random backoff.
-        // SET NX + TTL 900 replaces cas($lockKey, 0, 1): a null token == contended or
-        // Redis-down (skip), and a crashed holder self-expires — so the isset-seed is
-        // gone. The 900s TTL mirrors the old GlobalData 900s stale-reap window (never
-        // shorter per ops rule: host-side ops like HyperV GetVMList can take 10+ min);
-        // the drain renews between items while the lock is still owned below.
-        $token = null;
+        // SET NX + TTL 900 replaces cas($lockKey, 0, 1): a null lock == contended
+        // (skip), and a crashed holder self-expires. While the Redis transport is
+        // dead QueueStore falls back to a local flock() lock,
+        // so the drain keeps running through an outage instead of skipping every
+        // host. The 900s TTL mirrors the old GlobalData 900s stale-reap window
+        // (never shorter per ops rule: host-side ops like HyperV GetVMList can
+        // take 10+ min); the drain renews between items while the lock is owned.
+        $lock = null;
         $lockAttempts = 0;
         while ($lockAttempts < 3) {
-            $token = SharedState::lock($lockName, 900);
-            if ($token !== null) {
+            $lock = \QueueStore::acquireDrainLock($hostIp, 900);
+            if ($lock !== null) {
                 break;
             }
             $lockAttempts++;
@@ -188,44 +160,20 @@ function memcached_queue_task($args)
             usleep(rand(10000, 50000) * $lockAttempts);
         }
 
-        if ($token === null) {
+        if ($lock === null) {
             // Another worker is processing this host, skip
             continue;
         }
 
-        // Set lock expiration to prevent stale locks
+        $batchItems = [];
+        $batchIndex = 0;
         try {
-            // Use atomic batch retrieval from this host's queue
-            // Since PHP Redis doesn't have lmpop, we use individual lPop calls with a limit
-            $batchItems = [];
-            if (USE_REDIS === true) {
-                for ($i = 0; $i < $maxItemsPerHost; $i++) {
-                    $queue = $redis->lPop('queuein:'.$hostIp);
-                    if ($queue === false) {
-                        break;
-                    }
-                    $decoded = json_decode($queue, true);
-                    if ($decoded !== null) {
-                        $batchItems[] = $decoded;
-                    }
-                }
-            } else {
-                // Memcached fallback: use getAndFlush pattern
-                $queue = $memcache->get('queuein:'.$hostIp);
-                if (is_array($queue)) {
-                    $batchItems = array_slice($queue, 0, $maxItemsPerHost);
-                    $remaining = array_slice($queue, $maxItemsPerHost);
-                    if (count($remaining) > 0) {
-                        $memcache->set('queuein:'.$hostIp, $remaining);
-                    } else {
-                        $memcache->set('queuein:'.$hostIp, []);
-                    }
-                }
-            }
+            // Oldest first: anything parked in the disk spill while Redis
+            // was down, then the Redis list. A dead Redis just yields fewer items.
+            $batchItems = \QueueStore::popInbound($hostIp, $maxItemsPerHost);
 
             if (count($batchItems) == 0) {
-                SharedState::unlock($lockName, $token);  // Release lock
-                continue;
+                continue; // the finally releases the lock
             }
 
             $processedAny = true;
@@ -238,7 +186,7 @@ function memcached_queue_task($args)
                 // host this cycle rather than processing holding nothing; break falls to
                 // the finally, whose token-checked unlock no-ops, and the outer loop moves
                 // to the next host (cross-host parallelism stays per-host-key, by design).
-                if (!SharedState::renew($lockName, $token, 900)) {
+                if (!\QueueStore::renewDrainLock($lock, 900)) {
                     Worker::safeEcho('Lost queuein lock for host '.$hostIp.' mid-drain — stopping this host this cycle (lock expired or taken)'.PHP_EOL);
                     // REVIEW-FIX (data loss): items were removed from the queue by the
                     // DESTRUCTIVE lPop batch above, so breaking here used to DISCARD every
@@ -247,7 +195,8 @@ function memcached_queue_task($args)
                     // returns false for a mere transport blip, so a 2s Redis hiccup was
                     // enough to drop up to $maxItemsPerHost records. Put the untouched
                     // tail back before giving up.
-                    memcached_queue_requeue_tail($batchItems, $batchIndex, $hostIp, $redis, $memcache);
+                    memcached_queue_requeue_tail($batchItems, $batchIndex, $hostIp);
+                    $batchIndex = count($batchItems); // nothing left for the catch below to requeue
                     break;
                 }
                 $module = $queue['post']['module'] ?? 'vps';
@@ -262,11 +211,7 @@ function memcached_queue_task($args)
                     $prefix = 'qs';
                     $influx_table = $prefix.'_bandwidth';
                 }
-                if (USE_REDIS === true) {
-                    $server = $redis->get($module.'_masters:'.$queue['ip']);
-                } else {
-                    $server = $memcache->get($module.'_masters'.$queue['ip']);
-                }
+                $server = \QueueStore::cacheGet($module.'_masters:'.$queue['ip']);
                 if ($server === false) {
                     $dbRetry(function () use (&$server, &$worker_db, $prefix, $queue) {
                         $server = $worker_db->select($prefix.'_id,'.$prefix.'_name,'.$prefix.'_hdsize,'.$prefix.'_iowait,'.$prefix.'_cpu_mhz,'.$prefix.'_hdfree,'.$prefix.'_load,'.$prefix.'_bits,'.$prefix.'_ram,'.$prefix.'_cpu_model,'.$prefix.'_kernel,'.$prefix.'_cores,'.$prefix.'_raid_status,'.$prefix.'_raid_building,'.$prefix.'_mounts,'.$prefix.'_drive_type')
@@ -279,14 +224,7 @@ function memcached_queue_task($args)
                         // a queue for a server on a diff module
                         continue;
                     }
-                    if (USE_REDIS === true) {
-                        $redis->setEx($module.'_masters:'.$queue['ip'], 3600, json_encode($server));
-                    } else {
-                        $memcache->set($module.'_masters'.$queue['ip'], $server, 3600);
-                    }
-                }
-                if (USE_REDIS === true && !is_array($server)) {
-                    $server = json_decode($server, true);
+                    \QueueStore::cacheSet($module.'_masters:'.$queue['ip'], $server, 3600);
                 }
                 switch ($queue['post']['action']) {
                     case 'cpu_usage':
@@ -300,11 +238,7 @@ function memcached_queue_task($args)
                         $cpu_avg = $server_usage['cpu'];
                         $serialized_server_usage = json_encode($server_usage);
                         $points = [];
-                        if (USE_REDIS === true) {
-                            $serverDetails = $redis->get($module.'_master_details:'.$server[$prefix.'_id']);
-                        } else {
-                            $serverDetails = $memcache->get($module.'_master_details'.$server[$prefix.'_id']);
-                        }
+                        $serverDetails = \QueueStore::cacheGet($module.'_master_details:'.$server[$prefix.'_id']);
                         if ($serverDetails === false) {
                             $ok = $dbRetry(function () use (&$serverDetails, &$worker_db, $prefix, $server) {
                                 $serverDetails = $worker_db->select($prefix.'_cpu_avg,'.$prefix.'_cpu_usage')
@@ -332,15 +266,8 @@ function memcached_queue_task($args)
                                     $prefix.'_cpu_avg' => $cpu_avg,
                                     $prefix.'_cpu_usage' => $serialized_server_usage
                                 ];
-                                if (USE_REDIS === true) {
-                                    $redis->setEx($module.'_master_details:'.$server[$prefix.'_id'], 3600, json_encode($serverDetails));
-                                } else {
-                                    $memcache->set($module.'_master_details'.$server[$prefix.'_id'], $serverDetails, 3600);
-                                }
+                                \QueueStore::cacheSet($module.'_master_details:'.$server[$prefix.'_id'], $serverDetails, 3600);
                             }
-                        }
-                        if (USE_REDIS === true && !is_array($serverDetails)) {
-                            $serverDetails = json_decode($serverDetails, true);
                         }
                         if ($serverDetails[$prefix.'_cpu_usage'] != $serialized_server_usage || $serverDetails[$prefix.'_cpu_avg'] != $cpu_avg) {
                             $dbRetry(function () use (&$worker_db, $prefix, $server, $cpu_avg, $serialized_server_usage) {
@@ -352,20 +279,9 @@ function memcached_queue_task($args)
                             });
                             $serverDetails[$prefix.'_cpu_avg'] = $cpu_avg;
                             $serverDetails[$prefix.'_cpu_usage'] = $serialized_server_usage;
-                            if (USE_REDIS === true) {
-                                $redis->setEx($module.'_master_details:'.$server[$prefix.'_id'], 3600, json_encode($serverDetails));
-                            } else {
-                                $memcache->set($module.'_master_details'.$server[$prefix.'_id'], $serverDetails, 3600);
-                            }
+                            \QueueStore::cacheSet($module.'_master_details:'.$server[$prefix.'_id'], $serverDetails, 3600);
                         }
-                        if (USE_REDIS === true) {
-                            $serverVps = $redis->get($module.'_vps:'.$server[$prefix.'_id']);
-                        } else {
-                            $serverVps = $memcache->get($module.'_vps'.$server[$prefix.'_id']);
-                        }
-                        if (USE_REDIS === true && $serverVps !== false) {
-                            $serverVps = json_decode($serverVps, true);
-                        }
+                        $serverVps = \QueueStore::cacheGet($module.'_vps:'.$server[$prefix.'_id']);
                         if ($serverVps === false) {
                             $serverVps = [];
                         }
@@ -401,11 +317,7 @@ function memcached_queue_task($args)
                                     });
                                     if ($row !== false) {
                                         $serverVps[$veid] = $row[$prefix.'_id'];
-                                        if (USE_REDIS === true) {
-                                            $redis->setEx($module.'_vps:'.$server[$prefix.'_id'], 3600, json_encode($serverVps));
-                                        } else {
-                                            $memcache->set($module.'_vps'.$server[$prefix.'_id'], $serverVps, 3600);
-                                        }
+                                        \QueueStore::cacheSet($module.'_vps:'.$server[$prefix.'_id'], $serverVps, 3600);
                                         if (INFLUX_V2 === true) {
                                             /*$point = \InfluxDB2\Point::measurement($prefix.'_stats')
                                                 ->addTag('vps', (int)$row[$prefix.'_id'])
@@ -442,14 +354,7 @@ function memcached_queue_task($args)
                         $servers = gzuncompress($servers);
                         $servers = json_decode($servers,true);
                         if (is_array($bandwidth)) {
-                            if (USE_REDIS === true) {
-                                $serverVps = $redis->get($module.'_vps:'.$server[$prefix.'_id']);
-                            } else {
-                                $serverVps = $memcache->get($module.'_vps'.$server[$prefix.'_id']);
-                            }
-                            if (USE_REDIS === true && $serverVps !== false) {
-                                $serverVps = json_decode($serverVps, true);
-                            }
+                            $serverVps = \QueueStore::cacheGet($module.'_vps:'.$server[$prefix.'_id']);
                             if ($serverVps === false) {
                                 $serverVps = [];
                             }
@@ -472,11 +377,7 @@ function memcached_queue_task($args)
                                         continue;
                                     }
                                     $serverVps[$veid] = $row[$prefix.'_id'];
-                                    if (USE_REDIS === true) {
-                                        $redis->setEx($module.'_vps:'.$server[$prefix.'_id'], 3600, json_encode($serverVps));
-                                    } else {
-                                        $memcache->set($module.'_vps'.$server[$prefix.'_id'], $serverVps, 3600);
-                                    }
+                                    \QueueStore::cacheSet($module.'_vps:'.$server[$prefix.'_id'], $serverVps, 3600);
                                 }
                                 $vps = $serverVps[$veid];
                                 if (INFLUX_V2 === true) {
@@ -511,21 +412,13 @@ function memcached_queue_task($args)
                             $key = $module.':host:'.$server[$prefix.'_id'].':'.$field;
                             if (isset($servers[$field])) {
                                 //Worker::safeEcho('server_info setting '.$key.'='.$servers[$field].PHP_EOL);
-                                if (USE_REDIS === true) {
-                                    $redis->set($key, $servers[$field]);
-                                } else {
-                                    $memcache->set($key, $servers[$field]);
-                                }
+                                \QueueStore::putValue($key, $servers[$field]);
                             }
                         }
                         foreach ($detailfields as $field) {
                             $key = $module.':hostd:'.$server[$prefix.'_id'].':'.$field;
                             if (isset($servers[$field])) {
-                                if (USE_REDIS === true) {
-                                    $redis->set($key, $servers[$field]);
-                                } else {
-                                    $memcache->set($key, $servers[$field]);
-                                }
+                                \QueueStore::putValue($key, $servers[$field]);
                             }
                         }
                         $cols = [];
@@ -658,22 +551,21 @@ function memcached_queue_task($args)
                                 }
                             }
                         }
-                        if (USE_REDIS === true) {
-                            $redis->setEx($module.'_masters:'.$queue['ip'], 3600, json_encode($server));
-                        } else {
-                            $memcache->set($module.'_masters'.$queue['ip'], $server, 3600);
-                        }
+                        \QueueStore::cacheSet($module.'_masters:'.$queue['ip'], $server, 3600);
                         break;
                     default:
                         Worker::safeEcho('Dont know how to handel this Queued Entry: '.json_encode($queue, true).PHP_EOL);
                         break;
                 }
             } // end foreach ($batchItems as $queue)
-        } catch (\Exception $e) {
+        } catch (\Throwable $e) {
             Worker::safeEcho('Exception processing host '.$hostIp.': '.$e->getMessage().PHP_EOL);
+            // Skip only the item that blew up; put the untouched rest back so a
+            // single bad item (or a DB outage) does not discard the whole batch.
+            memcached_queue_requeue_tail($batchItems, $batchIndex + 1, $hostIp);
         } finally {
             // Always release the per-host drain lock (owner-checked via token).
-            SharedState::unlock($lockName, $token);
+            \QueueStore::releaseDrainLock($lock);
         }
     } // end foreach ($queuehosts as $hostIp)
 

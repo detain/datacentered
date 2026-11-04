@@ -478,6 +478,48 @@ final class SharedState
     }
 
     /**
+     * Run ONE raw phpredis command against a legacy key that lives OUTSIDE the
+     * dc:* namespace, with the facade's full fail-safe/self-heal machinery:
+     * the same client resolution, the same transport-dead window (a throw here
+     * marks the transport dead for REPROBE_INTERVAL exactly like a facade
+     * method would, so the next caller does not re-hit the dead handle), the
+     * same once-per-outage logging and the same timed re-probe recovery.
+     *
+     * Exists for the provisioning-host queue DATA keys that predate the facade
+     * and must keep their exact names because the VPS hosts, Web/queue.php and
+     * the drain Tasks all agree on them: `queuein:<ip>`, `queue:<ip>`,
+     * `maps:<ip>`, `queue:dedup:*` and the `<module>_masters:<ip>`-style
+     * lookup caches (see Applications/Chat/QueueStore.php, the only intended
+     * caller). It is NOT a back door into the facade's own namespace: a dc:*
+     * key is refused (InvalidArgumentException, before dispatch, like every
+     * other guard) so the lock/registry invariants stay owned by the typed
+     * methods.
+     *
+     * $failSafe is returned unchanged on either failure mode, so a caller that
+     * must tell "command ran and answered X" from "Redis unavailable" passes a
+     * unique sentinel object and compares identity.
+     *
+     * @param string   $operation short name for the once-per-outage log line
+     * @param string   $key       the (non-dc:*) key the command touches
+     * @param callable $command   fn(\Redis $client, string $key): mixed
+     * @param mixed    $failSafe  value returned when Redis is unavailable
+     * @return mixed the command's value, or $failSafe
+     * @throws \InvalidArgumentException for a dc:* key
+     */
+    public static function rawCommand(string $operation, string $key, callable $command, $failSafe)
+    {
+        if (strpos($key, 'dc:') === 0) {
+            throw new \InvalidArgumentException(
+                "SharedState::rawCommand() refuses '{$key}': dc:* keys must go through the typed facade methods"
+            );
+        }
+
+        return self::attempt($operation, static function ($client) use ($command, $key) {
+            return $command($client, $key);
+        }, $failSafe);
+    }
+
+    /**
      * TEST SEAM ONLY — production must never call this. Pin the wall clock the
      * transport-dead window is measured against (null restores time()).
      * Recovery bookkeeping is pure timestamp arithmetic, so tests can drive a

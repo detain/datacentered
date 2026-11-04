@@ -2,16 +2,14 @@
 
 use Workerman\Worker;
 
+require_once __DIR__.'/../Applications/Chat/QueueStore.php';
+
 function map_queue_task($args)
 {
     /**
     * @var \Workerman\MySQL\Connection
     */
     global $worker_db;
-    /**
-    * @var \Memcached
-    */
-    global $memcache, $redis;
     $hosts = 0;
     //$memcached_start = time();
     foreach (['vps', 'quickservers'] as $module) {
@@ -92,15 +90,10 @@ function map_queue_task($args)
                     }
                 }
             }
-            if (USE_REDIS === true) {
-                try {
-                    $redis->set('maps:'.$server[$prefix.'_ip'], json_encode($maps));
-                } catch (\Exception $e) {
-                    Worker::safeEcho('Caught Exception #'.$e->getCode().':'.$e->getMessage().' on '.__LINE__.'@'.__FILE__);
-                }
-            } else {
-                $memcache->set('maps'.$server[$prefix.'_ip'], $maps);
-            }
+            // Redis (when in use) plus an always-on on-disk mirror, so
+            // Web/queue.php can still serve the map while Redis is down. Never
+            // throws: a dead Redis transport is handled inside QueueStore.
+            \QueueStore::setMap((string)$server[$prefix.'_ip'], $maps);
             $hosts++;
         }
     }

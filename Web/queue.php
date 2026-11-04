@@ -4,6 +4,11 @@ use Workerman\Worker;
 
 global $memcache, $redis;
 
+// Redis-first queue storage with a local on-disk spill: the hosts keep being
+// served (and nothing they post is lost) while Dragonfly/Redis is down, and the
+// SharedState transport window makes recovery automatic — see QueueStore.php.
+require_once __DIR__.'/../Applications/Chat/QueueStore.php';
+
 /**
  * Queue endpoint for provisioning hosts (Workerman HTTP :55151).
  *
@@ -93,25 +98,16 @@ $lookupMasterByIp = static function (string $ip) use ($masterKeyFromRow): ?array
 /**
  * Replay-dedup seam for this transport. The adapter's default store talks to
  * App::tf()->redis, which the Workerman web worker never populates — it would
- * fail-open silently. Inject this endpoint's own phpredis client instead.
+ * fail-open silently. Inject this endpoint's own store instead.
  * $markerKey arrives fully built ('queue:dedup:'.sha256(identity|action|ts)),
  * so the namespace is byte-identical with the mystage endpoints sharing the
- * store. No client / any error → NULL = fail-open (defence-in-depth only; the
- * dormant USE_REDIS=false twin is not mirrored — see capture note below).
+ * store. Redis SET NX EX first; while Redis is down the marker becomes an
+ * exclusive-create file in the local spill so replay protection keeps working
+ * through an outage. Neither store usable → NULL = fail-open (defence-in-depth).
  */
 $dedupTtl = $cryptoReady ? (int)constant($queueCryptoClass . '::DEDUP_TTL') : 600;
 $replayDedupChecker = static function (string $markerKey) use ($dedupTtl): ?bool {
-    global $redis;
-    if (!defined('USE_REDIS') || USE_REDIS !== true || !is_object($redis) || !method_exists($redis, 'set')) {
-        return null;
-    }
-    try {
-        // phpredis NX+EX idiom copied from Wanguard.php:62 / Scrub.php:280:
-        // true=acquired, false=already present, throw=down (caught → fail-open).
-        return (bool)$redis->set($markerKey, 1, ['NX', 'EX' => $dedupTtl]);
-    } catch (\Throwable $e) {
-        return null;
-    }
+    return \QueueStore::claimDedup($markerKey, $dedupTtl);
 };
 
 /**
@@ -122,33 +118,17 @@ $replayDedupChecker = static function (string $markerKey) use ($dedupTtl): ?bool
  * nothing about crypto) drains exactly one shape.
  */
 $emitQueueinItem = static function (array $item): void {
-    global $memcache, $redis;
+    /*
+     * Redis rPush first; while Redis is down the item is parked in the local
+     * disk spill (QueueStore, flock'd jsonl per host) and the drain empties
+     * that spill before Redis once it can — so an outage costs latency, not
+     * telemetry. (The old Memcached fallback never worked: wrong key, and no
+     * memcached runs on the hub hosts.)
+     */
     try {
-        if (USE_REDIS === true) {
-            $redis->rPush('queuein:' . $_SERVER['REMOTE_ADDR'], json_encode($item));
-        } else {
-            /*
-             * REVIEW-FIX (carried from the original capture site): the key was
-             * 'queuein'.<ip> — NO colon — while the only consumer,
-             * Tasks/memcached_queue_task.php, reads 'queuein:'.<ip>. The
-             * Memcached fallback therefore drained nothing and never has; only
-             * the Redis path above (which does use the colon) ever worked.
-             * Harmless while USE_REDIS is on, but the migration makes "Redis
-             * unavailable" a routine, fail-safe state, so a fallback that
-             * silently discards every queued bandwidth/CPU record is worth
-             * having actually work. (The commented-out CAS variant that used to
-             * sit here was abandoned code — never functional — and is dropped.)
-             */
-            $queuein = 'queuein:' . $_SERVER['REMOTE_ADDR'];
-            $queue = $memcache->get($queuein);
-            if (!is_array($queue)) {
-                $queue = [];
-            }
-            $queue[] = $item;
-            $memcache->set($queuein, $queue);
-        }
-    } catch (\Exception $e) {
-        Worker::safeEcho('Caught Exception #'.$e->getCode().':'.$e->getMessage().' on '.__LINE__.'@'.__FILE__);
+        \QueueStore::pushInbound((string)$_SERVER['REMOTE_ADDR'], $item);
+    } catch (\Throwable $e) {
+        Worker::safeEcho('Caught Exception #'.$e->getCode().':'.$e->getMessage().' on '.__LINE__.'@'.__FILE__.PHP_EOL);
     }
 };
 
@@ -234,14 +214,11 @@ $serveAdapted = static function (
 if (isset($_POST['action']) && $_POST['action'] == 'map') {
     $mapLookup = $lookupMasterByIp($_SERVER['REMOTE_ADDR']);
     $serveAdapted('map', $mapLookup['key'] ?? null, $mapLookup['identity'] ?? '', static function () {
-        global $memcache, $redis;
         ob_start();
         try {
-            if (USE_REDIS === true) {
-                $map = json_decode($redis->get('maps:'.$_SERVER['REMOTE_ADDR']), true);
-            } else {
-                $map = $memcache->get('maps'.$_SERVER['REMOTE_ADDR']);
-            }
+            // Redis, else the on-disk mirror map_queue_task keeps beside it,
+            // so a host still gets its map while Redis is down.
+            $map = \QueueStore::getMap((string)$_SERVER['REMOTE_ADDR']);
             if (is_array($map)) {
                 if (array_key_exists('slice', $map)) {
                     echo "echo ".escapeshellarg($map['slice'])." > /root/cpaneldirect/vps.slicemap;".PHP_EOL;
@@ -275,8 +252,12 @@ if (isset($_POST['action']) && $_POST['action'] == 'map') {
                     echo "echo ".escapeshellarg($map['main'])." > /root/cpaneldirect/vps.mainips;".PHP_EOL;
                 }
             }
-        } catch (\Exception $e) {
-            Worker::safeEcho('Caught Exception #'.$e->getCode().':'.$e->getMessage().' on '.__LINE__.'@'.__FILE__);
+        } catch (\Throwable $e) {
+            // \Throwable, not \Exception: an \Error escaping here would reach
+            // exec_php_file(), which echoes the whole trace back to the host.
+            Worker::safeEcho('Caught Exception #'.$e->getCode().':'.$e->getMessage().' on '.__LINE__.'@'.__FILE__.PHP_EOL);
+            // The host runs this body as shell; never hand it a half-built map.
+            ob_clean();
         } finally {
             $out = (string)ob_get_clean();
         }
@@ -383,17 +364,19 @@ if (isset($_POST['action']) && $_POST['action'] == 'map') {
 } elseif (isset($_POST['action']) && $_POST['action'] == 'queue') {
     $queueLookup = $lookupMasterByIp($_SERVER['REMOTE_ADDR']);
     $serveAdapted('queue', $queueLookup['key'] ?? null, $queueLookup['identity'] ?? '', static function () {
-        global $memcache, $redis;
+        global $memcache;
         // Destructive drain (lPop / CAS-clear): running INSIDE the adapter
         // producer is what makes the dedup-before-producer contract real.
         ob_start();
         try {
             if (USE_REDIS === true) {
+                // Redis down → [] (looks like an empty queue; the host polls
+                // again and the commands are still waiting once it is back).
                 $maxItems = 100;
-                $count = 0;
-                while ($count < $maxItems && false !== ($queue = $redis->lPop('queue:' . $_SERVER['REMOTE_ADDR']))) {
-                    echo $queue . PHP_EOL;
-                    $count++;
+                $lines = \QueueStore::popOutbound((string)$_SERVER['REMOTE_ADDR'], $maxItems);
+                $count = count($lines);
+                foreach ($lines as $line) {
+                    echo $line . PHP_EOL;
                 }
                 if ($count >= $maxItems) {
                     Worker::safeEcho("queue: hit max items limit ($maxItems), remaining items stay in queue\n");
@@ -424,8 +407,8 @@ if (isset($_POST['action']) && $_POST['action'] == 'map') {
                     }
                 }
             }
-        } catch (\Exception $e) {
-            Worker::safeEcho('Caught Exception #'.$e->getCode().':'.$e->getMessage().' on '.__LINE__.'@'.__FILE__);
+        } catch (\Throwable $e) {
+            Worker::safeEcho('Caught Exception #'.$e->getCode().':'.$e->getMessage().' on '.__LINE__.'@'.__FILE__.PHP_EOL);
         } finally {
             $out = (string)ob_get_clean();
         }
