@@ -19,7 +19,6 @@
 		"php": ">=8.2",
 		"ext-curl": "*",
 		"ext-redis": "*",
-		"roave/security-advisories": "dev-latest",
 		"react/child-process": "^0.6.7@stable",
 		"react/event-loop": "^1.6.0@stable",
 		"react/http": "^1.11.0@stable",
@@ -36,6 +35,7 @@
 		"workerman/workerman": "^5.2.2@stable"
 	},
 	"require-dev": {
+		"roave/security-advisories": "dev-latest",
 		"friendsofphp/php-cs-fixer": "^3.95",
 		"phpunit/phpunit": "^12.5",
 		"react/promise": "^3.0",
