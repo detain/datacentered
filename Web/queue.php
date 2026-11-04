@@ -65,34 +65,72 @@ $masterKeyFromRow = static function (?array $row, string $prefix): ?string {
  * Unknown host or DB hiccup is non-fatal (reviewer-coder #2): null result →
  * key NULL → adapter legacy quadrant, behaviour identical to pre-3.3.
  *
- * @param string $ip REMOTE_ADDR
+ * Not a master (and the DB answered): mystage's UnknownQueueHost works out
+ * whether the IP is the primary IPv4 of exactly one asset and, if so, creates
+ * the master (available=0) or reports to int-dev the master that uses another
+ * IP. Throttled per IP inside, never throws; class_exists covers a mystage
+ * checkout that predates it. Just created → looked up again and served as
+ * that master.
+ *
+ * @param string    $ip       REMOTE_ADDR
+ * @param bool|null $dbFailed set true when a lookup query threw (null result
+ *                            then means "don't know", not "unknown host")
  * @return array{module:string,row:array,key:?string,identity:string}|null
  */
-$lookupMasterByIp = static function (string $ip) use ($masterKeyFromRow): ?array {
-    global $mysql_db;
+$lookupMasterByIp = static function (string $ip, ?bool &$dbFailed = null) use ($masterKeyFromRow): ?array {
+    $dbFailed = false;
     if (!filter_var($ip, FILTER_VALIDATE_IP)) {
         return null;
     }
-    foreach (['vps', 'qs'] as $prefix) {
-        try {
-            $row = $mysql_db->select('*')->from($prefix . '_masters')
-                ->where($prefix . '_ip = :ip')->bindValues(['ip' => $ip])->row();
-        } catch (\Throwable $e) {
-            $row = false; // lookup failure = unkeyed legacy, never fatal
+    $find = static function () use ($ip, $masterKeyFromRow, &$dbFailed): ?array {
+        global $mysql_db;
+        foreach (['vps', 'qs'] as $prefix) {
+            try {
+                $row = $mysql_db->select('*')->from($prefix . '_masters')
+                    ->where($prefix . '_ip = :ip')->bindValues(['ip' => $ip])->row();
+            } catch (\Throwable $e) {
+                $row = false; // lookup failure = unkeyed legacy, never fatal
+                $dbFailed = true;
+            }
+            if (empty($row) || !is_array($row)) {
+                continue;
+            }
+            return [
+                'module' => $prefix,
+                'row' => $row,
+                'key' => $masterKeyFromRow($row, $prefix),
+                // "{prefix}:{id}" — the empty identity + envelope 500 is adapter-
+                // owned and unreachable from here (a row always carries {prefix}_id).
+                'identity' => $prefix . ':' . ($row[$prefix . '_id'] ?? ''),
+            ];
         }
-        if (empty($row) || !is_array($row)) {
-            continue;
+        return null;
+    };
+    $found = $find();
+    if (null === $found && !$dbFailed && class_exists('\\MyAdmin\\Queue\\UnknownQueueHost')) {
+        $unknown = \MyAdmin\Queue\UnknownQueueHost::check($ip);
+        if (($unknown['result'] ?? '') === 'created') {
+            $found = $find();
         }
-        return [
-            'module' => $prefix,
-            'row' => $row,
-            'key' => $masterKeyFromRow($row, $prefix),
-            // "{prefix}:{id}" — the empty identity + envelope 500 is adapter-
-            // owned and unreachable from here (a row always carries {prefix}_id).
-            'identity' => $prefix . ':' . ($row[$prefix . '_id'] ?? ''),
-        ];
     }
-    return null;
+    return $found;
+};
+
+/**
+ * The lookup for this request's REMOTE_ADDR, done once per request (this file
+ * is include()'d per request, so $currentHost starts empty each time).
+ *
+ * @param bool|null $dbFailed
+ * @return array{module:string,row:array,key:?string,identity:string}|null
+ */
+$currentHost = null;
+$lookupCurrentHost = static function (?bool &$dbFailed = null) use (&$currentHost, $lookupMasterByIp): ?array {
+    if (null === $currentHost) {
+        $failed = false;
+        $currentHost = ['lookup' => $lookupMasterByIp((string)$_SERVER['REMOTE_ADDR'], $failed), 'dbFailed' => $failed];
+    }
+    $dbFailed = $currentHost['dbFailed'];
+    return $currentHost['lookup'];
 };
 
 /**
@@ -117,7 +155,18 @@ $replayDedupChecker = static function (string $markerKey) use ($dedupTtl): ?bool
  * Tasks/memcached_queue_task.php (which reads ['get','post','ip'] and knows
  * nothing about crypto) drains exactly one shape.
  */
-$emitQueueinItem = static function (array $item): void {
+$emitQueueinItem = static function (array $item) use ($lookupCurrentHost): void {
+    /*
+     * Only masters' telemetry is queued: the drain walks vps/qs master IPs and
+     * nothing else, so an unknown IP's items were orphans that piled up in
+     * Redis forever. The lookup lets UnknownQueueHost create the master when
+     * the IP is certainly an asset (then it is queued like any master's);
+     * otherwise the item is dropped. A DB error keeps it queued.
+     */
+    $dbFailed = false;
+    if (null === $lookupCurrentHost($dbFailed) && !$dbFailed) {
+        return;
+    }
     /*
      * Redis rPush first; while Redis is down the item is parked in the local
      * disk spill (QueueStore, flock'd jsonl per host) and the drain empties
@@ -212,7 +261,7 @@ $serveAdapted = static function (
 };
 
 if (isset($_POST['action']) && $_POST['action'] == 'map') {
-    $mapLookup = $lookupMasterByIp($_SERVER['REMOTE_ADDR']);
+    $mapLookup = $lookupCurrentHost();
     $serveAdapted('map', $mapLookup['key'] ?? null, $mapLookup['identity'] ?? '', static function () {
         ob_start();
         try {
@@ -362,7 +411,7 @@ if (isset($_POST['action']) && $_POST['action'] == 'map') {
         return $out;
     });
 } elseif (isset($_POST['action']) && $_POST['action'] == 'queue') {
-    $queueLookup = $lookupMasterByIp($_SERVER['REMOTE_ADDR']);
+    $queueLookup = $lookupCurrentHost();
     $serveAdapted('queue', $queueLookup['key'] ?? null, $queueLookup['identity'] ?? '', static function () {
         global $memcache;
         // Destructive drain (lPop / CAS-clear): running INSIDE the adapter
@@ -420,7 +469,7 @@ if (isset($_POST['action']) && $_POST['action'] == 'map') {
     // dual vps→qs masters loop (mirrors mystage public_html/queue.php:23-31);
     // the adapter's sealKey matrix handles the bootstrap response (sealed with
     // the just-stored $_POST['queue_key']) — this branch only routes.
-    $keyLookup = $lookupMasterByIp($_SERVER['REMOTE_ADDR']);
+    $keyLookup = $lookupCurrentHost();
     if (null === $keyLookup) {
         // Unknown host: no module context exists to drive UpdateKey against.
         // Pre-3.3 flow for a novel action was the telemetry capture; keep it.
@@ -443,7 +492,7 @@ if (isset($_POST['action']) && $_POST['action'] == 'map') {
     // stop double-writing timestamp-less Influx points. Without a key (or
     // without a payload) the adapter routes to legacy: today's verbatim
     // plaintext re-emit, ACK 'ok' instead of an empty body (cron ignores it).
-    $telemetryLookup = $lookupMasterByIp($_SERVER['REMOTE_ADDR']);
+    $telemetryLookup = $lookupCurrentHost();
     $serveAdapted((string)$_POST['action'], $telemetryLookup['key'] ?? null, $telemetryLookup['identity'] ?? '', static function ($action, $queueData) use ($emitQueueinItem) {
         if (is_array($queueData)) {
             $innerFields = $queueData;
