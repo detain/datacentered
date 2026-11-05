@@ -16,6 +16,24 @@ final class QueueStoreFakeRedis
     /** @var bool */
     public $down = false;
 
+    /** @var string|null when set, SET answers false with this error reply, like phpredis does for OOM/LOADING/READONLY */
+    public $errorReply = null;
+
+    /** @var string|null */
+    private $lastError = null;
+
+    public function getLastError()
+    {
+        return $this->lastError;
+    }
+
+    public function clearLastError()
+    {
+        $this->lastError = null;
+
+        return true;
+    }
+
     private function guard(): void
     {
         if ($this->down) {
@@ -40,6 +58,11 @@ final class QueueStoreFakeRedis
     public function set($key, $value, $opts = null)
     {
         $this->guard();
+        if ($this->errorReply !== null) {
+            $this->lastError = $this->errorReply;
+
+            return false;
+        }
         $nx = is_array($opts) && (in_array('NX', $opts, true) || in_array('nx', $opts, true));
         if ($nx && array_key_exists($key, $this->data)) {
             return false;
@@ -267,6 +290,27 @@ final class QueueStoreTest extends TestCase
         $this->assertSame([], QueueStore::popOutbound('10.0.0.1', 100));
         $this->recoverRedis();
         $this->assertSame(['echo hi'], QueueStore::popOutbound('10.0.0.1', 100), 'the command waited out the outage');
+    }
+
+    public function testDedupErrorReplyIsNotMistakenForAReplay(): void
+    {
+        // phpredis answers SET NX with false + getLastError() (no exception) when
+        // the store refuses writes; that used to come back as "duplicate" and
+        // every genuine envelope got 403.
+        $this->redis->errorReply = "OOM command not allowed when used memory > 'maxmemory'.";
+        $this->assertTrue(QueueStore::claimDedup('queue:dedup:e', 600), 'a first claim is not a replay just because redis answered with an error');
+        $this->assertFalse(QueueStore::claimDedup('queue:dedup:e', 600), 'the file marker still catches the replay');
+        $this->assertArrayNotHasKey('queue:dedup:e', $this->redis->data);
+    }
+
+    public function testDedupStaleErrorFromAnEarlierCommandDoesNotHideARealDuplicate(): void
+    {
+        $this->redis->errorReply = 'LOADING Redis is loading the dataset in memory';
+        QueueStore::claimDedup('queue:dedup:x', 600);
+        $this->redis->errorReply = null;
+        $this->assertTrue(QueueStore::claimDedup('queue:dedup:y', 600));
+        $this->assertFalse(QueueStore::claimDedup('queue:dedup:y', 600));
+        $this->assertArrayHasKey('queue:dedup:y', $this->redis->data, 'back on redis once it answers normally');
     }
 
     public function testDedupFallsBackToDiskInsteadOfFailingOpen(): void

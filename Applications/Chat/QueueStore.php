@@ -406,11 +406,32 @@ final class QueueStore
     {
         if (self::redisEnabled()) {
             $fail = new \stdClass();
+            // phpredis answers SET NX with false both when the key exists and
+            // when the server sends an error reply (OOM, LOADING, READONLY…),
+            // which it records in getLastError() instead of throwing. Only the
+            // first is a replay: casting the second to false 403'd genuine
+            // envelopes while the store refused writes, and hosts took that
+            // for a key mismatch and fell back to plaintext. An error reply
+            // (null here) uses the file marker below, like an outage does.
             $claimed = SharedState::rawCommand('dedup.set', $markerKey, static function ($client, $key) use ($ttl) {
-                return $client->set($key, 1, ['NX', 'EX' => $ttl]);
+                if (method_exists($client, 'clearLastError')) {
+                    $client->clearLastError();
+                }
+                $reply = $client->set($key, 1, ['NX', 'EX' => $ttl]);
+                if ($reply === true) {
+                    return true;
+                }
+                if ($reply === false && !(method_exists($client, 'getLastError') && $client->getLastError() !== null)) {
+                    return false;
+                }
+
+                return null;
             }, $fail);
+            if (is_bool($claimed)) {
+                return $claimed;
+            }
             if ($claimed !== $fail) {
-                return (bool) $claimed;
+                self::log('dedup-error-reply', 'QueueStore: redis answered SET NX with an error reply — using the local file marker');
             }
         }
         $dir = self::dir('dedup');
