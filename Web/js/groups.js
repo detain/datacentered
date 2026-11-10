@@ -614,9 +614,9 @@ var ChOpper = (function ChOpperCtrl(app) { //controller
 				"password": document.getElementById('password').value,
 				"room_id": 1
 			}
-			console.log(login_data);
+			// never log login_data: it carries the password
 			login_data = JSON.stringify(login_data);
-			console.log("websocket handshake successfully, send login data: "+JSON.stringify(login_data));
+			console.log("websocket handshake successfully, sending login");
 			ws.send(login_data);
 			/*
 			if (roomId == "phptty") {

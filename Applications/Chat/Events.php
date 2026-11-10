@@ -20,6 +20,7 @@ require_once __DIR__.'/Process.php';
 require_once __DIR__.'/stdObject.php';
 require_once __DIR__.'/FeatureFlags.php';
 require_once __DIR__.'/SharedState.php';
+require_once __DIR__.'/AdminPasswordLogin.php';
 
 class Events
 {
@@ -7157,12 +7158,29 @@ class Events
                         ->bindValues(['session_id' => $message_data['session_id']])
                         ->query();
                 } else {
-                    $results = self::$db->select('accounts.*, account_value')
-                        ->from('accounts')
-                        ->leftJoin('accounts_ext', 'accounts.account_id=accounts_ext.account_id and accounts_ext.account_key="picture"')
-                        ->where('account_ima="admin" and account_lid= :username and account_passwd= :password')
-                        ->bindValues(['username' => $message_data['username'], 'password' => md5($message_data['password'])])
-                        ->query();
+                    // username/password (the chat UI): rate limited, row by login only, and the
+                    // password verified in PHP against both password columns (AdminPasswordLogin,
+                    // MyAdmin plan_hash.md §6.9). Nothing password-derived reaches the SQL text.
+                    $loginName = isset($message_data['username']) && is_scalar($message_data['username']) ? (string) $message_data['username'] : '';
+                    $loginPassword = isset($message_data['password']) && is_scalar($message_data['password']) ? (string) $message_data['password'] : '';
+                    $loginIp = (string) ($_SERVER['REMOTE_ADDR'] ?? '');
+                    $results = [];
+                    if ($loginName === '' || !AdminPasswordLogin::allowed($loginName, $loginIp)) {
+                        Worker::safeEcho("[{$client_id}] admin password login refused (rate limit or no login) for {$loginName} from {$loginIp}".PHP_EOL);
+                    } else {
+                        $rows = self::$db->select('accounts.*, account_value')
+                            ->from('accounts')
+                            ->leftJoin('accounts_ext', 'accounts.account_id=accounts_ext.account_id and accounts_ext.account_key="picture"')
+                            ->where('account_ima="admin" and account_lid= :username')
+                            ->bindValues(['username' => $loginName])
+                            ->query();
+                        $loginRow = is_array($rows) && isset($rows[0]) && is_array($rows[0]) ? $rows[0] : null;
+                        if (AdminPasswordLogin::verifyRow($loginRow, $loginPassword)) {
+                            $results = [$loginRow];
+                        } else {
+                            AdminPasswordLogin::recordFailure($loginName, $loginIp);
+                        }
+                    }
                 }
                 if (sizeof($results) == 0 || $results[0] === false) {
                     //error
